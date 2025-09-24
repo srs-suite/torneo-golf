@@ -1,0 +1,26 @@
+{
+  "name": "teetracker-backend",
+  "version": "1.0.0",
+  "description": "TeeTracker Pro Backend - Golf Tournament Management System",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node src/server.js"
+  },
+  "keywords": [
+    "golf",
+    "tournament",
+    "backend",
+    "api",
+    "mysql"
+  ],
+  "author": "TeeTracker Pro Team",
+  "license": "MIT",
+  "dependencies": {
+    "mysql2": "^3.6.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

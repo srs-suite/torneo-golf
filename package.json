@@ -1,0 +1,43 @@
+{
+  "name": "teetracker-pro",
+  "version": "1.0.0",
+  "description": "Professional Golf Tournament Management System",
+  "main": "backend/src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node backend/src/server.js",
+    "dev": "node backend/src/server.js",
+    "backend": "cd backend && npm run dev",
+    "frontend": "cd frontend && npm run dev",
+    "build": "cd frontend && npm run build",
+    "install-all": "npm install && cd frontend && npm install",
+    "system": "powershell -ExecutionPolicy Bypass -File scripts/INICIAR_SISTEMA_PS5.ps1"
+  },
+  "keywords": [
+    "golf",
+    "tournament",
+    "management",
+    "scorecard",
+    "handicap",
+    "mysql",
+    "react",
+    "typescript"
+  ],
+  "author": "TeeTracker Pro Team",
+  "license": "MIT",
+  "dependencies": {
+    "mysql2": "^3.6.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/teetracker-pro.git"
+  },
+  "homepage": "http://localhost:5173",
+  "bugs": {
+    "url": "https://github.com/your-org/teetracker-pro/issues"
+  }
+}

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200">
+  <!-- Logo optimizado para header -->
+  
+  <!-- Contenedor principal -->
+  <rect x="20" y="40" width="120" height="120" rx="15" ry="15" fill="#6ab04c" stroke="#2d7016" stroke-width="3"/>
+  
+  <!-- Colinas verdes dentro del contenedor -->
+  <ellipse cx="65" cy="100" rx="35" ry="20" fill="#7ed321"/>
+  <ellipse cx="95" cy="115" rx="25" ry="15" fill="#6ab04c"/>
+  
+  <!-- Tee de golf -->
+  <circle cx="65" cy="85" r="4" fill="white" stroke="#2d7016" stroke-width="1"/>
+  <rect x="63" y="89" width="4" height="20" fill="#2d7016"/>
+  
+  <!-- Bandera -->
+  <rect x="85" y="60" width="2" height="30" fill="#2d7016"/>
+  <polygon points="87,60 110,68 87,76" fill="#2d7016"/>
+  
+  <!-- Texto "Tee Tracker Pro" -->
+  <text x="160" y="70" font-family="Arial, sans-serif" font-size="32" font-weight="bold" fill="#2d7016">Tee</text>
+  <text x="160" y="105" font-family="Arial, sans-serif" font-size="32" font-weight="bold" fill="#2d7016">Tracker</text>
+  <text x="160" y="140" font-family="Arial, sans-serif" font-size="32" font-weight="bold" fill="#2d7016">Pro</text>
+</svg>
