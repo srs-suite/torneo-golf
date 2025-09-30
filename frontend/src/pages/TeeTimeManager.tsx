@@ -10,7 +10,6 @@ import {
   Mail,
   Phone,
   GripVertical,
-  Edit,
   Plus
 } from 'lucide-react'
 import { useGenerateGroups, useAssignTeeTimes, useTournamentGroups, useMovePlayerToGroup, useMoveGroupToHole, useCreateEmptyGroup } from '@/hooks/useTournaments'
@@ -86,7 +85,14 @@ export default function TeeTimeManager() {
 
   const handleAssignTeeTimes = async () => {
     try {
-      await assignTeeTimes.mutateAsync(config)
+      await assignTeeTimes.mutateAsync({
+        start_time: config.startTime,
+        interval_minutes: config.intervalMinutes,
+        course_holes: config.courseHoles,
+        enable_two_sessions: config.enableTwoSessions,
+        enable_simultaneous_starts: config.enableSimultaneousStarts,
+        afternoon_start_time: config.afternoonStartTime
+      })
       setCurrentStep(3)
     } catch (error) {
       console.error("Error assigning tee times:", error)
@@ -96,7 +102,7 @@ export default function TeeTimeManager() {
   const handleCreateEmptyGroup = async () => {
     try {
       console.log("Creating empty group...")
-      await createEmptyGroup.mutateAsync()
+      await createEmptyGroup.mutateAsync({ hole: 1, time: null })
       setHasManualChanges(true)
     } catch (error) {
       console.error("Error creating empty group:", error)
@@ -114,16 +120,6 @@ export default function TeeTimeManager() {
     }
   }
 
-  const handleMoveGroup = async (groupNumber: number, newStartingHole: number, newTeeTime?: string) => {
-    console.log("Moving group:", { groupNumber, newStartingHole, newTeeTime })
-    try {
-      await moveGroup.mutateAsync({ groupNumber, newStartingHole, newTeeTime })
-      setHasManualChanges(true)
-      refetchGroups()
-    } catch (error) {
-      console.error("Error moving group:", error)
-    }
-  }
 
   const handleSwapGroups = async (group1: any, group2: any) => {
     try {
@@ -155,11 +151,14 @@ export default function TeeTimeManager() {
       refetchGroups()
     } catch (error) {
       console.error("Error moving group:", error)
-      if (error?.response?.data?.message) {
-        console.error("Server error:", error.response.data.message)
+      if (error && typeof error === 'object' && 'response' in error) {
+        const axiosError = error as any;
+        if (axiosError.response?.data?.message) {
+          console.error("Server error:", axiosError.response.data.message)
+        }
       }
-      if (error?.message) {
-        console.error("Error message:", error.message)
+      if (error && typeof error === 'object' && 'message' in error) {
+        console.error("Error message:", (error as any).message)
       }
     }
   }
@@ -289,7 +288,7 @@ export default function TeeTimeManager() {
             <div className="flex items-center space-x-2">
               <Trophy className="w-5 h-5 text-gray-400" />
               <span className="text-sm text-gray-600">
-                {new Date(tournament.start_date).toLocaleDateString()}
+                {tournament.start_time ? new Date(tournament.start_time).toLocaleDateString() : 'N/A'}
               </span>
             </div>
           </div>
@@ -513,7 +512,7 @@ export default function TeeTimeManager() {
               >
                 {generateGroups.isLoading ? (
                   <>
-                    <LoadingSpinner size="sm" />
+                    <LoadingSpinner />
                     <span className="ml-2">Generando...</span>
                   </>
                 ) : (
@@ -595,7 +594,7 @@ export default function TeeTimeManager() {
                         </div>
                         <div className="flex items-center">
                           <User className="w-3 h-3 mr-1 text-gray-500" />
-                          <span>{group.participants.length}</span>
+                          <span>{group.participants?.length || 0}</span>
                         </div>
                       </div>
                     </div>
@@ -628,15 +627,15 @@ export default function TeeTimeManager() {
                         setDragOverGroup(null)
                       }}
                     >
-                      {group.participants.map((participant) => (
+                      {group.participants?.map((participant) => (
                         <div
-                          key={participant.participation_id}
+                          key={participant.participation_id || participant.participant_id}
                           draggable={true}
                           onDragStart={(e) => {
-                            console.log("Player drag start:", participant.player_name, participant.participation_id)
+                            console.log("Player drag start:", participant.player_name, participant.participation_id || participant.participant_id)
                             setDraggedPlayer(participant)
                             e.dataTransfer.effectAllowed = 'move'
-                            e.dataTransfer.setData('text/plain', participant.participation_id.toString())
+                            e.dataTransfer.setData('text/plain', (participant.participation_id || participant.participant_id).toString())
                           }}
                           onDragEnd={() => {
                             console.log("Player drag end")
@@ -653,16 +652,16 @@ export default function TeeTimeManager() {
                                   <Trophy className="w-3 h-3 mr-1 text-gray-500" />
                                   <span>HCP: {participant.handicap_local !== null && participant.handicap_local !== undefined ? participant.handicap_local : "N/A"}</span>
                                 </div>
-                                {participant.email && (
+                                {(participant as any).email && (
                                   <div className="flex items-center">
                                     <Mail className="w-3 h-3 mr-1 text-gray-500" />
-                                    <span>{participant.email}</span>
+                                    <span>{(participant as any).email}</span>
                                   </div>
                                 )}
-                                {participant.phone && (
+                                {(participant as any).phone && (
                                   <div className="flex items-center">
                                     <Phone className="w-3 h-3 mr-1 text-gray-500" />
-                                    <span>{participant.phone}</span>
+                                    <span>{(participant as any).phone}</span>
                                   </div>
                                 )}
                               </div>
@@ -689,7 +688,7 @@ export default function TeeTimeManager() {
               >
                 {createEmptyGroup.isLoading ? (
                   <>
-                    <LoadingSpinner size="sm" />
+                    <LoadingSpinner />
                     <span className="ml-2">Creando...</span>
                   </>
                 ) : (
@@ -707,7 +706,7 @@ export default function TeeTimeManager() {
               >
                 {assignTeeTimes.isLoading ? (
                   <>
-                    <LoadingSpinner size="sm" />
+                    <LoadingSpinner />
                     <span className="ml-2">Asignando...</span>
                   </>
                 ) : (
@@ -781,7 +780,7 @@ export default function TeeTimeManager() {
                       <tr>
                         {group.participants && group.participants.length > 0 && group.participants.map((participant) => (
                           <td 
-                            key={participant.participation_id} 
+                            key={participant.participation_id || participant.participant_id} 
                             style={{
                               padding: '10px',
                               border: '1px solid #ccc',

@@ -256,7 +256,7 @@ export default function PrintableScorecard() {
                       {/* Par */}
                       <div className="font-semibold text-center py-2 bg-green-50 border border-gray-300">Par</div>
                       {[1,2,3,4,5,6,7,8,9].map(hole => {
-                        const holeData = courseHoles?.find(h => h.hole_number === hole);
+                        const holeData = courseHoles?.find((h: any) => h.hole_number === hole);
                         return (
                           <div key={hole} className="text-center py-2 border border-gray-300 bg-green-50">
                             {holeData?.par || 4}
@@ -267,7 +267,7 @@ export default function PrintableScorecard() {
                       {/* Handicap */}
                       <div className="font-semibold text-center py-2 bg-yellow-50 border border-gray-300">HCP</div>
                       {[1,2,3,4,5,6,7,8,9].map(hole => {
-                        const holeData = courseHoles?.find(h => h.hole_number === hole);
+                        const holeData = courseHoles?.find((h: any) => h.hole_number === hole);
                         return (
                           <div key={hole} className="text-center py-2 border border-gray-300 bg-yellow-50 text-xs">
                             {holeData?.handicap || hole}
@@ -302,7 +302,7 @@ export default function PrintableScorecard() {
                       {/* Par */}
                       <div className="font-semibold text-center py-2 bg-green-50 border border-gray-300">Par</div>
                       {[10,11,12,13,14,15,16,17,18].map(hole => {
-                        const holeData = courseHoles?.find(h => h.hole_number === hole);
+                        const holeData = courseHoles?.find((h: any) => h.hole_number === hole);
                         return (
                           <div key={hole} className="text-center py-2 border border-gray-300 bg-green-50">
                             {holeData?.par || 4}
@@ -313,7 +313,7 @@ export default function PrintableScorecard() {
                       {/* Handicap */}
                       <div className="font-semibold text-center py-2 bg-yellow-50 border border-gray-300">HCP</div>
                       {[10,11,12,13,14,15,16,17,18].map(hole => {
-                        const holeData = courseHoles?.find(h => h.hole_number === hole);
+                        const holeData = courseHoles?.find((h: any) => h.hole_number === hole);
                         return (
                           <div key={hole} className="text-center py-2 border border-gray-300 bg-yellow-50 text-xs">
                             {holeData?.handicap || hole}

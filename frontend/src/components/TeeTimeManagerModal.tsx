@@ -26,21 +26,19 @@ interface TeeTimeSettings {
 interface Group {
   group_number: number;
   tee_time: string;
-  starting_hole: number;
-  participants: Participant[];
-  participants_count: number;
+  starting_hole?: number;
+  participants?: Participant[];
 }
 
 interface Participant {
-  participation_id: number;
-  player_name: string;
-  handicap_local: number | null;
-  player_type: 'member' | 'visitor' | 'external';
+  participation_id?: number;
+  player_name?: string;
+  handicap_local?: number | null;
+  player_type?: 'member' | 'visitor' | 'external';
   email?: string;
   phone?: string;
 }
 
-const groups: Group[] = [];
 
 export function TeeTimeManagerModal({ 
   isOpen, 
@@ -115,10 +113,15 @@ export function TeeTimeManagerModal({
     } catch (error) {
       console.error('❌ Error moving player:', error)
       // Handle missing properties
-      if (error && error.response && error.response.data && error.response.data.message) {
-        console.error('Server error:', error.response.data.message);
-      } else if (error && error.message) {
-        console.error('Error message:', error.message);
+      if (error && typeof error === 'object' && 'response' in error) {
+        const axiosError = error as any;
+        if (axiosError.response?.data?.message) {
+          console.error('Server error:', axiosError.response.data.message);
+        } else if (axiosError.message) {
+          console.error('Error message:', axiosError.message);
+        }
+      } else if (error && typeof error === 'object' && 'message' in error) {
+        console.error('Error message:', (error as any).message);
       }
     }
   }
@@ -133,10 +136,15 @@ export function TeeTimeManagerModal({
     } catch (error) {
       console.error('❌ Error moving group:', error)
       // Handle missing properties
-      if (error && error.response && error.response.data && error.response.data.message) {
-        console.error('Server error:', error.response.data.message);
-      } else if (error && error.message) {
-        console.error('Error message:', error.message);
+      if (error && typeof error === 'object' && 'response' in error) {
+        const axiosError = error as any;
+        if (axiosError.response?.data?.message) {
+          console.error('Server error:', axiosError.response.data.message);
+        } else if (axiosError.message) {
+          console.error('Error message:', axiosError.message);
+        }
+      } else if (error && typeof error === 'object' && 'message' in error) {
+        console.error('Error message:', (error as any).message);
       }
     }
   }
@@ -177,11 +185,14 @@ export function TeeTimeManagerModal({
     } catch (error) {
       console.error('❌ Error in simple move:', error)
       // Mostrar el error específico al usuario
-      if (error?.response?.data?.message) {
-        console.error('Server error:', error.response.data.message)
+      if (error && typeof error === 'object' && 'response' in error) {
+        const axiosError = error as any;
+        if (axiosError.response?.data?.message) {
+          console.error('Server error:', axiosError.response.data.message)
+        }
       }
-      if (error?.message) {
-        console.error('Error message:', error.message)
+      if (error && typeof error === 'object' && 'message' in error) {
+        console.error('Error message:', (error as any).message)
       }
     }
   }
@@ -359,9 +370,9 @@ export function TeeTimeManagerModal({
       await assignTeeTimes.mutateAsync({
         start_time: settings.start_time,
         interval_minutes: settings.interval_minutes,
-        groups_per_tee_time: settings.groups_per_tee_time,
         course_holes: settings.course_holes,
         enable_two_sessions: settings.enable_two_sessions,
+        enable_simultaneous_starts: false,
         morning_end_time: settings.morning_end_time,
         afternoon_start_time: settings.afternoon_start_time
       })
@@ -800,7 +811,7 @@ export function TeeTimeManagerModal({
                         <div className="flex items-center space-x-3">
                           <div className="flex items-center space-x-1 text-sm text-gray-500">
                             <User className="w-4 h-4 text-gray-500" />
-                            {group.participants_count} jugador{group.participants_count !== 1 ? 'es' : ''}
+                            {group.participants?.length || 0} jugador{(group.participants?.length || 0) !== 1 ? 'es' : ''}
                           </div>
                           <div className="flex items-center space-x-2">
                             <label className="text-xs text-gray-600">Hoyo:</label>
@@ -826,7 +837,7 @@ export function TeeTimeManagerModal({
                       </div>
                       
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 min-h-[60px]">
-                        {group.participants.map((participant: Participant) => (
+                        {group.participants?.map((participant: Participant) => (
                           <div 
                             key={participant.participation_id}
                             draggable
@@ -869,7 +880,7 @@ export function TeeTimeManagerModal({
                         ))}
                         
                         {/* Zona de drop cuando el grupo está vacío */}
-                        {group.participants.length === 0 && (
+                        {(!group.participants || group.participants.length === 0) && (
                           <div className="col-span-full border-2 border-dashed border-gray-300 rounded-lg p-4 text-center text-gray-500">
                             Grupo vacío - arrastra jugadores aquí
                           </div>
@@ -889,7 +900,7 @@ export function TeeTimeManagerModal({
             <div className="text-sm text-gray-600">
               {groups.length > 0 && (
                 <span>
-                  {groups.length} grupos • {groups.reduce((acc, g) => acc + g.participants_count, 0)} participantes
+                  {groups.length} grupos • {groups.reduce((acc, g) => acc + (g.participants?.length || 0), 0)} participantes
                 </span>
               )}
             </div>

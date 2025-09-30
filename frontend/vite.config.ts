@@ -12,6 +12,13 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    host: true, // Permite acceso desde cualquier host
+    allowedHosts: [
+      'localhost',
+      '127.0.0.1',
+      'torneogolf.retailsolutionstimetracker.com',
+      '.retailsolutionstimetracker.com' // Permite todos los subdominios
+    ],
     proxy: {
       '/api': {
         target: 'http://localhost:3005',
@@ -22,5 +29,15 @@ export default defineConfig({
         changeOrigin: true,
       }
     }
+  },
+  preview: {
+    port: 4173,
+    host: true, // Permite acceso desde cualquier host en preview también
+    allowedHosts: [
+      'localhost',
+      '127.0.0.1',
+      'torneogolf.retailsolutionstimetracker.com',
+      '.retailsolutionstimetracker.com'
+    ]
   }
 })

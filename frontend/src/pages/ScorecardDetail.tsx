@@ -1,5 +1,5 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Printer, User, Calendar, Trophy } from 'lucide-react';
+import { ArrowLeft, Printer } from 'lucide-react';
 import { useGetScorecardDetail } from '../hooks/useScorecards';
 import { useQuery } from '@tanstack/react-query';
 
@@ -40,7 +40,7 @@ export default function ScorecardDetail() {
     tournamentId,
     scorecardId,
     isLoading,
-    error: error?.message,
+    error: (error as any)?.message,
     scorecard,
     scorecardKeys: scorecard ? Object.keys(scorecard) : [],
     holeScores: scorecard?.hole_scores,
@@ -63,7 +63,7 @@ export default function ScorecardDetail() {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
           <p className="text-red-600 mb-4">Error al cargar la tarjeta</p>
-          <p className="text-sm text-gray-600 mb-4">{error.message}</p>
+          <p className="text-sm text-gray-600 mb-4">{(error as any)?.message || 'Error desconocido'}</p>
           <button
             onClick={() => navigate(`/club/${clubId}/tournaments/${tournamentId}/scorecards`)}
             className="px-4 py-2 bg-gray-900 text-white rounded hover:bg-gray-800"
@@ -205,7 +205,7 @@ export default function ScorecardDetail() {
                     {/* Par */}
                     <div className="font-semibold text-center py-2 bg-green-50">Par</div>
                     {[1,2,3,4,5,6,7,8,9].map(hole => {
-                      const holeData = courseHoles?.find(h => h.hole_number === hole);
+                        const holeData = courseHoles?.find((h: any) => h.hole_number === hole);
                       return (
                         <div key={hole} className="text-center py-2 border border-gray-200 bg-green-50">
                           {holeData?.par || 4}
@@ -216,7 +216,7 @@ export default function ScorecardDetail() {
                     {/* Handicap */}
                     <div className="font-semibold text-center py-2 bg-yellow-50">HCP</div>
                     {[1,2,3,4,5,6,7,8,9].map(hole => {
-                      const holeData = courseHoles?.find(h => h.hole_number === hole);
+                        const holeData = courseHoles?.find((h: any) => h.hole_number === hole);
                       return (
                         <div key={hole} className="text-center py-2 border border-gray-200 bg-yellow-50 text-xs">
                           {holeData?.handicap || hole}
@@ -251,7 +251,7 @@ export default function ScorecardDetail() {
                     {/* Par */}
                     <div className="font-semibold text-center py-2 bg-green-50">Par</div>
                     {[10,11,12,13,14,15,16,17,18].map(hole => {
-                      const holeData = courseHoles?.find(h => h.hole_number === hole);
+                        const holeData = courseHoles?.find((h: any) => h.hole_number === hole);
                       return (
                         <div key={hole} className="text-center py-2 border border-gray-200 bg-green-50">
                           {holeData?.par || 4}
@@ -262,7 +262,7 @@ export default function ScorecardDetail() {
                     {/* Handicap */}
                     <div className="font-semibold text-center py-2 bg-yellow-50">HCP</div>
                     {[10,11,12,13,14,15,16,17,18].map(hole => {
-                      const holeData = courseHoles?.find(h => h.hole_number === hole);
+                        const holeData = courseHoles?.find((h: any) => h.hole_number === hole);
                       return (
                         <div key={hole} className="text-center py-2 border border-gray-200 bg-yellow-50 text-xs">
                           {holeData?.handicap || hole}

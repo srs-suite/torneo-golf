@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Plus, Trash2, Save, Eye, Edit } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Edit } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 
 interface CourseHole {

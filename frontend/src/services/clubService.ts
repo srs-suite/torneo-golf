@@ -10,9 +10,9 @@ export const clubService = {
     // Normalizar structure - algunos clubes usan golf_course_id en lugar de course_id
     return clubs.map(club => ({
       ...club,
-      course_id: club.course_id || club.golf_course_id || 0,
+      course_id: club.course_id || (club as any).golf_course_id || 0,
       // Asegurar que todos los campos requeridos existan
-      current_members: club.current_members || 0,
+      current_members: (club as any).current_members || 0,
       total_tournaments: club.total_tournaments || 0,
       administrators: club.administrators || 0,
     }))

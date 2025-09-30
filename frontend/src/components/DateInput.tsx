@@ -149,8 +149,6 @@ export function DateInput({
     
     // Primer día del mes
     const firstDay = new Date(year, month, 1)
-    // Último día del mes
-    const lastDay = new Date(year, month + 1, 0)
     
     // Primer día del calendario (puede ser del mes anterior)
     const startDate = new Date(firstDay)
@@ -175,7 +173,7 @@ export function DateInput({
           key={i}
           type="button"
           onClick={() => !isPastDate && handleDateSelect(currentDate)}
-          disabled={isPastDate}
+          disabled={!!isPastDate}
           className={`
             w-8 h-8 text-sm rounded-lg hover:bg-gray-100 transition-colors
             ${!isCurrentMonth ? 'text-gray-300' : 'text-gray-700'}

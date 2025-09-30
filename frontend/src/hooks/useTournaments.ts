@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { tournamentService } from '@/services/tournamentService'
-import { Tournament, CreateTournamentData, TournamentParticipant, TournamentGroup, TournamentStats } from '@/types/tournament'
+import { Tournament, CreateTournamentData } from '@/types/tournament'
 import { toast } from 'react-hot-toast'
 
 const QUERY_KEYS = {

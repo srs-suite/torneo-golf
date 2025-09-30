@@ -5,14 +5,13 @@ import {
   DollarSign,
   Clock
 } from 'lucide-react'
-import { useStats, useRecentActivity, useClubs, useInvalidateStats } from '@/hooks/useClubs'
+import { useStats, useRecentActivity, useClubs } from '@/hooks/useClubs'
 import { LoadingSpinner } from '@/components/LoadingSpinner'
 
 export function DashboardSimple() {
   const { data: stats, isLoading: statsLoading } = useStats()
   const { data: activity = [], isLoading: activityLoading } = useRecentActivity()
   const { data: clubs = [], isLoading: clubsLoading } = useClubs()
-  const invalidateStats = useInvalidateStats()
 
 
 
@@ -93,7 +92,7 @@ export function DashboardSimple() {
             </div>
             <div className="p-6">
               <div className="space-y-4">
-                {activity.map((item) => (
+                {activity.map((item: any) => (
                   <div key={item.id} className="flex items-start space-x-3">
                     <div className="flex-shrink-0">
                       <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center">

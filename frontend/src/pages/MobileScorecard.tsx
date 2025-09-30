@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Save, Eye, Camera, Calculator, RotateCcw, CheckCircle2 } from 'lucide-react'
+import { ArrowLeft, Save, Eye, CheckCircle2 } from 'lucide-react'
 import { useTournaments, useTournamentParticipants } from '@/hooks/useTournaments'
 import { useQuery } from '@tanstack/react-query'
 

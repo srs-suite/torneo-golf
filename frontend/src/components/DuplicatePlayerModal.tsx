@@ -1,4 +1,3 @@
-import React from 'react';
 import { AlertTriangle, User, MapPin, Hash, Trophy } from 'lucide-react';
 
 interface DuplicatePlayer {

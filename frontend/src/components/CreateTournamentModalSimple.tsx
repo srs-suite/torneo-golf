@@ -5,11 +5,7 @@ import { X, Trophy, Calendar, DollarSign } from 'lucide-react'
 import { useCreateTournament, useUpdateTournament } from '@/hooks/useTournaments'
 import { Tournament, CreateTournamentData } from '@/types/tournament'
 import { 
-  formatDateArgentina, 
-  formatCurrencyArgentina, 
-  getCurrentDateHTML, 
-  convertArgentinaDateToHTML,
-  convertHTMLDateToArgentina 
+  getCurrentDateHTML
 } from '@/utils/dateFormatter'
 import { DateInput } from './DateInput'
 import { TimeInput } from './TimeInput'
@@ -68,7 +64,6 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
     }
   })
 
-  const tournamentType = watch('tournament_type')
 
   const onSubmit = async (data: CreateTournamentData) => {
     console.log('Enviando datos del torneo:', data)

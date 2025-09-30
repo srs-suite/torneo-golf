@@ -70,6 +70,7 @@ export interface UpdateClubRequest {
   maxMembers?: number
   slopeRating?: number
   courseRating?: number
+  subscription_status?: 'active' | 'suspended' | 'cancelled'
 }
 
 export interface ApiResponse<T = any> {

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, Search, Filter, RefreshCw } from 'lucide-react'
+import { Plus, Filter, RefreshCw } from 'lucide-react'
 import { useClubs } from '@/hooks/useClubs'
 import { ClubCard } from '@/components/ClubCard'
 import { CreateClubModal } from '@/components/CreateClubModal'

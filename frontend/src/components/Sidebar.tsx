@@ -3,7 +3,6 @@ import {
   LayoutGrid, 
   Building2, 
   Users, 
-  UserPlus,
   CreditCard, 
   FileText, 
   Settings,

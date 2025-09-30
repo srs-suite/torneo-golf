@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Trophy, Medal, Award, Crown, Printer } from 'lucide-react';
 import { useTournamentScorecards } from '../hooks/useScorecards';
@@ -190,15 +190,15 @@ export default function TournamentResults() {
         .filter(category.filter)
         .map(scorecard => ({
           player_name: scorecard.player_name,
-          player_type: scorecard.player_type || 'member',
-          handicap_local: scorecard.handicap_local,
-          handicap_index: scorecard.handicap_index,
+          player_type: (scorecard as any).player_type || 'member',
+          handicap_local: (scorecard as any).handicap_local,
+          handicap_index: scorecard.handicap_index || null,
           total_gross: scorecard.total_gross || 0,
-          total_net: (scorecard.total_gross || 0) - Math.round(scorecard.handicap_local || scorecard.handicap_index || 0),
+          total_net: (scorecard.total_gross || 0) - Math.round((scorecard as any).handicap_local || scorecard.handicap_index || 0),
           front_nine: scorecard.front_nine || 0,
           back_nine: scorecard.back_nine || 0,
-          member_number: scorecard.member_number,
-          club_name: scorecard.club_name,
+          member_number: (scorecard as any).member_number,
+          club_name: (scorecard as any).club_name,
           position: 0
         }))
         .sort((a, b) => a.total_net - b.total_net) // Ordenar por score neto (menor es mejor)
@@ -270,7 +270,7 @@ export default function TournamentResults() {
         <h1 className="text-3xl font-bold text-gray-900">Resultados Finales</h1>
         <h2 className="text-xl text-gray-700 mt-2">{tournament?.tournament_name}</h2>
         <p className="text-gray-600 mt-1">
-          {tournament?.start_date && new Date(tournament.start_date).toLocaleDateString('es-ES')}
+          {tournament?.start_time && new Date(tournament.start_time).toLocaleDateString('es-ES')}
         </p>
       </div>
 
@@ -295,7 +295,7 @@ export default function TournamentResults() {
                     <h1 className="text-2xl font-bold text-gray-900">{tournament?.tournament_name}</h1>
                     <h2 className="text-lg text-gray-700 mt-1">Resultados Finales - {category.name}</h2>
                     <p className="text-gray-600 text-sm mt-1">
-                      {tournament?.start_date && new Date(tournament.start_date).toLocaleDateString('es-ES')}
+                      {tournament?.start_time && new Date(tournament.start_time).toLocaleDateString('es-ES')}
                     </p>
                   </div>
                 )}

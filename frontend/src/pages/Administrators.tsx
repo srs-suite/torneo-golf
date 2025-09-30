@@ -1,15 +1,14 @@
 import { useState } from 'react'
-import { Plus, Search, Filter, RefreshCw, Users, Building2, Shield } from 'lucide-react'
+import { Plus, Search, RefreshCw, Users, Building2, Shield } from 'lucide-react'
 import { useAdministrators } from '@/hooks/useAdministrators'
 import { LoadingSpinner } from '@/components/LoadingSpinner'
 import { AdministratorCard } from '@/components/AdministratorCard'
-import { Administrator } from '@/types/administrator'
 
 export function Administrators() {
   const [searchTerm, setSearchTerm] = useState('')
   const [roleFilter, setRoleFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
-  const [editingAdmin, setEditingAdmin] = useState<Administrator | null>(null)
+  const [, setEditingAdmin] = useState<any>(null)
   
   const { data: administrators = [], isLoading, error, refetch } = useAdministrators()
 
@@ -39,7 +38,7 @@ export function Administrators() {
   if (error) {
     return (
       <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-        <p className="text-red-800">Error al cargar administradores: {error.message}</p>
+        <p className="text-red-800">Error al cargar administradores: {(error as any)?.message || 'Error desconocido'}</p>
       </div>
     )
   }

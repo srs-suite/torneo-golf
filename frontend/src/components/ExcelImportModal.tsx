@@ -292,7 +292,7 @@ export function ExcelImportModal({ isOpen, onClose, clubId, onImportSuccess }: E
             // Tiene matrícula: buscar por número de matrícula
             searchCriteria = `matrícula: ${member.member_number}`
             existingMember = existingMembers.find((existing: any) => 
-              existing.member_number === member.member_number.trim()
+              existing.member_number === member.member_number?.trim()
             )
           } else {
             // No tiene matrícula: buscar por nombre completo
@@ -307,7 +307,7 @@ export function ExcelImportModal({ isOpen, onClose, clubId, onImportSuccess }: E
           if (member.member_number && member.member_number.trim() !== '') {
             searchCriteria = `matrícula: ${member.member_number}`
             existingMember = existingMembers.find((existing: any) => 
-              existing.member_number === member.member_number.trim()
+              existing.member_number === member.member_number?.trim()
             )
           } else {
             // En modo actualizar, sin matrícula = no se puede procesar
@@ -328,11 +328,6 @@ export function ExcelImportModal({ isOpen, onClose, clubId, onImportSuccess }: E
           const existingFullName = `${existingMember.first_name} ${existingMember.last_name}`.trim()
           console.log(`🔍 Miembro encontrado por ${searchCriteria}: BD="${existingFullName}" (ID: ${existingMember.member_id}) | Excel="${fullName}"`)
           
-          // Función auxiliar para normalizar member_number (tratar NULL, undefined, '' como equivalentes)
-          const normalizeMemberNumber = (value: any) => {
-            if (value === null || value === undefined || value === '') return ''
-            return String(value).trim()
-          }
           
           if (importMode === 'create') {
             // MODO CREAR: Si ya existe, saltar (no duplicar)

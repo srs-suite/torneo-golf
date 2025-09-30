@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, FileText, Eye, Printer } from 'lucide-react';
 import { useTournamentScorecards } from '../hooks/useScorecards';
@@ -22,7 +22,7 @@ export default function ScorecardHistory() {
     clubId,
     tournamentId,
     isLoading,
-    error: error?.message,
+    error: (error as any)?.message,
     scorecards: scorecards?.length,
     data: scorecards
   });
@@ -53,7 +53,7 @@ export default function ScorecardHistory() {
         <div className="text-center">
           <p className="text-red-600 mb-2">Error al cargar el historial</p>
           <p className="text-sm text-gray-600 mb-4">
-            {error.message || 'Error desconocido'}
+            {(error as any)?.message || 'Error desconocido'}
           </p>
           <div className="space-x-4">
             <button

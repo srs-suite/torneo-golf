@@ -45,8 +45,8 @@ export function useUpdateMember(clubId: number) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ memberId, ...memberData }: UpdateMemberRequest) => 
-      memberService.updateMember(clubId, memberId, memberData),
+    mutationFn: (data: UpdateMemberRequest) => 
+      memberService.updateMember(clubId, data.memberId, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: MEMBER_QUERY_KEYS.members(clubId) });
       toast.success('Miembro actualizado exitosamente');

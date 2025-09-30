@@ -40,7 +40,7 @@ export function useCreateClub() {
       console.log('Hook: Enviando datos al service:', data)
       return clubService.createClub(data)
     },
-    onSuccess: (data) => {
+    onSuccess: () => {
       console.log('Club creado exitosamente, invalidando cache...')
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.clubs })
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.stats })

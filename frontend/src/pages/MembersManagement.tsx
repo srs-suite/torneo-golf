@@ -90,7 +90,7 @@ export function SociosManagement() {
   };
 
   if (isLoading) return <LoadingSpinner />;
-  if (error) return <div className="text-red-600">Error al cargar socios: {error.message}</div>;
+  if (error) return <div className="text-red-600">Error al cargar socios: {(error as any)?.message || 'Error desconocido'}</div>;
 
   return (
     <div className="space-y-6">
