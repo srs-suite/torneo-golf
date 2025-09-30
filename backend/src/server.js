@@ -4,6 +4,10 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
+import dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
 
 // Database functions (using real exports)
 import {
