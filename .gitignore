@@ -81,8 +81,6 @@ out
 # Nuxt.js build / generate output
 .nuxt
 dist
-# Pero incluir el build de producción del frontend
-!frontend/dist
 
 # Gatsby files
 .cache/

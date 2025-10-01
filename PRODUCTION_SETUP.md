@@ -51,6 +51,9 @@ npm install -g serve pm2
 # En el directorio del proyecto
 cd backend && npm install --production
 cd ../frontend && npm install --production
+
+# Compilar frontend para producción
+npm run build
 ```
 
 ---

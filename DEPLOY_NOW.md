@@ -73,6 +73,9 @@ cd backend && npm install --production
 
 # Frontend
 cd ../frontend && npm install --production
+
+# Compilar frontend para producción
+npm run build
 ```
 
 ### **3. Iniciar Servicios**
