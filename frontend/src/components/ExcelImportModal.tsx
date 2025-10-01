@@ -24,6 +24,25 @@ interface ValidationError {
   message: string
 }
 
+interface NameMatch {
+  row: number
+  excelName: string
+  dbName: string
+  dbId: number
+  matchType: 'exact' | 'intelligent' | 'matricula'
+  action: 'skipped' | 'updated' | 'created'
+  changes?: string[]
+}
+
+interface ImportSummary {
+  created: number
+  updated: number
+  skipped: number
+  notFound: number
+  nameMatches: NameMatch[]
+  errors: string[]
+}
+
 export function ExcelImportModal({ isOpen, onClose, clubId, onImportSuccess }: ExcelImportModalProps) {
   const [importedData, setImportedData] = useState<ImportedMember[]>([])
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([])
@@ -32,6 +51,8 @@ export function ExcelImportModal({ isOpen, onClose, clubId, onImportSuccess }: E
   const [importMode, setImportMode] = useState<'create' | 'update'>('create')
   const [showSuccessModal, setShowSuccessModal] = useState(false)
   const [successMessage, setSuccessMessage] = useState('')
+  const [importSummary, setImportSummary] = useState<ImportSummary | null>(null)
+  const [showDetailedReport, setShowDetailedReport] = useState(false)
 
   // Limpiar datos cuando se abre el modal
   if (isOpen && importedData.length === 0 && validationErrors.length === 0 && fileName === '') {
@@ -75,14 +96,169 @@ export function ExcelImportModal({ isOpen, onClose, clubId, onImportSuccess }: E
             {successMessage}
           </div>
           
-          {/* Button */}
-          <div className="flex justify-center">
+          {/* Buttons */}
+          <div className="flex justify-center space-x-3">
+            {importSummary && importSummary.nameMatches.length > 0 && (
+              <button
+                onClick={() => {
+                  setShowSuccessModal(false)
+                  setShowDetailedReport(true)
+                }}
+                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+              >
+                Ver Detalles
+              </button>
+            )}
             <button
               onClick={() => setShowSuccessModal(false)}
               className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium"
             >
               Entendido
             </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Modal de reporte detallado
+  if (showDetailedReport && importSummary) {
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="bg-white rounded-lg shadow-lg w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+          {/* Header */}
+          <div className="p-6 border-b border-gray-200">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-semibold text-gray-900">
+                📊 Reporte Detallado de Importación
+              </h2>
+              <button
+                onClick={() => setShowDetailedReport(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+          </div>
+
+          {/* Content */}
+          <div className="flex-1 p-6 overflow-y-auto">
+            {/* Resumen */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+              <div className="bg-green-50 p-4 rounded-lg text-center">
+                <div className="text-2xl font-bold text-green-600">{importSummary.created}</div>
+                <div className="text-sm text-green-700">Creados</div>
+              </div>
+              <div className="bg-blue-50 p-4 rounded-lg text-center">
+                <div className="text-2xl font-bold text-blue-600">{importSummary.updated}</div>
+                <div className="text-sm text-blue-700">Actualizados</div>
+              </div>
+              <div className="bg-yellow-50 p-4 rounded-lg text-center">
+                <div className="text-2xl font-bold text-yellow-600">{importSummary.skipped}</div>
+                <div className="text-sm text-yellow-700">Omitidos</div>
+              </div>
+              <div className="bg-red-50 p-4 rounded-lg text-center">
+                <div className="text-2xl font-bold text-red-600">{importSummary.notFound}</div>
+                <div className="text-sm text-red-700">No encontrados</div>
+              </div>
+            </div>
+
+            {/* Coincidencias */}
+            {importSummary.nameMatches.length > 0 && (
+              <div className="mb-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                  🎯 Coincidencias Detectadas ({importSummary.nameMatches.length})
+                </h3>
+                <div className="space-y-3">
+                  {importSummary.nameMatches.map((match, index) => (
+                    <div key={index} className={`p-4 rounded-lg border-l-4 ${
+                      match.matchType === 'intelligent' ? 'bg-orange-50 border-orange-400' :
+                      match.matchType === 'exact' ? 'bg-green-50 border-green-400' :
+                      'bg-blue-50 border-blue-400'
+                    }`}>
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center space-x-2 mb-2">
+                            <span className="text-sm font-medium text-gray-600">Fila {match.row}</span>
+                            <span className={`px-2 py-1 text-xs rounded-full ${
+                              match.matchType === 'intelligent' ? 'bg-orange-100 text-orange-800' :
+                              match.matchType === 'exact' ? 'bg-green-100 text-green-800' :
+                              'bg-blue-100 text-blue-800'
+                            }`}>
+                              {match.matchType === 'intelligent' ? 'Coincidencia Inteligente' :
+                               match.matchType === 'exact' ? 'Coincidencia Exacta' :
+                               'Por Matrícula'}
+                            </span>
+                            <span className={`px-2 py-1 text-xs rounded-full ${
+                              match.action === 'updated' ? 'bg-blue-100 text-blue-800' :
+                              match.action === 'skipped' ? 'bg-yellow-100 text-yellow-800' :
+                              'bg-green-100 text-green-800'
+                            }`}>
+                              {match.action === 'updated' ? 'Actualizado' :
+                               match.action === 'skipped' ? 'Omitido' :
+                               'Creado'}
+                            </span>
+                          </div>
+                          <div className="text-sm text-gray-700">
+                            <div><strong>Excel:</strong> {match.excelName}</div>
+                            <div><strong>Base de Datos:</strong> {match.dbName} (ID: {match.dbId})</div>
+                            {match.changes && match.changes.length > 0 && (
+                              <div className="mt-2">
+                                <strong>Cambios realizados:</strong>
+                                <ul className="list-disc list-inside ml-2">
+                                  {match.changes.map((change, i) => (
+                                    <li key={i} className="text-xs text-gray-600">{change}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Advertencia para coincidencias inteligentes */}
+            {importSummary.nameMatches.some(m => m.matchType === 'intelligent') && (
+              <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
+                <div className="flex items-start">
+                  <AlertCircle className="w-5 h-5 text-orange-500 mt-0.5 mr-3 flex-shrink-0" />
+                  <div>
+                    <h4 className="text-sm font-medium text-orange-800 mb-1">
+                      ⚠️ Atención: Coincidencias Automáticas
+                    </h4>
+                    <p className="text-sm text-orange-700">
+                      Se detectaron coincidencias automáticas basadas en apellido y primer nombre. 
+                      Verifica que las coincidencias sean correctas, especialmente si hay múltiples 
+                      personas con nombres similares en tu club.
+                    </p>
+                    <div className="mt-3 text-sm text-orange-700">
+                      <strong>Casos especiales:</strong>
+                      <ul className="list-disc list-inside mt-1 space-y-1">
+                        <li>Si una persona en BD tiene matrícula pero en Excel no, el sistema podría no detectar la coincidencia</li>
+                        <li>Si son personas diferentes con nombres similares, revisa manualmente los duplicados</li>
+                        <li>Recomendación: Siempre incluir matrículas en el Excel para mayor precisión</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="p-6 border-t border-gray-200">
+            <div className="flex justify-end">
+              <button
+                onClick={() => setShowDetailedReport(false)}
+                className="px-6 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors font-medium"
+              >
+                Cerrar
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -102,6 +278,69 @@ export function ExcelImportModal({ isOpen, onClose, clubId, onImportSuccess }: E
       })
       .filter(word => word.length > 0) // Remover palabras vacías
       .join(' ')
+  }
+
+  // Función para comparar nombres de manera inteligente
+  const namesMatch = (name1: string, name2: string): boolean => {
+    if (!name1 || !name2) return false
+    
+    // Normalizar nombres (minúsculas, sin acentos, sin espacios extra)
+    const normalize = (name: string) => name
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '') // Remover acentos
+      .replace(/\s+/g, ' ')
+      .trim()
+    
+    const normalized1 = normalize(name1)
+    const normalized2 = normalize(name2)
+    
+    // Si son exactamente iguales
+    if (normalized1 === normalized2) return true
+    
+    // Dividir en palabras
+    const words1 = normalized1.split(' ').filter(w => w.length > 0)
+    const words2 = normalized2.split(' ').filter(w => w.length > 0)
+    
+    if (words1.length === 0 || words2.length === 0) return false
+    
+    // Estrategia: El apellido (última palabra) debe coincidir + al menos un nombre
+    const lastName1 = words1[words1.length - 1]
+    const lastName2 = words2[words2.length - 1]
+    const firstNames1 = words1.slice(0, -1)
+    const firstNames2 = words2.slice(0, -1)
+    
+    // El apellido debe coincidir
+    if (lastName1 !== lastName2) return false
+    
+    // Al menos un nombre debe coincidir
+    if (firstNames1.length === 0 || firstNames2.length === 0) return false
+    
+    // Verificar si hay al menos una coincidencia en los nombres
+    const hasCommonFirstName = firstNames1.some(name1 => 
+      firstNames2.some(name2 => name1 === name2)
+    )
+    
+    if (!hasCommonFirstName) return false
+    
+    // REGLA ADICIONAL: Si hay diferencia significativa en cantidad de nombres, ser más conservador
+    const nameDifference = Math.abs(firstNames1.length - firstNames2.length)
+    
+    // Si uno tiene 1 nombre y el otro tiene 3+ nombres, es sospechoso
+    if (nameDifference >= 2) {
+      // Solo hacer match si el nombre más corto está COMPLETAMENTE contenido en el más largo
+      const shorterNames = firstNames1.length < firstNames2.length ? firstNames1 : firstNames2
+      const longerNames = firstNames1.length < firstNames2.length ? firstNames2 : firstNames1
+      
+      // Todos los nombres cortos deben estar en los nombres largos
+      const allNamesMatch = shorterNames.every(shortName => 
+        longerNames.includes(shortName)
+      )
+      
+      return allNamesMatch
+    }
+    
+    return true
   }
 
   const validateData = (data: any[]): { valid: ImportedMember[], errors: ValidationError[] } => {
@@ -265,9 +504,13 @@ export function ExcelImportModal({ isOpen, onClose, clubId, onImportSuccess }: E
       let updated = 0
       let skipped = 0
       let notFound = 0
+      const nameMatches: NameMatch[] = []
+      const errors: string[] = []
 
       // Procesar cada miembro del Excel
-      for (const member of importedData) {
+      for (let index = 0; index < importedData.length; index++) {
+        const member = importedData[index]
+        const rowNumber = index + 2 // +2 porque empezamos en fila 2 (después del header)
         // Dividir nombre completo para la API
         const nameParts = member.full_name.trim().split(' ')
         let firstName = ''
@@ -291,15 +534,46 @@ export function ExcelImportModal({ isOpen, onClose, clubId, onImportSuccess }: E
           if (member.member_number && member.member_number.trim() !== '') {
             // Tiene matrícula: buscar por número de matrícula
             searchCriteria = `matrícula: ${member.member_number}`
-            existingMember = existingMembers.find((existing: any) => 
-              existing.member_number === member.member_number?.trim()
-            )
+            existingMember = existingMembers.find((existing: any) => {
+              const isMatch = existing.member_number === member.member_number?.trim()
+              if (isMatch) {
+                const existingFullName = `${existing.first_name} ${existing.last_name}`.trim()
+                nameMatches.push({
+                  row: rowNumber,
+                  excelName: fullName,
+                  dbName: existingFullName,
+                  dbId: existing.member_id,
+                  matchType: 'matricula',
+                  action: 'skipped' // Se actualizará después según la acción tomada
+                })
+              }
+              return isMatch
+            })
           } else {
-            // No tiene matrícula: buscar por nombre completo
+            // No tiene matrícula: buscar por nombre completo con algoritmo inteligente
             searchCriteria = `nombre: ${fullName}`
             existingMember = existingMembers.find((existing: any) => {
               const existingFullName = `${existing.first_name} ${existing.last_name}`.trim()
-              return existingFullName.toLowerCase() === fullName.toLowerCase()
+              const isExactMatch = existingFullName.toLowerCase() === fullName.toLowerCase()
+              const isIntelligentMatch = !isExactMatch && namesMatch(existingFullName, fullName)
+              
+              if (isExactMatch || isIntelligentMatch) {
+                // Registrar la coincidencia para el reporte
+                nameMatches.push({
+                  row: rowNumber,
+                  excelName: fullName,
+                  dbName: existingFullName,
+                  dbId: existing.member_id,
+                  matchType: isExactMatch ? 'exact' : 'intelligent',
+                  action: 'skipped' // Se actualizará después según la acción tomada
+                })
+                
+                if (isIntelligentMatch) {
+                  console.log(`🎯 COINCIDENCIA INTELIGENTE: BD="${existingFullName}" | Excel="${fullName}"`)
+                }
+              }
+              
+              return isExactMatch || isIntelligentMatch
             })
           }
         } else {
@@ -345,15 +619,25 @@ export function ExcelImportModal({ isOpen, onClose, clubId, onImportSuccess }: E
             if (hasChanges) {
               // MODO ACTUALIZAR: Solo actualizar Index y HCP, NUNCA el nombre
               const updateData: any = {}
+              const changes: string[] = []
               
               // Actualizar ÚNICAMENTE handicaps si son diferentes
               if (member.handicap_index !== null && existingMember.handicap_index !== member.handicap_index) {
                 updateData.handicap_index = member.handicap_index
+                changes.push(`Index: ${existingMember.handicap_index} → ${member.handicap_index}`)
                 console.log(`📊 Actualizando Index: ${existingMember.handicap_index} → ${member.handicap_index}`)
               }
               if (member.handicap_local !== null && existingMember.handicap_local !== member.handicap_local) {
                 updateData.handicap_local = member.handicap_local
+                changes.push(`HCP: ${existingMember.handicap_local} → ${member.handicap_local}`)
                 console.log(`🎯 Actualizando HCP: ${existingMember.handicap_local} → ${member.handicap_local}`)
+              }
+              
+              // Actualizar el tracking con los cambios
+              const matchIndex = nameMatches.findIndex(m => m.row === rowNumber)
+              if (matchIndex >= 0) {
+                nameMatches[matchIndex].action = 'updated'
+                nameMatches[matchIndex].changes = changes
               }
               
               // Log para mostrar que el nombre NO se actualiza aunque sea diferente
@@ -425,9 +709,20 @@ export function ExcelImportModal({ isOpen, onClose, clubId, onImportSuccess }: E
         }
       }
 
-      // Mostrar resumen simplificado
-      let summaryMessage = ''
+      // Crear resumen detallado con reporte de coincidencias
+      const summary: ImportSummary = {
+        created,
+        updated,
+        skipped,
+        notFound,
+        nameMatches,
+        errors
+      }
       
+      setImportSummary(summary)
+      
+      // Mostrar resumen básico
+      let summaryMessage = ''
       if (importMode === 'create') {
         summaryMessage = `Se crearon ${created} socios exitosamente.`
         if (skipped > 0) {
@@ -441,6 +736,13 @@ export function ExcelImportModal({ isOpen, onClose, clubId, onImportSuccess }: E
         if (notFound > 0) {
           summaryMessage += `\n\n${notFound} socios no se pudieron actualizar (sin matrícula).`
         }
+      }
+      
+      // Agregar información sobre coincidencias inteligentes
+      const intelligentMatches = nameMatches.filter(m => m.matchType === 'intelligent')
+      if (intelligentMatches.length > 0) {
+        summaryMessage += `\n\n⚠️ ${intelligentMatches.length} coincidencias automáticas detectadas.`
+        summaryMessage += `\nHaz clic en "Ver Detalles" para revisar.`
       }
       
       setSuccessMessage(summaryMessage)

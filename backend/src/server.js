@@ -6,8 +6,8 @@ import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 
-// Load environment variables
-dotenv.config();
+// Load environment variables from root directory
+dotenv.config({ path: '../../.env' });
 
 // Database functions (using real exports)
 import {
@@ -28,7 +28,10 @@ import {
     saveScorecard, getScorecardsByTournament, getScorecardByPlayer, updateScorecard, deleteScorecard, getScorecardForPrint,
     
     // Course functions
-    getCourseHoles, updateCourseHole, getCourseStatistics
+    getCourseHoles, updateCourseHole, getCourseStatistics,
+    
+    // System functions
+    getSystemStats, getRecentActivity
 } from './services/database.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -158,6 +161,23 @@ async function handleSystemAPI(req, res, pathParts) {
                 if (method === 'GET') {
                     const admins = await getAllAdministrators();
                     sendJSON(res, { data: admins });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
+                break;
+            case 'stats':
+                if (method === 'GET') {
+                    const stats = await getSystemStats();
+                    sendJSON(res, { data: stats });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
+                break;
+            case 'recent':
+                if (method === 'GET') {
+                    const limit = parseInt(new URL(req.url, `http://${req.headers.host}`).searchParams.get('limit')) || 10;
+                    const activity = await getRecentActivity(limit);
+                    sendJSON(res, { data: activity });
                 } else {
                     sendError(res, 'Método no permitido', 405);
                 }

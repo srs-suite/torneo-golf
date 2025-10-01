@@ -1074,10 +1074,10 @@ async function getRecentActivity(limit = 10) {
     const query = `
         SELECT 
             al.*,
-            gc.course_name,
+            c.club_name,
             ca.full_name as user_name
         FROM activity_logs al
-        LEFT JOIN golf_courses gc ON al.course_id = gc.course_id
+        LEFT JOIN clubs c ON al.course_id = c.club_id
         LEFT JOIN club_administrators ca ON al.user_id = ca.admin_id
         ORDER BY al.created_at DESC
         LIMIT ?
