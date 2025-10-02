@@ -12,15 +12,37 @@ const backendApp = {
   max_memory_restart: '1G',
   env: {
     NODE_ENV: 'development',
-    PORT: 8000,
-    // Variables de entorno para el backend (usar archivo .env en desarrollo)
-    FRONTEND_URL: 'http://localhost:5173'
+    PORT: 3005,
+    // Variables de entorno para el backend
+    DB_HOST: 'vps123353.inmotionhosting.com',
+    DB_PORT: 3306,
+    DB_USER: 'retailso_torneo',
+    DB_PASSWORD: 'QKVdSfd4RuHr',
+    DB_NAME: 'retailso_torneog',
+    JWT_SECRET: 'your_super_secret_jwt_key_here',
+    JWT_EXPIRES_IN: '7d',
+    FRONTEND_URL: 'http://localhost:5173',
+    UPLOAD_PATH: 'uploads',
+    MAX_FILE_SIZE: 2097152,
+    RATE_LIMIT_WINDOW_MS: 900000,
+    RATE_LIMIT_MAX_REQUESTS: 100
   },
   env_production: {
     NODE_ENV: 'production',
-    PORT: 8000,
-    // Variables de entorno para producción (usar archivo .env.production)
-    FRONTEND_URL: 'https://torneogolf.retailsolutionstimetracker.com'
+    PORT: 3005,
+    // Variables de entorno para producción
+    DB_HOST: 'vps123353.inmotionhosting.com',
+    DB_PORT: 3306,
+    DB_USER: 'retailso_torneo',
+    DB_PASSWORD: 'QKVdSfd4RuHr',
+    DB_NAME: 'retailso_torneog',
+    JWT_SECRET: 'your_production_jwt_secret_key_here',
+    JWT_EXPIRES_IN: '7d',
+    FRONTEND_URL: 'http://localhost:4173',
+    UPLOAD_PATH: 'uploads',
+    MAX_FILE_SIZE: 2097152,
+    RATE_LIMIT_WINDOW_MS: 900000,
+    RATE_LIMIT_MAX_REQUESTS: 100
   },
   error_file: './logs/backend-err.log',
   out_file: './logs/backend-out.log',
@@ -37,8 +59,8 @@ const backendApp = {
 // Configuración del frontend (solo en Linux)
 const frontendApp = {
   name: 'teetracker-frontend',
-  script: 'serve',
-  args: '-s dist -l 4173',
+  script: './node_modules/vite/bin/vite.js',
+  args: 'preview',
   cwd: './frontend',
   instances: 1,
   exec_mode: 'fork',
