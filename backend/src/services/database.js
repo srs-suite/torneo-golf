@@ -12,17 +12,17 @@ import crypto from 'crypto';
 async function getAllClubs() {
     const query = `
         SELECT 
-            c.*,
+            c.club_id AS course_id,
+            c.club_name AS course_name,
             COUNT(DISTINCT m.member_id) as total_members,
             COUNT(DISTINCT t.tournament_id) as total_tournaments,
             COUNT(DISTINCT ca.admin_id) as administrators
-        FROM golf_courses c
-        LEFT JOIN members m ON c.course_id = m.course_id AND m.is_active = true
-        LEFT JOIN tournaments t ON c.course_id = t.course_id
-        LEFT JOIN club_administrators ca ON c.course_id = ca.course_id
-        WHERE c.is_active = true
-        GROUP BY c.course_id
-        ORDER BY c.course_name
+        FROM clubs c
+        LEFT JOIN members m ON m.course_id = c.club_id AND (m.membership_status = 'active' OR m.membership_status IS NULL)
+        LEFT JOIN tournaments t ON t.course_id = c.club_id
+        LEFT JOIN club_administrators ca ON ca.course_id = c.club_id
+        GROUP BY c.club_id, c.club_name
+        ORDER BY c.club_name
     `;
     
     const { rows } = await executeQuery(query);
@@ -35,14 +35,15 @@ async function getAllClubs() {
 async function getClubById(clubId) {
     const query = `
         SELECT 
-            c.*,
+            c.club_id AS course_id,
+            c.club_name AS course_name,
             COUNT(DISTINCT m.member_id) as total_members,
             COUNT(t.tournament_id) as total_tournaments
-        FROM golf_courses c
-        LEFT JOIN members m ON c.course_id = m.course_id AND m.is_active = true
-        LEFT JOIN tournaments t ON c.course_id = t.course_id
-        WHERE c.course_id = ? AND c.is_active = true
-        GROUP BY c.course_id
+        FROM clubs c
+        LEFT JOIN members m ON m.course_id = c.club_id AND (m.membership_status = 'active' OR m.membership_status IS NULL)
+        LEFT JOIN tournaments t ON t.course_id = c.club_id
+        WHERE c.club_id = ?
+        GROUP BY c.club_id, c.club_name
     `;
     
     const { rows } = await executeQuery(query, [clubId]);
@@ -54,7 +55,7 @@ async function getClubById(clubId) {
  */
 async function getClubByCode(clubCode) {
     const query = `
-        SELECT * FROM golf_courses 
+        SELECT * FROM clubs 
         WHERE club_code = ? AND is_active = true
     `;
     
@@ -69,7 +70,7 @@ async function createClub(clubData) {
     const queries = [
         {
             query: `
-                INSERT INTO golf_courses (
+                INSERT INTO clubs (
                     club_code, course_name, address, city, country,
                     timezone, currency, phone, email, website, logo_path,
                     par, physical_holes, current_members, subscription_status, subscription_start,
@@ -135,7 +136,7 @@ async function updateClub(clubId, clubData) {
     const queries = [
         {
             query: `
-                UPDATE golf_courses SET
+                UPDATE clubs SET
                     club_code = ?, course_name = ?, address = ?, city = ?, country = ?,
                     timezone = ?, currency = ?, phone = ?, email = ?, website = ?,
                     logo_path = ?, par = ?, updated_at = CURRENT_TIMESTAMP
@@ -196,7 +197,7 @@ async function updateClub(clubId, clubData) {
  */
 async function deleteClub(clubId) {
     const query = `
-        UPDATE golf_courses SET 
+        UPDATE clubs SET 
             is_active = false, 
             updated_at = CURRENT_TIMESTAMP 
         WHERE course_id = ?
@@ -220,7 +221,7 @@ async function getAllAdministrators(clubId = null) {
             gc.course_name as club_name,
             gc.club_code
         FROM club_administrators ca
-        LEFT JOIN golf_courses gc ON ca.course_id = gc.course_id
+        LEFT JOIN clubs gc ON ca.course_id = gc.club_id
         WHERE ca.is_active = true
     `;
     
@@ -247,7 +248,7 @@ async function getAdministratorById(adminId) {
             gc.course_name as club_name,
             gc.club_code
         FROM club_administrators ca
-        LEFT JOIN golf_courses gc ON ca.course_id = gc.course_id
+        LEFT JOIN clubs gc ON ca.course_id = gc.club_id
         WHERE ca.admin_id = ? AND ca.is_active = true
     `;
     
@@ -265,7 +266,7 @@ async function getAdministratorByUsername(username) {
             gc.course_name as club_name,
             gc.club_code
         FROM club_administrators ca
-        LEFT JOIN golf_courses gc ON ca.course_id = gc.course_id
+        LEFT JOIN clubs gc ON ca.course_id = gc.club_id
         WHERE ca.username = ? AND ca.is_active = true
     `;
     
@@ -409,7 +410,7 @@ async function createCourseHolesTable() {
                     description TEXT DEFAULT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    FOREIGN KEY (course_id) REFERENCES golf_courses(course_id) ON DELETE CASCADE,
+                    FOREIGN KEY (course_id) REFERENCES clubs(club_id) ON DELETE CASCADE,
                     UNIQUE KEY unique_course_hole (course_id, hole_number),
                     INDEX idx_course_holes_course (course_id),
                     INDEX idx_course_holes_number (hole_number)
@@ -501,7 +502,7 @@ async function createDefaultTeesForExistingHoles() {
         const getHoles = `
             SELECT h.hole_id, h.hole_number, h.par, c.course_name
             FROM course_holes h
-            JOIN golf_courses c ON h.course_id = c.course_id
+            JOIN clubs c ON h.course_id = c.club_id
             WHERE c.is_active = true
             ORDER BY c.course_id, h.hole_number
         `;
@@ -577,7 +578,7 @@ async function createDefaultHolesForExistingClubs() {
         console.log('🔧 Creando hoyos por defecto para clubes existentes...');
         
         // Obtener todos los clubes existentes
-        const getClubs = `SELECT course_id, course_name FROM golf_courses WHERE is_active = true`;
+        const getClubs = `SELECT club_id as course_id, club_name as course_name FROM clubs WHERE is_active = true`;
         const { rows: clubs } = await executeQuery(getClubs, []);
         
         for (const club of clubs) {
@@ -1049,10 +1050,10 @@ async function getCourseTeesGroupedByHole(courseId) {
  */
 async function getSystemStats() {
     const queries = [
-        'SELECT COUNT(*) as total_clubs FROM golf_courses WHERE is_active = true',
-        'SELECT COUNT(*) as total_members FROM members WHERE is_active = true',
+        'SELECT COUNT(*) as total_clubs FROM clubs',
+        "SELECT COUNT(*) as total_members FROM members WHERE membership_status = 'active'",
         'SELECT COUNT(*) as total_tournaments FROM tournaments',
-        'SELECT COUNT(*) as total_administrators FROM club_administrators WHERE is_active = true'
+        'SELECT COUNT(*) as total_administrators FROM club_administrators'
     ];
     
     const results = await Promise.all(
@@ -1390,7 +1391,7 @@ async function searchMembers(courseId, searchTerm) {
 async function getAllTournaments(courseId) {
     const query = `
         SELECT t.*, 
-               gc.course_name,
+               gc.club_name AS course_name,
                COALESCE(COUNT(DISTINCT tp.participation_id), 0) as current_participants,
                COALESCE(COUNT(DISTINCT CASE WHEN tpg.group_number IS NOT NULL THEN tpg.group_number END), 0) as configured_groups,
                COALESCE(COUNT(DISTINCT CASE WHEN tpg.tee_time IS NOT NULL THEN tpg.group_number END), 0) as groups_with_tee_times,
@@ -1403,7 +1404,7 @@ async function getAllTournaments(courseId) {
                    ELSE 'not_configured'
                END as tee_time_status
         FROM tournaments t
-        LEFT JOIN golf_courses gc ON t.course_id = gc.course_id
+        LEFT JOIN clubs gc ON t.course_id = gc.club_id
         LEFT JOIN tournament_participants tp ON t.tournament_id = tp.tournament_id 
                                              AND tp.status IN ('registered', 'confirmed')
         LEFT JOIN tournament_participants tpg ON t.tournament_id = tpg.tournament_id 
@@ -1419,10 +1420,10 @@ async function getAllTournaments(courseId) {
 async function getTournamentById(courseId, tournamentId) {
     const query = `
         SELECT t.*, 
-               gc.course_name,
+               gc.club_name AS course_name,
                COALESCE(COUNT(tp.participation_id), 0) as current_participants
         FROM tournaments t
-        LEFT JOIN golf_courses gc ON t.course_id = gc.course_id
+        LEFT JOIN clubs gc ON t.course_id = gc.club_id
         LEFT JOIN tournament_participants tp ON t.tournament_id = tp.tournament_id 
                                              AND tp.status IN ('registered', 'confirmed')
         WHERE t.course_id = ? AND t.tournament_id = ?
@@ -1582,13 +1583,13 @@ async function getTournamentParticipants(courseId, tournamentId) {
                    WHEN tp.player_type = 'external' THEN 
                        COALESCE(tp.player_club, ep.home_club)
                    ELSE 
-                       gc.course_name
+                       gc.club_name
                END as player_club,
                tp.player_type
         FROM tournament_participants tp
         LEFT JOIN members m ON tp.member_id = m.member_id AND tp.player_type IN ('member', 'visitor')
         LEFT JOIN external_players ep ON tp.external_player_id = ep.external_id AND tp.player_type = 'external'
-        LEFT JOIN golf_courses gc ON m.course_id = gc.course_id
+        LEFT JOIN clubs gc ON m.course_id = gc.club_id
         WHERE tp.tournament_id = ?
         ORDER BY tp.registration_date DESC
     `;
@@ -1640,13 +1641,13 @@ async function getTournamentParticipantsById(tournamentId) {
                    WHEN tp.player_type = 'external' THEN 
                        COALESCE(tp.player_club, ep.home_club)
                    ELSE 
-                       gc.course_name
+                       gc.club_name
                END as player_club,
                tp.player_type
         FROM tournament_participants tp
         LEFT JOIN members m ON tp.member_id = m.member_id AND tp.player_type IN ('member', 'visitor')
         LEFT JOIN external_players ep ON tp.external_player_id = ep.external_id AND tp.player_type = 'external'
-        LEFT JOIN golf_courses gc ON m.course_id = gc.course_id
+        LEFT JOIN clubs gc ON m.course_id = gc.club_id
         WHERE tp.tournament_id = ?
         ORDER BY tp.registration_date DESC
     `;
@@ -1709,7 +1710,7 @@ async function searchPlayersForTournament(courseId, query) {
             CASE WHEN m.course_id = ? THEN 'member' ELSE 'visitor' END as player_type,
             m.course_id = ? as is_home_member
         FROM members m
-        LEFT JOIN golf_courses gc ON m.course_id = gc.course_id
+        LEFT JOIN clubs gc ON m.course_id = gc.club_id
         WHERE (m.first_name LIKE ? OR m.last_name LIKE ? OR m.email LIKE ? OR m.phone LIKE ?)
         AND m.membership_status = 'active'
         ORDER BY 
@@ -1756,11 +1757,40 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
         participantData
     });
     
+    // Normalizar payload desde frontend
+    try {
+        if (participantData && participantData.is_member && !participantData.member_id && participantData.player_id) {
+            participantData.member_id = participantData.player_id;
+            participantData.player_type = 'member';
+        }
+        if (!participantData.player_type && participantData.member_id) {
+            participantData.player_type = 'member';
+        }
+        if (!participantData.status) participantData.status = 'registered';
+        if (!participantData.payment_status) participantData.payment_status = 'pending';
+    } catch (_) {}
+    
     // Determinar si es miembro del club o visitante de otro club
     const isVisitor = participantData.player_type === 'visitor' && participantData.player_id;
     const isExternalPlayer = participantData.player_type === 'external' && participantData.external_player_id;
     const isHomeMember = participantData.player_type === 'member' && participantData.member_id;
     
+    // Evitar duplicados: mismo torneo + mismo miembro
+    try {
+        if (participantData.member_id) {
+            const dupCheck = await executeQuery(
+                'SELECT participation_id FROM tournament_participants WHERE tournament_id = ? AND member_id = ? LIMIT 1',
+                [tournamentId, participantData.member_id]
+            );
+            if (dupCheck.rows && dupCheck.rows.length > 0) {
+                throw new Error('El jugador ya está agregado a este torneo');
+            }
+        }
+    } catch (dupErr) {
+        console.warn('⚠️ Duplicate participant check:', dupErr?.message || dupErr);
+        throw dupErr;
+    }
+
     let query, params;
     
     if (isVisitor) {
@@ -1876,6 +1906,59 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
     
     const { rows } = await executeQuery(query, params);
     console.log('✅ Participant added successfully, insertId:', rows.insertId);
+
+    // Auto-asignación a grupo si ya existen grupos configurados
+    try {
+        // Buscar grupos existentes con conteo de jugadores
+        const groupsQuery = `
+            SELECT tp.group_number, COUNT(*) as cnt
+            FROM tournament_participants tp
+            WHERE tp.tournament_id = ? AND tp.group_number IS NOT NULL
+            GROUP BY tp.group_number
+            ORDER BY tp.group_number
+        `;
+        const { rows: existingGroups } = await executeQuery(groupsQuery, [tournamentId]);
+
+        let targetGroup = null;
+        if (existingGroups.length > 0) {
+            // Elegir el primer grupo con menos de 4 jugadores
+            const notFull = existingGroups.find(g => (g.cnt || 0) < 4);
+            if (notFull) {
+                targetGroup = notFull.group_number;
+            } else {
+                // Si todos llenos, buscar número de grupo siguiente disponible
+                const numbers = existingGroups.map(g => g.group_number).sort((a,b)=>a-b);
+                const next = numbers.length ? Math.max(...numbers) + 1 : 1;
+                targetGroup = next;
+            }
+        } else {
+            // Si no hay grupos con participantes, ver si hay grupo vacío registrado
+            const { rows: empty } = await getPool().execute(
+                'SELECT group_number FROM empty_tournament_groups WHERE tournament_id = ? ORDER BY group_number LIMIT 1',
+                [tournamentId]
+            );
+            targetGroup = empty.length ? empty[0].group_number : 1;
+        }
+
+        // Asegurar que exista el grupo vacío si se necesita nuevo
+        if (targetGroup && existingGroups.find(g => g.group_number === targetGroup) == null) {
+            try {
+                await getPool().execute(
+                    'INSERT INTO empty_tournament_groups (tournament_id, group_number) VALUES (?, ?) ON DUPLICATE KEY UPDATE group_number = VALUES(group_number)',
+                    [tournamentId, targetGroup]
+                );
+            } catch (_) {}
+        }
+
+        // Asignar el participante al grupo elegido (sin tocar horario/hoyo todavía)
+        await executeQuery(
+            'UPDATE tournament_participants SET group_number = ? WHERE participation_id = ? AND tournament_id = ?',
+            [targetGroup, rows.insertId, tournamentId]
+        );
+        console.log(`✅ Participant ${rows.insertId} auto-asignado al grupo ${targetGroup}`);
+    } catch (autoErr) {
+        console.warn('⚠️ Auto-assign group failed (continuing):', autoErr?.message || autoErr);
+    }
     
     // Log activity
     try {
@@ -2064,7 +2147,7 @@ async function getExternalPlayers(clubId) {
             m.created_at,
             m.updated_at
         FROM members m
-        JOIN golf_courses gc ON m.course_id = gc.course_id
+        JOIN clubs gc ON m.course_id = gc.club_id
         WHERE m.course_id != ? AND m.is_active = true
         ORDER BY gc.course_name, m.first_name, m.last_name
     `;
@@ -2968,6 +3051,9 @@ async function moveGroupToHole(courseId, tournamentId, groupNumber, newStartingH
             }
         }
 
+        // Normalizar hoyo: 0 => NULL (sin asignar)
+        const normalizedHole = (newStartingHole === 0 || newStartingHole === '0') ? null : newStartingHole;
+
         // Actualizar todos los jugadores del grupo con el nuevo hoyo de salida y el tee time corregido
         let updateQuery, params;
         
@@ -2977,7 +3063,7 @@ async function moveGroupToHole(courseId, tournamentId, groupNumber, newStartingH
                 SET starting_hole = ?, tee_time = ?
                 WHERE tournament_id = ? AND group_number = ?
             `;
-            params = [newStartingHole, finalTeeTime, tournamentId, groupNumber];
+            params = [normalizedHole, finalTeeTime, tournamentId, groupNumber];
         } else {
             // Si newTeeTime es null, limpiar el horario (establecer a NULL)
             updateQuery = `
@@ -2985,7 +3071,7 @@ async function moveGroupToHole(courseId, tournamentId, groupNumber, newStartingH
                 SET starting_hole = ?, tee_time = NULL
                 WHERE tournament_id = ? AND group_number = ?
             `;
-            params = [newStartingHole, tournamentId, groupNumber];
+            params = [normalizedHole, tournamentId, groupNumber];
         }
 
         console.log('🎯 SQL Query:', updateQuery);
@@ -2998,13 +3084,13 @@ async function moveGroupToHole(courseId, tournamentId, groupNumber, newStartingH
             if (finalTeeTime !== null && finalTeeTime !== undefined) {
                 await getPool().execute(
                     'UPDATE empty_tournament_groups SET starting_hole = ?, tee_time = ? WHERE tournament_id = ? AND group_number = ?',
-                    [newStartingHole, finalTeeTime, tournamentId, groupNumber]
+                    [normalizedHole, finalTeeTime, tournamentId, groupNumber]
                 );
             } else {
                 // Si finalTeeTime es null, limpiar el horario
                 await getPool().execute(
                     'UPDATE empty_tournament_groups SET starting_hole = ?, tee_time = NULL WHERE tournament_id = ? AND group_number = ?',
-                    [newStartingHole, tournamentId, groupNumber]
+                    [normalizedHole, tournamentId, groupNumber]
                 );
             }
         } catch (emptyGroupError) {
@@ -3478,7 +3564,7 @@ async function getScorecardsByTournament(clubId, tournamentId) {
         LEFT JOIN members m ON s.member_id = m.member_id
         LEFT JOIN external_players ep ON s.external_player_id = ep.external_id
         LEFT JOIN tournaments t ON s.tournament_id = t.tournament_id
-        LEFT JOIN golf_courses gc ON s.course_id = gc.course_id
+        LEFT JOIN clubs gc ON s.course_id = gc.club_id
         WHERE s.tournament_id = ?
         ORDER BY s.total_gross ASC, s.created_at DESC
     `;

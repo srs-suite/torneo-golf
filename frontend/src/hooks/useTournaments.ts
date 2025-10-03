@@ -254,7 +254,7 @@ export function useMoveGroupToHole(clubId: number, tournamentId: number) {
     onMutate: async ({ groupNumber, newStartingHole, newTeeTime }) => {
       await queryClient.cancelQueries({ queryKey: QUERY_KEYS.tournamentGroups(clubId, tournamentId) })
       const previous = queryClient.getQueryData<any>(QUERY_KEYS.tournamentGroups(clubId, tournamentId))
-      queryClient.setQueryData<any>(QUERY_KEYS.tournamentGroups(clubId, tournamentId), (old) => {
+      queryClient.setQueryData<any>(QUERY_KEYS.tournamentGroups(clubId, tournamentId), (old: any) => {
         if (!Array.isArray(old)) return old
         return old.map((g) => g.group_number === groupNumber ? { ...g, starting_hole: newStartingHole, tee_time: newTeeTime ?? g.tee_time } : g)
       })

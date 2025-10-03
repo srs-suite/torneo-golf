@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Users, Calendar, GripVertical, User, Plus, Sun, Moon, HelpCircle, X, FileText } from 'lucide-react'
+import { ArrowLeft, Users, GripVertical, User, Plus, Sun, Moon, HelpCircle, X, FileText } from 'lucide-react'
 import { useTournaments, useTournamentGroups, useGenerateGroups, useAssignTeeTimes, useMovePlayerToGroup, useMoveGroupToHole, useSwapGroupNumbers, useCreateEmptyGroup, useDeleteEmptyGroup } from '@/hooks/useTournaments'
 
 interface TeeTimeConfig {
@@ -171,7 +171,7 @@ export default function TeeTimeManagerSimple() {
     if (finalTimeHHMM && groups) {
       const isConflict = (t: string) => !!groups.find(g =>
         String(g.group_number) !== String(groupNumber) &&
-        g.starting_hole === newStartingHole &&
+        g.starting_hole === newStartingHole && 
         formatTime(g.tee_time) === t &&
         getSessionFromTime(g.tee_time) === getSessionFromTime(t)
       )
@@ -310,77 +310,7 @@ export default function TeeTimeManagerSimple() {
     }
   }
 
-  // Función para cambiar la sesión de un grupo
-  const handleSwitchSession = (groupNumber: number, currentTime: string | null) => {
-    const currentSession = getSessionFromTime(currentTime)
-    const newSession = currentSession === 'morning' ? 'afternoon' : 'morning'
-    
-    // Calcular la nueva hora considerando otros grupos en la sesión destino
-    let newTime: string
-    
-    if (newSession === 'afternoon') {
-      // Buscar el último grupo de la tarde para asignar el siguiente horario
-      const afternoonGroups = groups?.filter(g => 
-        getSessionFromTime(g.tee_time) === 'afternoon' && g.group_number !== groupNumber
-      ) || []
-      
-      if (afternoonGroups.length === 0) {
-        // Si no hay grupos en la tarde, usar la hora de inicio de la tarde
-        newTime = config.afternoonStartTime
-      } else {
-        // Buscar la última hora y agregar el intervalo
-        const latestTime = afternoonGroups
-          .map(g => g.tee_time)
-          .filter(Boolean)
-          .sort()
-          .pop()
-        
-        if (latestTime) {
-          const [hours, minutes] = latestTime.split(':').map(Number)
-          const newMinutes = minutes + config.intervalMinutes
-          const newHours = hours + Math.floor(newMinutes / 60)
-          const finalMinutes = newMinutes % 60
-          newTime = `${newHours.toString().padStart(2, '0')}:${finalMinutes.toString().padStart(2, '0')}`
-        } else {
-          newTime = config.afternoonStartTime
-        }
-      }
-    } else {
-      // Buscar el último grupo de la mañana para asignar el siguiente horario
-      const morningGroups = groups?.filter(g => 
-        getSessionFromTime(g.tee_time) === 'morning' && g.group_number !== groupNumber
-      ) || []
-      
-      if (morningGroups.length === 0) {
-        // Si no hay grupos en la mañana, usar la hora de inicio
-        newTime = config.startTime
-      } else {
-        // Buscar la última hora y agregar el intervalo
-        const latestTime = morningGroups
-          .map(g => g.tee_time)
-          .filter(Boolean)
-          .sort()
-          .pop()
-        
-        if (latestTime) {
-          const [hours, minutes] = latestTime.split(':').map(Number)
-          const newMinutes = minutes + config.intervalMinutes
-          const newHours = hours + Math.floor(newMinutes / 60)
-          const finalMinutes = newMinutes % 60
-          newTime = `${newHours.toString().padStart(2, '0')}:${finalMinutes.toString().padStart(2, '0')}`
-        } else {
-          newTime = config.startTime
-        }
-      }
-    }
-
-    // Llamar a la función para mover el grupo (reutilizamos la función existente)
-    const targetGroup = groups?.find(g => g.group_number === groupNumber)
-    if (targetGroup) {
-      console.log(`🔄 Switching group ${groupNumber} from ${currentSession} to ${newSession} at ${newTime}`)
-      handleMoveGroup(groupNumber, targetGroup.starting_hole || 1, newTime)
-    }
-  }
+  // handleSwitchSession eliminado: la sesión se gestiona manualmente por panel
 
   if (!tournament) {
     return (
@@ -1162,7 +1092,7 @@ export default function TeeTimeManagerSimple() {
                       <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
                         <label style={{fontSize: '12px', color: '#374151'}}>Hoyo</label>
                         <select
-                          value={(groupEdits[group.group_number]?.hole) || group.starting_hole || 1}
+                          value={(groupEdits[group.group_number]?.hole) ?? (group.starting_hole ?? 0)}
                           onChange={(e) => {
                             const hole = parseInt(e.target.value)
                             setGroupEdits(prev => ({
@@ -1180,6 +1110,7 @@ export default function TeeTimeManagerSimple() {
                             borderRadius: '4px'
                           }}
                         >
+                          <option value={0}>Sin asignar</option>
                           {Array.from({ length: config.courseHoles || 18 }, (_, i) => i + 1).map(h => (
                             <option key={h} value={h}>Hoyo {h}</option>
                           ))}
@@ -1432,7 +1363,7 @@ export default function TeeTimeManagerSimple() {
                       <tbody>
                         ${sessionGroups.map(group => `
                           <tr class="group-header">
-                            <td>Grupo ${group.group_number} - ${formatTime(group.tee_time)} - Hoyo ${group.starting_hole || 'N/A'}</td>
+                            <td>Grupo ${group.group_number} - ${formatTime(group.tee_time)} - Hoyo ${group.starting_hole === null || group.starting_hole === 0 ? 'Sin asignar' : group.starting_hole}</td>
                             <td>${group.participants?.length || 0} jugadores</td>
                           </tr>
                           ${group.participants?.map((p: any) => `
