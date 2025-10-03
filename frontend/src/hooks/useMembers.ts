@@ -63,13 +63,28 @@ export function useDeleteMember(clubId: number) {
 
   return useMutation({
     mutationFn: (memberId: number) => memberService.deleteMember(clubId, memberId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: MEMBER_QUERY_KEYS.members(clubId) });
-      toast.success('Miembro eliminado exitosamente');
+    // Optimistic update to avoid having to click twice
+    onMutate: async (memberId: number) => {
+      await queryClient.cancelQueries({ queryKey: MEMBER_QUERY_KEYS.members(clubId) });
+      const previous = queryClient.getQueryData(MEMBER_QUERY_KEYS.members(clubId));
+      queryClient.setQueryData(MEMBER_QUERY_KEYS.members(clubId), (old: any) => {
+        if (!Array.isArray(old)) return old;
+        return old.filter((m) => m.member_id !== memberId);
+      });
+      return { previous };
     },
-    onError: (error: Error) => {
+    onError: (error: Error, _memberId, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(MEMBER_QUERY_KEYS.members(clubId), context.previous);
+      }
       console.error('Error deleting member:', error);
       toast.error(`Error al eliminar el miembro: ${error.message}`);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: MEMBER_QUERY_KEYS.members(clubId) });
+    },
+    onSuccess: () => {
+      toast.success('Miembro eliminado exitosamente');
     },
   });
 }

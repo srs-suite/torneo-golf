@@ -65,6 +65,8 @@ export default function TeeTimeManagerSimple() {
   
   // Session filter state
   const [sessionFilter, setSessionFilter] = useState<'all' | 'morning' | 'afternoon'>('all')
+  // Ediciones manuales por grupo (sesión, hora, hoyo)
+  const [groupEdits, setGroupEdits] = useState<Record<number, { session: 'morning' | 'afternoon', time: string, hole: number }>>({})
   
   // Auto refetch groups when generated
   useEffect(() => {
@@ -164,22 +166,46 @@ export default function TeeTimeManagerSimple() {
   }
 
   const handleMoveGroup = (groupNumber: number, newStartingHole: number, newTeeTime?: string | null) => {
-    // Validar conflictos de horario en el mismo hoyo
-    if (newTeeTime && groups) {
-      const conflictingGroup = groups.find(g => 
-        g.group_number !== groupNumber && 
-        g.starting_hole === newStartingHole && 
-        formatTime(g.tee_time) === newTeeTime
+    // Si tenemos hora y grupos, validar y ajustar automáticamente si hay conflicto
+    let finalTimeHHMM: string | undefined = newTeeTime ? formatTime(newTeeTime) : undefined
+    if (finalTimeHHMM && groups) {
+      const isConflict = (t: string) => !!groups.find(g =>
+        String(g.group_number) !== String(groupNumber) &&
+        g.starting_hole === newStartingHole &&
+        formatTime(g.tee_time) === t &&
+        getSessionFromTime(g.tee_time) === getSessionFromTime(t)
       )
-      
-      if (conflictingGroup) {
-        alert(`⚠️ Conflicto de horario: El grupo ${conflictingGroup.group_number} ya está programado para salir del hoyo ${newStartingHole} a las ${newTeeTime}. Por favor, elije una hora diferente.`)
-        return
+
+      // Si hay conflicto en la hora deseada, avanzar por intervalos hasta encontrar hueco
+      if (isConflict(finalTimeHHMM)) {
+        const step = config.intervalMinutes && config.intervalMinutes > 0 ? config.intervalMinutes : 10
+        const toMinutes = (hhmm: string) => {
+          const [h, m] = hhmm.split(':').map(Number)
+          return h * 60 + m
+        }
+        const toHHMM = (mins: number) => {
+          const h = Math.floor(mins / 60) % 24
+          const m = mins % 60
+          return `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}`
+        }
+
+        let attempts = 0
+        let candidate = finalTimeHHMM
+        while (attempts < 72 && isConflict(candidate)) { // hasta 12 horas si step=10
+          candidate = toHHMM(toMinutes(candidate) + step)
+          attempts += 1
+        }
+
+        if (candidate !== finalTimeHHMM) {
+          alert(`Hora ajustada automáticamente a ${candidate} por conflicto en el hoyo ${newStartingHole}.`)
+          finalTimeHHMM = candidate
+        }
       }
     }
-    
+
+    const normalized = finalTimeHHMM ? toHHMMSS(finalTimeHHMM) : undefined
     moveGroup.mutate(
-      { groupNumber, newStartingHole, newTeeTime: newTeeTime || undefined },
+      { groupNumber, newStartingHole, newTeeTime: normalized },
       {
         onSuccess: () => {
           refetchGroups()
@@ -244,6 +270,15 @@ export default function TeeTimeManagerSimple() {
     }
     
     return timeString
+  }
+
+  // Normalizar a HH:MM:SS para enviar al backend (MySQL TIME)
+  const toHHMMSS = (time: string): string => {
+    if (!time) return time
+    const parts = time.split(':')
+    if (parts.length === 2) return `${parts[0].padStart(2,'0')}:${parts[1].padStart(2,'0')}:00`
+    if (parts.length === 3) return `${parts[0].padStart(2,'0')}:${parts[1].padStart(2,'0')}:${parts[2].padStart(2,'0')}`
+    return time
   }
 
   // Función para determinar la sesión basada en la hora
@@ -1052,15 +1087,66 @@ export default function TeeTimeManagerSimple() {
                     )}
                   </div>
                   <div style={{display: 'flex', alignItems: 'center', gap: '20px'}}>
-                    <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                      <div style={{display: 'flex', alignItems: 'center'}}>
+                        <Users size={16} style={{marginRight: '5px', color: '#6b7280'}} />
+                        <span>{group.participants?.length || 0} jugadores</span>
+                      </div>
+                    </div>
+
+                    {/* Controles manuales simples: Turno / Hora / Hoyo / Aplicar */}
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      padding: '8px',
+                      backgroundColor: '#f9fafb',
+                      border: '1px solid #e5e7eb',
+                      borderRadius: '6px'
+                    }}>
+                      {/* Turno */}
+                      <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
+                        <label style={{fontSize: '12px', color: '#374151'}}>Turno</label>
+                        <select
+                          value={(groupEdits[group.group_number]?.session) || getSessionFromTime(group.tee_time)}
+                          onChange={(e) => {
+                            const session = (e.target.value as 'morning' | 'afternoon')
+                            setGroupEdits(prev => ({
+                              ...prev,
+                              [group.group_number]: {
+                                session,
+                                time: prev[group.group_number]?.time || '',
+                                hole: prev[group.group_number]?.hole || group.starting_hole || 1
+                              }
+                            }))
+                          }}
+                          style={{
+                            padding: '6px',
+                            border: '1px solid #d1d5db',
+                            borderRadius: '4px'
+                          }}
+                        >
+                          <option value="morning">Mañana</option>
+                          <option value="afternoon">Tarde</option>
+                        </select>
+                      </div>
+
+                      {/* Hora */}
+                      <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
+                        <label style={{fontSize: '12px', color: '#374151'}}>Hora</label>
                       <input
                         type="time"
                         step="60"
-                        value={formatTime(group.tee_time) === "Sin asignar" ? "" : formatTime(group.tee_time)}
+                          value={(groupEdits[group.group_number]?.time) || (formatTime(group.tee_time) === 'Sin asignar' ? '' : formatTime(group.tee_time))}
                         onChange={(e) => {
-                          if (e.target.value) {
-                            handleMoveGroup(group.group_number, group.starting_hole || 1, e.target.value)
-                          }
+                            const time = e.target.value
+                            setGroupEdits(prev => ({
+                              ...prev,
+                              [group.group_number]: {
+                                session: prev[group.group_number]?.session || getSessionFromTime(group.tee_time),
+                                time,
+                                hole: prev[group.group_number]?.hole || group.starting_hole || 1
+                              }
+                            }))
                         }}
                         style={{
                           border: '1px solid #d1d5db',
@@ -1070,73 +1156,86 @@ export default function TeeTimeManagerSimple() {
                           width: '90px'
                         }}
                       />
-                      {group.tee_time && formatTime(group.tee_time) !== "Sin asignar" && (
-                        <button
-                          onClick={() => {
-                            handleMoveGroup(group.group_number, group.starting_hole || 1, null)
+                      </div>
+
+                      {/* Hoyo */}
+                      <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
+                        <label style={{fontSize: '12px', color: '#374151'}}>Hoyo</label>
+                        <select
+                          value={(groupEdits[group.group_number]?.hole) || group.starting_hole || 1}
+                          onChange={(e) => {
+                            const hole = parseInt(e.target.value)
+                            setGroupEdits(prev => ({
+                              ...prev,
+                              [group.group_number]: {
+                                session: prev[group.group_number]?.session || getSessionFromTime(group.tee_time),
+                                time: prev[group.group_number]?.time || (formatTime(group.tee_time) === 'Sin asignar' ? '' : formatTime(group.tee_time)),
+                                hole
+                              }
+                            }))
                           }}
                           style={{
-                            backgroundColor: '#f3f4f6',
+                            padding: '6px',
                             border: '1px solid #d1d5db',
-                            borderRadius: '4px',
-                            padding: '4px 6px',
-                            cursor: 'pointer',
-                            fontSize: '12px',
-                            color: '#6b7280'
+                            borderRadius: '4px'
                           }}
-                          title="Cancelar horario"
                         >
-                          ✕
+                          {Array.from({ length: config.courseHoles || 18 }, (_, i) => i + 1).map(h => (
+                            <option key={h} value={h}>Hoyo {h}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Aplicar */}
+                        <button
+                          onClick={() => {
+                          const edits = groupEdits[group.group_number] || {
+                            session: getSessionFromTime(group.tee_time),
+                            time: formatTime(group.tee_time) === 'Sin asignar' ? '' : formatTime(group.tee_time),
+                            hole: group.starting_hole || 1
+                          }
+                          // Si no se eligió hora, usar por defecto según turno
+                          let finalTime = edits.time
+                          if (!finalTime || finalTime === '') {
+                            finalTime = edits.session === 'morning' ? config.startTime : config.afternoonStartTime
+                          }
+                          const normalized = toHHMMSS(finalTime)
+                          handleMoveGroup(group.group_number, edits.hole, normalized)
+                          }}
+                          style={{
+                          backgroundColor: '#374151',
+                          color: 'white',
+                          padding: '6px 10px',
+                            borderRadius: '4px',
+                          border: 'none',
+                            cursor: 'pointer',
+                          fontSize: '12px'
+                          }}
+                        >
+                        Aplicar
                         </button>
-                      )}
-                    </div>
-                    <div style={{display: 'flex', alignItems: 'center'}}>
-                      <Calendar size={16} style={{marginRight: '5px', color: '#6b7280'}} />
-                      <span>Hoyo {group.starting_hole}</span>
-                      {groups && groups.filter(g => g.starting_hole === group.starting_hole).length > 1 && (
-                        <span style={{
-                          marginLeft: '8px',
-                          fontSize: '12px',
-                          backgroundColor: '#fbbf24',
-                          color: '#92400e',
-                          padding: '2px 6px',
-                          borderRadius: '10px',
-                          fontWeight: 'bold'
-                        }}>
-                          {groups.filter(g => g.starting_hole === group.starting_hole).length} grupos
-                        </span>
-                      )}
-                    </div>
-                    <div style={{display: 'flex', alignItems: 'center'}}>
-                      <Users size={16} style={{marginRight: '5px', color: '#6b7280'}} />
-                      <span>{group.participants?.length || 0} jugadores</span>
-                    </div>
-                    {/* Indicador de sesión */}
-                    <div style={{display: 'flex', alignItems: 'center'}}>
-                      <span style={{
-                        fontSize: '12px',
-                        fontWeight: 'bold',
-                        padding: '4px 8px',
-                        borderRadius: '4px',
-                        backgroundColor: getSessionFromTime(group.tee_time) === 'morning' ? '#f3f4f6' : '#e5e7eb',
+
+                      {/* Reset */}
+                      <button
+                        onClick={() => {
+                          setGroupEdits(prev => {
+                            const clone = { ...prev }
+                            delete clone[group.group_number]
+                            return clone
+                          })
+                        }}
+                        style={{
+                          backgroundColor: 'white',
                         color: '#374151',
+                          padding: '6px 10px',
+                          borderRadius: '4px',
                         border: '1px solid #d1d5db',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px'
-                      }}>
-                        {getSessionFromTime(group.tee_time) === 'morning' ? (
-                          <>
-                            <Sun size={12} style={{color: '#6b7280'}} />
-                            Mañana
-                          </>
-                        ) : (
-                          <>
-                            <Moon size={12} style={{color: '#6b7280'}} />
-                            Tarde
-                          </>
-                        )}
-                      </span>
+                          cursor: 'pointer',
+                          fontSize: '12px'
+                        }}
+                      >
+                        Reset
+                      </button>
                     </div>
                     {/* Botón para eliminar grupo vacío */}
                     {(!group.participants || group.participants.length === 0) && (
@@ -1162,46 +1261,9 @@ export default function TeeTimeManagerSimple() {
                       </button>
                     )}
                     
-                    {/* Botón para cambiar sesión */}
-                    <button
-                      onClick={() => handleSwitchSession(group.group_number, group.tee_time)}
-                      style={{
-                        padding: '4px 8px',
-                        fontSize: '12px',
-                        backgroundColor: 'white',
-                        border: '1px solid #d1d5db',
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                        color: '#374151',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px'
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.backgroundColor = '#f9fafb'
-                        e.currentTarget.style.borderColor = '#9ca3af'
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.backgroundColor = 'white'
-                        e.currentTarget.style.borderColor = '#d1d5db'
-                      }}
-                    >
-                      {getSessionFromTime(group.tee_time) === 'morning' ? (
-                        <>
-                          <Moon size={12} style={{color: '#6b7280'}} />
-                          Cambiar a Tarde
-                        </>
-                      ) : (
-                        <>
-                          <Sun size={12} style={{color: '#6b7280'}} />
-                          Cambiar a Mañana
-                        </>
-                      )}
-                    </button>
-                  </div>
                 </div>
 
-                {/* Players Horizontal Layout with Drag & Drop */}
+                
                 <div style={{
                   display: 'flex',
                   flexWrap: 'wrap',
@@ -1326,13 +1388,20 @@ export default function TeeTimeManagerSimple() {
                   const afternoonGroups = groups?.filter(g => getSessionFromTime(g.tee_time) === 'afternoon') || [];
                   
                   // Función para generar carátula
+                  const formatDate = (value?: string) => {
+                    if (!value) return 'N/A'
+                    const d = new Date(value)
+                    const dd = d.getDate().toString().padStart(2, '0')
+                    const mm = (d.getMonth() + 1).toString().padStart(2, '0')
+                    const yyyy = d.getFullYear().toString()
+                    return `${dd}/${mm}/${yyyy}`
+                  }
                   const generateHeader = (sessionName: string, sessionIcon: string) => `
                     <div class="page-header">
-                      <h1>${sessionIcon} ${sessionName}</h1>
+                      <h1 style="text-align:center;">${sessionIcon} ${sessionName}</h1>
                       <div class="tournament-info">
                         <p><strong>Torneo:</strong> ${tournament?.tournament_name || 'N/A'}</p>
-                        <p><strong>Fecha:</strong> ${tournament?.start_time || 'N/A'}</p>
-                        <p><strong>Generado:</strong> ${new Date().toLocaleString()}</p>
+                        <p><strong>Fecha:</strong> ${formatDate(tournament?.tournament_date)}${tournament?.start_time ? ` - ${tournament.start_time}` : ''}</p>
                       </div>
                     </div>
                   `;
@@ -1348,10 +1417,13 @@ export default function TeeTimeManagerSimple() {
                     return timeString;
                   };
                   
-                  // Función para generar tabla de grupos
-                  const generateGroupTable = (sessionGroups: any[]) => `
+                  // Función para generar tabla de grupos con el MISMO header en thead (se repite en cada página)
+                  const generateGroupTable = (sessionGroups: any[], headerHtml: string) => `
                     <table>
                       <thead>
+                        <tr>
+                          <th colspan="2">${headerHtml}</th>
+                        </tr>
                         <tr>
                           <th>Grupo - Hora - Hoyo</th>
                           <th>Jugadores</th>
@@ -1391,8 +1463,10 @@ export default function TeeTimeManagerSimple() {
                             .page-header {
                               text-align: center;
                               margin-bottom: 30px;
-                              padding: 20px;
-                              border-bottom: 3px solid #333;
+                              padding: 20px 0 10px 0;
+                              border-bottom: none;
+                              display: block;
+                              width: 100%;
                             }
                             .page-header h1 {
                               color: #333;
@@ -1413,6 +1487,7 @@ export default function TeeTimeManagerSimple() {
                               page-break-before: always;
                               margin-top: 40px;
                             }
+                              thead { display: table-header-group; }
                             table { 
                               border-collapse: collapse; 
                               width: 100%; 
@@ -1440,20 +1515,20 @@ export default function TeeTimeManagerSimple() {
                             }
                             @media print { 
                               body { margin: 0; padding: 15px; }
-                              .page-header { margin-bottom: 20px; }
+                              /* Repetir header en cada página */
+                              .page-header { display: table-header-group; text-align: center; }
+                              .session-separator { page-break-before: always; }
                             }
                           </style>
                         </head>
                         <body>
                           ${morningGroups.length > 0 ? `
-                            ${generateHeader('Grupos de Mañana', '☀️')}
-                            ${generateGroupTable(morningGroups)}
+                          ${generateGroupTable(morningGroups, generateHeader('Grupos de Mañana', '☀️'))}
                           ` : ''}
                           
                           ${afternoonGroups.length > 0 ? `
                             <div class="session-separator">
-                              ${generateHeader('Grupos de Tarde', '🌙')}
-                              ${generateGroupTable(afternoonGroups)}
+                              ${generateGroupTable(afternoonGroups, generateHeader('Grupos de Tarde', '🌙'))}
                             </div>
                           ` : ''}
                           

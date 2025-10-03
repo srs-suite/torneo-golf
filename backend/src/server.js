@@ -23,6 +23,9 @@ import {
     // Tournament functions
     getAllTournaments, getTournamentById, createTournament, updateTournament, deleteTournament,
     getTournamentParticipants, getTournamentParticipantsById, addTournamentParticipant, removeTournamentParticipant,
+    // Tee time and groups functions
+    getTournamentGroups, generateTournamentGroups, assignTeeTimesToGroups,
+    movePlayerToGroup, moveGroupToHole, swapGroupNumbers, createEmptyGroup, deleteEmptyGroup,
     
     // Scorecard functions
     saveScorecard, getScorecardsByTournament, getScorecardByPlayer, updateScorecard, deleteScorecard, getScorecardForPrint,
@@ -225,7 +228,7 @@ async function handleClubAPI(req, res, pathParts) {
                     sendJSON(res, { success: true, data: members });
                 } else if (method === 'POST') {
                     const memberData = await parseBody(req);
-                    const newMember = await createMember(parseInt(clubId), memberData);
+                    const newMember = await createMember({ ...memberData, course_id: parseInt(clubId) });
                     sendJSON(res, { success: true, data: newMember, message: 'Miembro creado exitosamente' });
                 } else {
                     sendError(res, 'Método no permitido', 405);
@@ -236,10 +239,10 @@ async function handleClubAPI(req, res, pathParts) {
                     sendJSON(res, { success: true, data: member });
                 } else if (method === 'PUT') {
                     const memberData = await parseBody(req);
-                    const updatedMember = await updateMember(parseInt(clubId), parseInt(resourceId), memberData);
+                    const updatedMember = await updateMember(parseInt(resourceId), memberData);
                     sendJSON(res, { success: true, data: updatedMember, message: 'Miembro actualizado exitosamente' });
                 } else if (method === 'DELETE') {
-                    await deleteMember(parseInt(clubId), parseInt(resourceId));
+                    await deleteMember(parseInt(resourceId));
                     sendJSON(res, { success: true, message: 'Miembro eliminado exitosamente' });
                 } else {
                     sendError(res, 'Método no permitido', 405);
@@ -263,6 +266,80 @@ async function handleClubAPI(req, res, pathParts) {
             } else if (method === 'GET' && !subResource) {
                 const tournament = await getTournamentById(parseInt(clubId), parseInt(resourceId));
                 sendJSON(res, { success: true, data: tournament });
+            }
+            // Tournament groups and tee times management
+            else if (subResource === 'groups') {
+                if (method === 'GET') {
+                    const groups = await getTournamentGroups(parseInt(clubId), parseInt(resourceId));
+                    sendJSON(res, { success: true, data: groups });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
+            }
+            else if (subResource === 'generate-groups') {
+                if (method === 'POST') {
+                    const options = await parseBody(req);
+                    const groups = await generateTournamentGroups(parseInt(clubId), parseInt(resourceId), options || {});
+                    sendJSON(res, { success: true, data: groups, message: 'Grupos generados exitosamente' });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
+            }
+            else if (subResource === 'assign-tee-times') {
+                if (method === 'POST') {
+                    const teeTimeData = await parseBody(req);
+                    const groups = await assignTeeTimesToGroups(parseInt(clubId), parseInt(resourceId), teeTimeData);
+                    sendJSON(res, { success: true, data: groups, message: 'Horarios de salida asignados exitosamente' });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
+            }
+            else if (subResource === 'move-player') {
+                if (method === 'POST') {
+                    const { participationId, newGroupNumber } = await parseBody(req);
+                    await movePlayerToGroup(parseInt(clubId), parseInt(resourceId), participationId, newGroupNumber);
+                    sendJSON(res, { success: true, message: 'Jugador movido exitosamente' });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
+            }
+            else if (subResource === 'move-group') {
+                if (method === 'POST') {
+                    const { groupNumber, newStartingHole, newTeeTime } = await parseBody(req);
+                    await moveGroupToHole(parseInt(clubId), parseInt(resourceId), groupNumber, newStartingHole, newTeeTime);
+                    sendJSON(res, { success: true, message: 'Grupo movido exitosamente' });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
+            }
+            else if (subResource === 'swap-group-numbers') {
+                if (method === 'POST') {
+                    const { groupNumber1, groupNumber2 } = await parseBody(req);
+                    await swapGroupNumbers(parseInt(clubId), parseInt(resourceId), groupNumber1, groupNumber2);
+                    sendJSON(res, { success: true, message: 'Grupos renumerados exitosamente' });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
+            }
+            else if (subResource === 'create-empty-group') {
+                if (method === 'POST') {
+                    const config = await parseBody(req);
+                    const group = await createEmptyGroup(parseInt(resourceId), config || {});
+                    sendJSON(res, { success: true, data: group, message: 'Grupo vacío creado exitosamente' });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
+            }
+            else if (subResource === 'delete-empty-group') {
+                if (method === 'DELETE') {
+                    let body = {};
+                    try { body = await parseBody(req); } catch (e) {}
+                    const { groupNumber } = body || {};
+                    await deleteEmptyGroup(parseInt(resourceId), groupNumber);
+                    sendJSON(res, { success: true, message: 'Grupo vacío eliminado exitosamente' });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
             } else if (method === 'PUT' && !subResource) {
                 const tournamentData = await parseBody(req);
                 const updatedTournament = await updateTournament(parseInt(clubId), parseInt(resourceId), tournamentData);
@@ -282,8 +359,24 @@ async function handleClubAPI(req, res, pathParts) {
                     const newParticipant = await addTournamentParticipant(parseInt(clubId), parseInt(resourceId), participantData);
                     sendJSON(res, { success: true, data: newParticipant, message: 'Participante agregado exitosamente' });
                 } else if (method === 'DELETE') {
-                    const participantData = await parseBody(req);
-                    await removeTournamentParticipant(parseInt(clubId), parseInt(resourceId), participantData.participantId);
+                    // Aceptar tanto DELETE /participants/:id como DELETE /participants con body { participantId }
+                    let participantId;
+                    // Intentar tomar ID desde la URL: /api/club/{clubId}/tournaments/{tournamentId}/participants/{participantId}
+                    if (pathParts[6]) {
+                        participantId = parseInt(pathParts[6]);
+                    }
+                    // Si no vino en la URL, intentar desde el body
+                    if (!participantId || Number.isNaN(participantId)) {
+                        try {
+                            const participantData = await parseBody(req);
+                            participantId = parseInt(participantData.participantId || participantData.id);
+                        } catch (_) {}
+                    }
+                    if (!participantId || Number.isNaN(participantId)) {
+                        sendError(res, 'participantId es requerido', 400);
+                        return;
+                    }
+                    await removeTournamentParticipant(parseInt(clubId), parseInt(resourceId), participantId);
                     sendJSON(res, { success: true, message: 'Participante eliminado exitosamente' });
                 } else {
                     sendError(res, 'Método no permitido', 405);

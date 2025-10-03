@@ -1244,6 +1244,8 @@ async function updateMember(memberId, memberData) {
     const updateFields = [];
     const params = [];
     
+    console.log('🔍 updateMember called with:', { memberId, memberData });
+    
     // Only update fields that are provided (not undefined)
     if (memberData.member_number !== undefined) {
         updateFields.push('member_number = ?');
@@ -1277,8 +1279,13 @@ async function updateMember(memberId, memberData) {
         updateFields.push('category = ?');
         params.push(memberData.category);
     }
+    if (memberData.membership_status !== undefined) {
+        updateFields.push('membership_status = ?');
+        params.push(memberData.membership_status);
+    }
+    // Backward-compatible alias: allow `status` field to map to membership_status
     if (memberData.status !== undefined) {
-        updateFields.push('status = ?');
+        updateFields.push('membership_status = ?');
         params.push(memberData.status);
     }
     if (memberData.photo_path !== undefined) {
@@ -1306,7 +1313,11 @@ async function updateMember(memberId, memberData) {
         params.push(memberData.notes);
     }
     
+    console.log('🔍 updateFields found:', updateFields);
+    console.log('🔍 params:', params);
+    
     if (updateFields.length === 0) {
+        console.log('❌ No fields to update - all fields were undefined or null');
         throw new Error('No fields to update');
     }
     
@@ -2897,26 +2908,42 @@ async function moveGroupToHole(courseId, tournamentId, groupNumber, newStartingH
     });
 
     try {
-        // 🎯 VERIFICAR SI HAY SALIDAS SIMULTÁNEAS ACTIVAS
+        // 🎯 VERIFICAR SI HAY SALIDAS SIMULTÁNEAS ACTIVAS (si las columnas existen)
         const simultaneousStartsQuery = `
             SELECT enable_simultaneous_starts, start_time, afternoon_start_time, preferred_session
             FROM tournaments 
             WHERE tournament_id = ?
         `;
-        
-        const [tournamentConfig] = await getPool().execute(simultaneousStartsQuery, [tournamentId]);
-        const isSimultaneousStarts = tournamentConfig.length > 0 && tournamentConfig[0].enable_simultaneous_starts;
-        
+
+        let isSimultaneousStarts = false;
+        let tournamentConfig = [];
+        try {
+            const [cfg] = await getPool().execute(simultaneousStartsQuery, [tournamentId]);
+            tournamentConfig = cfg;
+            isSimultaneousStarts = tournamentConfig.length > 0 && !!tournamentConfig[0].enable_simultaneous_starts;
+        } catch (cfgErr) {
+            // Si faltan columnas, desactivar lógica de simultáneas y continuar
+            if (cfgErr && cfgErr.code === 'ER_BAD_FIELD_ERROR') {
+                console.log('⚠️ Columns for simultaneous starts not found. Proceeding without simultaneous logic.');
+                isSimultaneousStarts = false;
+                tournamentConfig = [];
+            } else {
+                throw cfgErr;
+            }
+        }
+
         console.log(`🔍 SALIDAS SIMULTÁNEAS: ${isSimultaneousStarts ? 'ACTIVAS' : 'INACTIVAS'}`);
-        
+
         let finalTeeTime = newTeeTime;
-        
-        if (isSimultaneousStarts && newTeeTime !== null && newTeeTime !== undefined) {
+
+        // Respetar la hora elegida por el usuario: si newTeeTime viene, NO sobreescribirla.
+        // Solo aplicar lógica de salidas simultáneas cuando NO se proporcionó una hora explícita y la config está disponible
+        if (isSimultaneousStarts && (newTeeTime === null || newTeeTime === undefined)) {
             // 🚨 EN SALIDAS SIMULTÁNEAS: Determinar la hora base según el hoyo de destino
-            const config = tournamentConfig[0];
+            const config = tournamentConfig[0] || {};
             const morningTime = config.start_time || '08:00:00';
             const afternoonTime = config.afternoon_start_time || '14:00:00';
-            
+
             // Verificar qué grupos están en cada sesión para determinar la hora correcta
             const existingGroupsQuery = `
                 SELECT starting_hole, tee_time, COUNT(*) as group_count
@@ -2926,9 +2953,9 @@ async function moveGroupToHole(courseId, tournamentId, groupNumber, newStartingH
                 ORDER BY group_count DESC
                 LIMIT 1
             `;
-            
+
             const [existingGroups] = await getPool().execute(existingGroupsQuery, [tournamentId, newStartingHole]);
-            
+
             if (existingGroups.length > 0) {
                 // Usar la hora que ya tienen otros grupos en ese hoyo
                 finalTeeTime = existingGroups[0].tee_time;
@@ -3015,22 +3042,40 @@ async function moveGroupToHole(courseId, tournamentId, groupNumber, newStartingH
             console.log(`✅ Group ${groupNumber} moved successfully to hole ${newStartingHole}. Updated ${totalUpdated} players.`);
             return true;
         } else {
-            // Posiblemente es un grupo vacío - verificar si existe en empty_tournament_groups
+            // Posiblemente es un grupo vacío - garantizar persistencia en empty_tournament_groups
             try {
-                const [emptyGroupCheck] = await getPool().execute(
-                    'SELECT 1 FROM empty_tournament_groups WHERE tournament_id = ? AND group_number = ?',
-                    [tournamentId, groupNumber]
-                );
-                
-                if (emptyGroupCheck.length > 0) {
-                    console.log(`✅ Empty group ${groupNumber} moved successfully to hole ${newStartingHole}.`);
-                    return true;
+                const pool = getPool();
+                // Crear tabla si no existe
+                await pool.execute(`
+                    CREATE TABLE IF NOT EXISTS empty_tournament_groups (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        tournament_id INT NOT NULL,
+                        group_number INT NOT NULL,
+                        starting_hole INT DEFAULT 1,
+                        tee_time TIME NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE KEY unique_tournament_group (tournament_id, group_number),
+                        FOREIGN KEY (tournament_id) REFERENCES tournaments(tournament_id) ON DELETE CASCADE
+                    )
+                `);
+
+                // Upsert del grupo vacío con el hoyo y la hora solicitados
+                if (finalTeeTime !== null && finalTeeTime !== undefined) {
+                    await pool.execute(
+                        'INSERT INTO empty_tournament_groups (tournament_id, group_number, starting_hole, tee_time) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE starting_hole = VALUES(starting_hole), tee_time = VALUES(tee_time)',
+                        [tournamentId, groupNumber, newStartingHole, finalTeeTime]
+                    );
                 } else {
-                    console.log(`⚠️ No players or empty group found for group ${groupNumber} in tournament ${tournamentId}`);
-                    return false;
+                    await pool.execute(
+                        'INSERT INTO empty_tournament_groups (tournament_id, group_number, starting_hole) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE starting_hole = VALUES(starting_hole), tee_time = NULL',
+                        [tournamentId, groupNumber, newStartingHole]
+                    );
                 }
+
+                console.log(`✅ Persisted empty group ${groupNumber} to hole ${newStartingHole}${finalTeeTime ? ` with time ${finalTeeTime}` : ''}.`);
+                return true;
             } catch (error) {
-                console.log(`⚠️ No players found in group ${groupNumber} for tournament ${tournamentId}`);
+                console.log(`⚠️ Failed to persist empty group ${groupNumber} in tournament ${tournamentId}:`, error);
                 return false;
             }
         }

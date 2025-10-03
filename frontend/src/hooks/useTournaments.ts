@@ -251,14 +251,30 @@ export function useMoveGroupToHole(clubId: number, tournamentId: number) {
   return useMutation({
     mutationFn: ({ groupNumber, newStartingHole, newTeeTime }: { groupNumber: number, newStartingHole: number, newTeeTime?: string }) =>
       tournamentService.moveGroupToHole(clubId, tournamentId, groupNumber, newStartingHole, newTeeTime),
-    onSuccess: () => {
-      console.log('✅ Grupo movido exitosamente')
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.tournamentGroups(clubId, tournamentId) })
-      toast.success('Grupo movido exitosamente')
+    onMutate: async ({ groupNumber, newStartingHole, newTeeTime }) => {
+      await queryClient.cancelQueries({ queryKey: QUERY_KEYS.tournamentGroups(clubId, tournamentId) })
+      const previous = queryClient.getQueryData<any>(QUERY_KEYS.tournamentGroups(clubId, tournamentId))
+      queryClient.setQueryData<any>(QUERY_KEYS.tournamentGroups(clubId, tournamentId), (old) => {
+        if (!Array.isArray(old)) return old
+        return old.map((g) => g.group_number === groupNumber ? { ...g, starting_hole: newStartingHole, tee_time: newTeeTime ?? g.tee_time } : g)
+      })
+      return { previous }
     },
-    onError: (error: any) => {
+    onError: (error: any, _vars, ctx) => {
+      if (ctx?.previous) {
+        queryClient.setQueryData(QUERY_KEYS.tournamentGroups(clubId, tournamentId), ctx.previous)
+      }
       console.error('❌ Error al mover grupo:', error)
       toast.error(error.response?.data?.message || 'Error al mover grupo')
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.tournamentGroups(clubId, tournamentId) })
+    },
+    onSuccess: async () => {
+      console.log('✅ Grupo movido exitosamente')
+      toast.success('Grupo movido exitosamente')
+      // Forzar refetch inmediato para evitar ver estado viejo tras el optimista
+      await queryClient.refetchQueries({ queryKey: QUERY_KEYS.tournamentGroups(clubId, tournamentId) })
     }
   })
 }
