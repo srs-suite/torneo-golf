@@ -139,7 +139,7 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
 # Vite config files
-vite.config.ts
+**/vite.config.ts
 
 *.xlsx
 *.zip
