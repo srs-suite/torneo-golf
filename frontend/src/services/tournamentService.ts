@@ -200,5 +200,21 @@ export const tournamentService = {
     const response = await api.get(`/club/${clubId}/search-players`, { params: { q: query } })
     console.log('🏆 Search players response:', response.data)
     return response.data.data || response.data
+  },
+
+  // Obtener rankings anuales
+  async getAnnualRankings(clubId: number, year: number): Promise<any> {
+    console.log(`🏆 API: GET /club/${clubId}/rankings/annual/${year}`)
+    const response = await api.get(`/club/${clubId}/rankings/annual/${year}`)
+    console.log('🏆 Annual rankings response:', response.data)
+    return response.data.data || response.data
+  },
+
+  // Obtener ranking de un torneo específico
+  async getTournamentRanking(clubId: number, tournamentId: number): Promise<any> {
+    console.log(`🏆 API: GET /club/${clubId}/rankings/tournament/${tournamentId}`)
+    const response = await api.get(`/club/${clubId}/rankings/tournament/${tournamentId}`)
+    console.log('🏆 Tournament ranking response:', response.data)
+    return response.data.data || response.data
   }
 }

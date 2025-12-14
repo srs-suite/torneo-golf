@@ -19,6 +19,7 @@ import {
     
     // Member functions
     getAllMembers, getMemberById, createMember, updateMember, deleteMember, updateMemberStatus,
+    getMemberTournaments, getMemberScorecards, getMemberHandicapHistory,
     
     // Tournament functions
     getAllTournaments, getTournamentById, createTournament, updateTournament, deleteTournament,
@@ -33,6 +34,12 @@ import {
     // Course functions
     getCourseHoles, updateCourseHole, getCourseStatistics,
     
+    // Rankings functions
+    getAnnualRankings, getTournamentRanking,
+    
+    // Payments and accounting functions
+    getPaymentsSummary, getExpenses, addExpense, deleteExpense,
+    
     // System functions
     getSystemStats, getRecentActivity
 } from './services/database.js';
@@ -40,7 +47,7 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = process.env.PORT || 8080;
+const PORT = 8000;
 
 // CORS headers
 const corsHeaders = {
@@ -234,18 +241,37 @@ async function handleClubAPI(req, res, pathParts) {
                     sendError(res, 'Método no permitido', 405);
                 }
             } else {
-                if (method === 'GET') {
-                    const member = await getMemberById(parseInt(clubId), parseInt(resourceId));
-                    sendJSON(res, { success: true, data: member });
-                } else if (method === 'PUT') {
-                    const memberData = await parseBody(req);
-                    const updatedMember = await updateMember(parseInt(resourceId), memberData);
-                    sendJSON(res, { success: true, data: updatedMember, message: 'Miembro actualizado exitosamente' });
-                } else if (method === 'DELETE') {
-                    await deleteMember(parseInt(resourceId));
-                    sendJSON(res, { success: true, message: 'Miembro eliminado exitosamente' });
+                const subAction = pathParts[4]; // tournaments, scorecards, handicap-history
+                
+                if (!subAction) {
+                    // Basic member operations
+                    if (method === 'GET') {
+                        const member = await getMemberById(parseInt(clubId), parseInt(resourceId));
+                        sendJSON(res, { success: true, data: member });
+                    } else if (method === 'PUT') {
+                        const memberData = await parseBody(req);
+                        const updatedMember = await updateMember(parseInt(resourceId), memberData);
+                        sendJSON(res, { success: true, data: updatedMember, message: 'Miembro actualizado exitosamente' });
+                    } else if (method === 'DELETE') {
+                        await deleteMember(parseInt(resourceId));
+                        sendJSON(res, { success: true, message: 'Miembro eliminado exitosamente' });
+                    } else {
+                        sendError(res, 'Método no permitido', 405);
+                    }
+                } else if (subAction === 'tournaments' && method === 'GET') {
+                    // Get member tournaments
+                    const tournaments = await getMemberTournaments(parseInt(clubId), parseInt(resourceId));
+                    sendJSON(res, { success: true, data: tournaments });
+                } else if (subAction === 'scorecards' && method === 'GET') {
+                    // Get member scorecards
+                    const scorecards = await getMemberScorecards(parseInt(clubId), parseInt(resourceId));
+                    sendJSON(res, { success: true, data: scorecards });
+                } else if (subAction === 'handicap-history' && method === 'GET') {
+                    // Get member handicap history
+                    const history = await getMemberHandicapHistory(parseInt(clubId), parseInt(resourceId));
+                    sendJSON(res, { success: true, data: history });
                 } else {
-                    sendError(res, 'Método no permitido', 405);
+                    sendError(res, 'Recurso no encontrado', 404);
                 }
             }
         }
@@ -437,6 +463,73 @@ async function handleClubAPI(req, res, pathParts) {
             }
         }
         
+        // Rankings
+        else if (resource === 'rankings') {
+            const rankingType = pathParts[3]; // 'annual' or 'tournament'
+            const identifier = pathParts[4]; // year or tournament_id
+            
+            if (rankingType === 'annual' && identifier) {
+                if (method === 'GET') {
+                    const year = parseInt(identifier);
+                    const rankings = await getAnnualRankings(parseInt(clubId), year);
+                    sendJSON(res, { success: true, data: rankings });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
+            } else if (rankingType === 'tournament' && identifier) {
+                if (method === 'GET') {
+                    const tournamentId = parseInt(identifier);
+                    const rankings = await getTournamentRanking(parseInt(clubId), tournamentId);
+                    sendJSON(res, { success: true, data: rankings });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
+            } else {
+                sendError(res, 'Recurso no encontrado', 404);
+            }
+        }
+        
+        // Payments
+        else if (resource === 'payments') {
+            if (method === 'GET') {
+                const url = new URL(req.url, `http://${req.headers.host}`);
+                const from = url.searchParams.get('from');
+                const to = url.searchParams.get('to');
+                const summary = await getPaymentsSummary(parseInt(clubId), from, to);
+                sendJSON(res, { success: true, data: summary });
+            } else {
+                sendError(res, 'Método no permitido', 405);
+            }
+        }
+        
+        // Accounting (expenses)
+        else if (resource === 'accounting') {
+            const action = pathParts[3];
+            
+            if (action === 'expenses') {
+                if (method === 'GET') {
+                    const url = new URL(req.url, `http://${req.headers.host}`);
+                    const from = url.searchParams.get('from');
+                    const to = url.searchParams.get('to');
+                    const expenses = await getExpenses(parseInt(clubId), from, to);
+                    sendJSON(res, { success: true, data: expenses });
+                } else if (method === 'POST') {
+                    const expenseData = await parseBody(req);
+                    const newExpense = await addExpense(parseInt(clubId), expenseData);
+                    sendJSON(res, { success: true, data: newExpense, message: 'Gasto agregado exitosamente' });
+                } else if (method === 'DELETE') {
+                    const url = new URL(req.url, `http://${req.headers.host}`);
+                    const expenseId = parseInt(url.searchParams.get('id'));
+                    await deleteExpense(parseInt(clubId), expenseId);
+                    sendJSON(res, { success: true, message: 'Gasto eliminado exitosamente' });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
+            } else {
+                sendError(res, 'Recurso no encontrado', 404);
+            }
+        }
+        
         else {
             sendError(res, 'Recurso no encontrado', 404);
         }
@@ -511,13 +604,13 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log('📊 SERVIDOR CON BASE DE DATOS REAL');
     console.log('🎯 ===================================');
     console.log(`📡 Backend: http://localhost:${PORT}`);
-    console.log(`🌐 Frontend: http://localhost:5173`);
+    console.log(`🌐 Frontend: http://localhost:5174`);
     console.log('💾 Base de Datos: ✅ MYSQL REAL');
     console.log('📝 Sistema: ✅ MANUAL SCORECARDS');
     console.log('🎯 ===================================');
     console.log('');
     console.log('✅ SISTEMA COMPLETO FUNCIONANDO:');
-    console.log('   http://localhost:5173');
+    console.log('   http://localhost:5174');
     console.log('');
 });
 

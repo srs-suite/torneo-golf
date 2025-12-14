@@ -11,7 +11,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port: 5174,
     host: true, // Permite acceso desde cualquier host
     allowedHosts: [
       'localhost',
@@ -21,17 +21,17 @@ export default defineConfig({
     ],
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        target: 'http://localhost:8000',
         changeOrigin: true
       },
       '/uploads': {
-        target: 'http://localhost:8080',
+        target: 'http://localhost:8000',
         changeOrigin: true,
       }
     }
   },
   preview: {
-    port: 4173,
+    port: 4174,
     host: true, // Permite acceso desde cualquier host en preview también
     allowedHosts: [
       'localhost',

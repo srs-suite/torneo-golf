@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Users, Plus, Search, Filter, RefreshCw, Eye, Edit, Trash2, ToggleLeft, ToggleRight, Upload } from 'lucide-react';
 import { useMembers, useDeleteMember, useUpdateMemberStatus } from '@/hooks/useMembers';
 import { CreateMemberModal } from '@/components/CreateMemberModal';
+import { MemberDetailsModal } from '@/components/MemberDetailsModal';
 import { LoadingSpinner } from '@/components/LoadingSpinner';
 import type { Member, MemberFilters } from '@/types/member';
 
@@ -18,6 +19,7 @@ export function SociosManagement() {
   });
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [editingMember, setEditingMember] = useState<Member | null>(null);
+  const [viewingMember, setViewingMember] = useState<Member | null>(null);
 
   const { data: members = [], isLoading, error, refetch } = useMembers(CLUB_ID);
   const deleteMember = useDeleteMember(CLUB_ID);
@@ -235,8 +237,8 @@ export function SociosManagement() {
                     <div className="flex items-center justify-end space-x-2">
                       <button
                         onClick={() => {
-                          console.log('👁️ Botón ver clickeado - TEST BÁSICO');
-                          alert(`TEST: Ver detalles de ${member.first_name} ${member.last_name}`);
+                          console.log('👁️ Ver detalles de:', member);
+                          setViewingMember(member);
                         }}
                         className="text-gray-600 hover:text-gray-900"
                         title="Ver detalles"
@@ -303,6 +305,14 @@ export function SociosManagement() {
         }}
         clubId={CLUB_ID}
         editMember={editingMember}
+      />
+
+      {/* Modal de ver detalles del miembro */}
+      <MemberDetailsModal
+        isOpen={!!viewingMember}
+        onClose={() => setViewingMember(null)}
+        member={viewingMember}
+        clubId={CLUB_ID}
       />
     </div>
   );

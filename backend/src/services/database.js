@@ -218,7 +218,7 @@ async function getAllAdministrators(clubId = null) {
     let query = `
         SELECT 
             ca.*,
-            gc.course_name as club_name,
+            gc.club_name as club_name,
             gc.club_code
         FROM club_administrators ca
         LEFT JOIN clubs gc ON ca.course_id = gc.club_id
@@ -245,7 +245,7 @@ async function getAdministratorById(adminId) {
     const query = `
         SELECT 
             ca.*,
-            gc.course_name as club_name,
+            gc.club_name as club_name,
             gc.club_code
         FROM club_administrators ca
         LEFT JOIN clubs gc ON ca.course_id = gc.club_id
@@ -263,7 +263,7 @@ async function getAdministratorByUsername(username) {
     const query = `
         SELECT 
             ca.*,
-            gc.course_name as club_name,
+            gc.club_name as club_name,
             gc.club_code
         FROM club_administrators ca
         LEFT JOIN clubs gc ON ca.course_id = gc.club_id
@@ -1045,6 +1045,268 @@ async function getCourseTeesGroupedByHole(courseId) {
     }
 }
 
+// ================================
+// RANKINGS FUNCTIONS
+// ================================
+
+/**
+ * Get annual rankings for a club
+ */
+async function getAnnualRankings(clubId, year) {
+    try {
+        const startDate = `${year}-01-01`;
+        const endDate = `${year}-12-31`;
+
+        // Rankings with handicap (best 16)
+        const withHcpQuery = `
+            SELECT 
+                m.member_id,
+                CONCAT(m.first_name, ' ', m.last_name) as player_name,
+                m.member_number,
+                COUNT(DISTINCT tp.tournament_id) as rounds,
+                SUM(s.total_gross) as total_gross,
+                SUM(s.total_net) as total_net
+            FROM members m
+            INNER JOIN tournament_participation tp ON m.member_id = tp.player_id AND tp.is_member = 1
+            INNER JOIN tournaments t ON tp.tournament_id = t.tournament_id AND t.is_ranking_event = 1
+            INNER JOIN scorecards s ON tp.participation_id = s.participation_id
+            WHERE m.course_id = ? 
+                AND t.tournament_date BETWEEN ? AND ?
+                AND tp.handicap_index IS NOT NULL 
+                AND tp.handicap_index > 0
+            GROUP BY m.member_id, m.first_name, m.last_name, m.member_number
+            ORDER BY total_net ASC
+            LIMIT 16
+        `;
+
+        // Rankings without handicap (best 8)
+        const withoutHcpQuery = `
+            SELECT 
+                m.member_id,
+                CONCAT(m.first_name, ' ', m.last_name) as player_name,
+                m.member_number,
+                COUNT(DISTINCT tp.tournament_id) as rounds,
+                SUM(s.total_gross) as total_gross
+            FROM members m
+            INNER JOIN tournament_participation tp ON m.member_id = tp.player_id AND tp.is_member = 1
+            INNER JOIN tournaments t ON tp.tournament_id = t.tournament_id AND t.is_ranking_event = 1
+            INNER JOIN scorecards s ON tp.participation_id = s.participation_id
+            WHERE m.course_id = ? 
+                AND t.tournament_date BETWEEN ? AND ?
+                AND (tp.handicap_index IS NULL OR tp.handicap_index = 0)
+            GROUP BY m.member_id, m.first_name, m.last_name, m.member_number
+            ORDER BY total_gross ASC
+            LIMIT 8
+        `;
+
+        const { rows: withHcp } = await executeQuery(withHcpQuery, [clubId, startDate, endDate]);
+        const { rows: withoutHcp } = await executeQuery(withoutHcpQuery, [clubId, startDate, endDate]);
+
+        return {
+            year,
+            club_id: clubId,
+            with_hcp: withHcp,
+            without_hcp: withoutHcp,
+            top_cuts: {
+                with_hcp: withHcp.slice(0, 16),
+                without_hcp: withoutHcp.slice(0, 8)
+            }
+        };
+    } catch (error) {
+        console.error('❌ Error getting annual rankings:', error);
+        throw error;
+    }
+}
+
+/**
+ * Get tournament ranking
+ */
+async function getTournamentRanking(clubId, tournamentId) {
+    try {
+        // Rankings with handicap
+        const withHcpQuery = `
+            SELECT 
+                tp.participation_id,
+                CASE 
+                    WHEN tp.is_member = 1 THEN m.member_id
+                    ELSE ep.external_player_id
+                END as member_id,
+                tp.player_name,
+                m.member_number,
+                s.total_gross,
+                s.total_net,
+                tp.handicap_index,
+                tp.handicap_local
+            FROM tournament_participation tp
+            LEFT JOIN members m ON tp.player_id = m.member_id AND tp.is_member = 1
+            LEFT JOIN external_players ep ON tp.player_id = ep.external_player_id AND tp.is_member = 0
+            INNER JOIN scorecards s ON tp.participation_id = s.participation_id
+            WHERE tp.tournament_id = ? 
+                AND tp.handicap_index IS NOT NULL 
+                AND tp.handicap_index > 0
+            ORDER BY s.total_net ASC
+        `;
+
+        // Rankings without handicap
+        const withoutHcpQuery = `
+            SELECT 
+                tp.participation_id,
+                CASE 
+                    WHEN tp.is_member = 1 THEN m.member_id
+                    ELSE ep.external_player_id
+                END as member_id,
+                tp.player_name,
+                m.member_number,
+                s.total_gross,
+                tp.handicap_index,
+                tp.handicap_local
+            FROM tournament_participation tp
+            LEFT JOIN members m ON tp.player_id = m.member_id AND tp.is_member = 1
+            LEFT JOIN external_players ep ON tp.player_id = ep.external_player_id AND tp.is_member = 0
+            INNER JOIN scorecards s ON tp.participation_id = s.participation_id
+            WHERE tp.tournament_id = ? 
+                AND (tp.handicap_index IS NULL OR tp.handicap_index = 0)
+            ORDER BY s.total_gross ASC
+        `;
+
+        const { rows: withHcp } = await executeQuery(withHcpQuery, [tournamentId]);
+        const { rows: withoutHcp } = await executeQuery(withoutHcpQuery, [tournamentId]);
+
+        return {
+            tournament_id: tournamentId,
+            club_id: clubId,
+            with_hcp: withHcp,
+            without_hcp: withoutHcp
+        };
+    } catch (error) {
+        console.error('❌ Error getting tournament ranking:', error);
+        throw error;
+    }
+}
+
+// ================================
+// PAYMENTS AND ACCOUNTING FUNCTIONS
+// ================================
+
+/**
+ * Get payments summary by tournament
+ */
+async function getPaymentsSummary(clubId, fromDate, toDate) {
+    try {
+        let query = `
+            SELECT 
+                t.tournament_id,
+                t.tournament_name,
+                t.tournament_date,
+                SUM(COALESCE(tp.fee_amount, t.default_fee, 0)) as total_fee,
+                SUM(COALESCE(tp.paid_amount, 0)) as total_paid
+            FROM tournaments t
+            LEFT JOIN tournament_participation tp ON t.tournament_id = tp.tournament_id
+            WHERE t.course_id = ?
+        `;
+        
+        const params = [clubId];
+        
+        if (fromDate) {
+            query += ` AND t.tournament_date >= ?`;
+            params.push(fromDate);
+        }
+        
+        if (toDate) {
+            query += ` AND t.tournament_date <= ?`;
+            params.push(toDate);
+        }
+        
+        query += ` GROUP BY t.tournament_id, t.tournament_name, t.tournament_date ORDER BY t.tournament_date DESC`;
+        
+        const { rows } = await executeQuery(query, params);
+        return rows;
+    } catch (error) {
+        console.error('❌ Error getting payments summary:', error);
+        throw error;
+    }
+}
+
+/**
+ * Get expenses
+ */
+async function getExpenses(clubId, fromDate, toDate) {
+    try {
+        let query = `
+            SELECT 
+                expense_id,
+                expense_date,
+                amount,
+                receipt_number,
+                detail,
+                created_at
+            FROM club_expenses
+            WHERE club_id = ?
+        `;
+        
+        const params = [clubId];
+        
+        if (fromDate) {
+            query += ` AND expense_date >= ?`;
+            params.push(fromDate);
+        }
+        
+        if (toDate) {
+            query += ` AND expense_date <= ?`;
+            params.push(toDate);
+        }
+        
+        query += ` ORDER BY expense_date DESC`;
+        
+        const { rows } = await executeQuery(query, params);
+        return rows;
+    } catch (error) {
+        console.error('❌ Error getting expenses:', error);
+        throw error;
+    }
+}
+
+/**
+ * Add expense
+ */
+async function addExpense(clubId, expenseData) {
+    try {
+        const query = `
+            INSERT INTO club_expenses (
+                club_id, expense_date, amount, receipt_number, detail, created_at
+            ) VALUES (?, ?, ?, ?, ?, NOW())
+        `;
+        
+        const params = [
+            clubId,
+            expenseData.expense_date,
+            expenseData.amount,
+            expenseData.receipt_number || null,
+            expenseData.detail || null
+        ];
+        
+        const { rows } = await executeQuery(query, params);
+        return { expense_id: rows.insertId };
+    } catch (error) {
+        console.error('❌ Error adding expense:', error);
+        throw error;
+    }
+}
+
+/**
+ * Delete expense
+ */
+async function deleteExpense(clubId, expenseId) {
+    try {
+        const query = `DELETE FROM club_expenses WHERE club_id = ? AND expense_id = ?`;
+        await executeQuery(query, [clubId, expenseId]);
+        return { success: true };
+    } catch (error) {
+        console.error('❌ Error deleting expense:', error);
+        throw error;
+    }
+}
+
 /**
  * Get system statistics
  */
@@ -1706,7 +1968,7 @@ async function searchPlayersForTournament(courseId, query) {
             m.email as player_email,
             m.phone as player_phone,
             m.handicap_index,
-            gc.course_name as player_club,
+            gc.club_name as player_club,
             CASE WHEN m.course_id = ? THEN 'member' ELSE 'visitor' END as player_type,
             m.course_id = ? as is_home_member
         FROM members m
@@ -2142,14 +2404,14 @@ async function getExternalPlayers(clubId) {
             m.handicap_index,
             m.handicap_local,
             m.member_number,
-            gc.course_name as player_club,
+            gc.club_name as player_club,
             'visitor' as player_type,
             m.created_at,
             m.updated_at
         FROM members m
         JOIN clubs gc ON m.course_id = gc.club_id
         WHERE m.course_id != ? AND m.is_active = true
-        ORDER BY gc.course_name, m.first_name, m.last_name
+        ORDER BY gc.club_name, m.first_name, m.last_name
     `;
     
     const { rows } = await executeQuery(query, [clubId]);
@@ -3559,7 +3821,7 @@ async function getScorecardsByTournament(clubId, tournamentId) {
             COALESCE(m.handicap_local, ep.handicap_local) as handicap_local,
             m.member_number,
             t.tournament_name,
-            gc.course_name
+            gc.club_name as club_name
         FROM scorecards s
         LEFT JOIN members m ON s.member_id = m.member_id
         LEFT JOIN external_players ep ON s.external_player_id = ep.external_id
@@ -4007,6 +4269,12 @@ export {
     
     // Member details functions
     getMemberTournaments, getMemberScorecards, getMemberHandicapHistory,
+    
+    // Rankings functions
+    getAnnualRankings, getTournamentRanking,
+    
+    // Payments and accounting functions
+    getPaymentsSummary, getExpenses, addExpense, deleteExpense,
     
     // Course holes functions
     createCourseHolesTable, getCourseHoles, updateCourseHole, updateMultipleCourseHoles, getCourseStatistics,
