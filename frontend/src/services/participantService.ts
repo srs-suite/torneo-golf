@@ -43,6 +43,21 @@ export const updateParticipantStatus = async (
   return response.data.data;
 };
 
+export const updateParticipantPayment = async (
+  clubId: number,
+  tournamentId: number,
+  participantId: number,
+  paymentData: {
+    fee_amount?: number
+    paid_amount?: number
+    payment_status?: 'pending' | 'paid' | 'waived'
+    payment_method?: string
+    receipt_number?: string
+    payment_notes?: string
+  }
+): Promise<void> => {
+  await axios.put(`${API_URL}/${clubId}/tournaments/${tournamentId}/participants/${participantId}/payment`, paymentData);
+};
 export const searchPlayersForTournament = async (clubId: number, query: string): Promise<PlayerSearchResult[]> => {
   if (!query || query.length < 2) {
     return [];

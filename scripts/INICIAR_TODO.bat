@@ -24,7 +24,7 @@ echo ============================================
 echo  SISTEMA INICIADO COMPLETAMENTE
 echo ============================================
 echo  Backend:  http://localhost:8000
-echo  Frontend: http://localhost:5173
+echo  Frontend: http://localhost:5174
 echo ============================================
 echo.
 echo Presiona cualquier tecla para salir...

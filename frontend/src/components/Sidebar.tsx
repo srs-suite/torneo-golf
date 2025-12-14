@@ -5,6 +5,8 @@ import {
   Users, 
   CreditCard, 
   FileText, 
+  Trophy,
+  DollarSign,
   Settings,
   LogOut
 } from 'lucide-react'
@@ -14,6 +16,7 @@ const navigation = [
   { name: 'Gestión de Clubes', href: '/clubs', icon: Building2 },
   { name: 'Administradores', href: '/administrators', icon: Users },
   { name: 'Suscripciones', href: '/subscriptions', icon: CreditCard },
+  { name: 'Ranking', href: '/reports#ranking', icon: Trophy },
   { name: 'Reportes', href: '/reports', icon: FileText },
   { name: 'Configuración', href: '/configuration', icon: Settings },
 ]

@@ -14,7 +14,13 @@ export interface Participant {
   player_type: 'member' | 'visitor' | 'external'
   registration_date: string
   status: 'registered' | 'confirmed' | 'cancelled' | 'checked_in'
-  payment_status: 'pending' | 'paid' | 'refunded'
+  payment_status: 'pending' | 'paid' | 'waived' | 'refunded'
+  fee_amount?: number
+  paid_amount?: number
+  payment_method?: string | null
+  receipt_number?: string | null
+  paid_at?: string | null
+  payment_notes?: string | null
   notes?: string
   display_club?: string
 }

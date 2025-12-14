@@ -25,7 +25,8 @@ import {
   X,
   Award,
   Camera,
-  QrCode
+  QrCode,
+  DollarSign
 
 } from 'lucide-react'
 import { useMembers, useClearClubMembers, useUpdateMember, useDeleteMember, useUpdateMemberStatus } from '@/hooks/useMembers'
@@ -82,6 +83,15 @@ export function ClubAdmin() {
   const [editingHCP, setEditingHCP] = useState<{memberId: number, value: string} | null>(null)
 
   const { data: clubs = [] } = useClubs()
+
+  // Sanitize to plain ASCII: remove diacritics and any non-ASCII glyphs
+  const sanitizeAscii = (text: string | undefined | null) => {
+    const base = (text ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '') // strip combining marks
+      .replace(/[^\x20-\x7E]/g, '');   // strip non-ASCII visible chars
+    return base.replace(/\s+/g, ' ').trim();
+  }
   
   const { 
     data: members = [], 
@@ -170,7 +180,8 @@ export function ClubAdmin() {
         setClubData({
           course_id: club.course_id,
           course_name: club.course_name,
-          location: `${club.city}, ${club.country}`,
+          // Build safe location without "undefined, undefined"
+          location: [club.city, club.country].filter(Boolean).join(', '),
           phone: club.phone || '',
           email: club.email || '',
           website: club.website || ''
@@ -370,17 +381,19 @@ export function ClubAdmin() {
                 <Users className="w-6 h-6 text-white" />
               </div>
               <div>
-                <h1 className="text-xl font-bold text-gray-900">{clubData.course_name}</h1>
+                <h1 className="text-xl font-bold text-gray-900">{sanitizeAscii(clubData.course_name)}</h1>
                 <p className="text-sm text-gray-600">{clubData.location}</p>
               </div>
             </div>
-            <button
-              onClick={handleLogout}
-              className="flex items-center space-x-2 px-4 py-2 text-gray-600 hover:text-gray-900 transition-colors"
-            >
-              <LogOut className="w-4 h-4" />
-              <span>Salir</span>
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleLogout}
+                className="flex items-center space-x-2 px-4 py-2 text-gray-600 hover:text-gray-900 transition-colors"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>Salir</span>
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -392,7 +405,10 @@ export function ClubAdmin() {
             {tabs.map((tab) => (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => {
+                  setActiveTab(tab.id)
+                  navigate(`/club/${clubId}/admin?tab=${tab.id}`)
+                }}
                 className={`
                   flex items-center space-x-2 py-4 px-1 border-b-2 font-medium text-sm transition-colors
                   ${activeTab === tab.id 
@@ -410,6 +426,21 @@ export function ClubAdmin() {
                 )}
               </button>
             ))}
+            {/* Enlaces externos en la misma línea */}
+            <button
+              onClick={() => navigate(`/club/${clubId}/rankings`)}
+              className="flex items-center space-x-2 py-4 px-1 border-b-2 font-medium text-sm transition-colors border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+            >
+              <Trophy className="w-4 h-4" />
+              <span>Ranking</span>
+            </button>
+            <button
+              onClick={() => navigate(`/club/${clubId}/accounting`)}
+              className="flex items-center space-x-2 py-4 px-1 border-b-2 font-medium text-sm transition-colors border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+            >
+              <DollarSign className="w-4 h-4" />
+              <span>Contabilidad</span>
+            </button>
           </nav>
         </div>
       </div>
@@ -841,10 +872,7 @@ export function ClubAdmin() {
                               </span>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                              <div>${tournament.entry_fee}</div>
-                              <div className="text-xs text-gray-500">
-                                Premio: ${tournament.prize_pool}
-                              </div>
+                              ${tournament.entry_fee?.toLocaleString('es-AR') || 0}
                             </td>
                             <td className="px-4 py-4 whitespace-nowrap text-right text-sm font-medium">
                               <div className="flex items-center justify-end space-x-1">

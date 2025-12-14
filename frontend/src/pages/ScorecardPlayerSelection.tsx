@@ -10,6 +10,13 @@ import { getScoreStyle } from '../utils/scoreUtils';
 // Componente Modal para mostrar la tarjeta
 function ScorecardModal({ scorecard, onClose }: { scorecard: any, onClose: () => void }) {
   const { clubId, tournamentId } = useParams<{ clubId: string; tournamentId: string }>();
+  const sanitizeAscii = (text: string | undefined | null) => {
+    const base = (text ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^\x20-\x7E]/g, '')
+    return base.replace(/\s+/g, ' ').trim()
+  }
   
   if (!scorecard) return null;
   
@@ -71,7 +78,7 @@ function ScorecardModal({ scorecard, onClose }: { scorecard: any, onClose: () =>
               </div>
               <div>
                 <span className="text-gray-600">Club:</span>
-                <p className="font-medium">{scorecard.player_club || 'Sin club'}</p>
+                <p className="font-medium">{sanitizeAscii(scorecard.player_club) || 'Sin club'}</p>
               </div>
             </div>
           </div>
@@ -849,7 +856,10 @@ export default function ScorecardPlayerSelection() {
                               <span>#{participant.member_number}</span>
                             )}
                             {participant.player_club && (
-                              <span>Club: {participant.player_club}</span>
+                              <span>Club: {(() => {
+                                const base = (participant.player_club ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7E]/g, '');
+                                return base.replace(/\s+/g, ' ').trim();
+                              })()}</span>
                             )}
                             {hasScorecard && (
                               <span className="px-2 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-full">

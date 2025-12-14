@@ -57,6 +57,14 @@ export default function ManualScorecardEntry() {
   const [selectedPlayer, setSelectedPlayer] = useState<any>(null)
   const [searchTerm, setSearchTerm] = useState('')
   const [filterType, setFilterType] = useState<'pending' | 'completed' | 'all'>('pending')
+  // Sanitize to ASCII to prevent corrupted glyphs in some environments
+  const sanitizeAscii = (text: string | undefined | null) => {
+    const base = (text ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')   // remove diacritics
+      .replace(/[^\x20-\x7E]/g, '')      // strip non-ASCII visible characters
+    return base.replace(/\s+/g, ' ').trim()
+  }
   // Si viene playerId en la URL, iniciar en modo scorecard, sino en selection
   const [viewMode, setViewMode] = useState<'selection' | 'scorecard' | 'verification'>(() => {
     const initialMode = playerId ? 'scorecard' : 'selection'
@@ -585,7 +593,7 @@ export default function ManualScorecardEntry() {
                                 )}
                               </div>
                               {participant.player_club && (
-                                <p className="text-sm text-gray-500 mt-1">{participant.player_club}</p>
+                                <p className="text-sm text-gray-500 mt-1">{sanitizeAscii(participant.player_club)}</p>
                               )}
                             </div>
                           </div>
