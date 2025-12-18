@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, FileText, User, CheckCircle, Search, X, Trophy, Printer } from 'lucide-react';
+import { ArrowLeft, FileText, User, CheckCircle, Search, X, Trophy, Printer, Edit } from 'lucide-react';
 import { useTournamentParticipants } from '../hooks/useTournaments';
 import { useTournamentScorecards } from '../hooks/useScorecards';
 import { getScoreStyle } from '../utils/scoreUtils';
@@ -10,6 +10,14 @@ import { getScoreStyle } from '../utils/scoreUtils';
 // Componente Modal para mostrar la tarjeta
 function ScorecardModal({ scorecard, onClose }: { scorecard: any, onClose: () => void }) {
   const { clubId, tournamentId } = useParams<{ clubId: string; tournamentId: string }>();
+  const navigate = useNavigate();
+  const sanitizeAscii = (text: string | undefined | null) => {
+    const base = (text ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^\x20-\x7E]/g, '')
+    return base.replace(/\s+/g, ' ').trim()
+  }
   
   if (!scorecard) return null;
   
@@ -32,6 +40,18 @@ function ScorecardModal({ scorecard, onClose }: { scorecard: any, onClose: () =>
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                // Navegar a editar la tarjeta
+                const playerId = scorecard.member_id || scorecard.external_player_id;
+                navigate(`/club/${clubId}/tournaments/${tournamentId}/manual-entry/${playerId}`);
+              }}
+              className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 text-sm"
+              title="Editar tarjeta"
+            >
+              <Edit className="h-4 w-4" />
+              Editar
+            </button>
             <button
               onClick={() => {
                 // Abrir página de impresión con auto-print
@@ -71,7 +91,7 @@ function ScorecardModal({ scorecard, onClose }: { scorecard: any, onClose: () =>
               </div>
               <div>
                 <span className="text-gray-600">Club:</span>
-                <p className="font-medium">{scorecard.player_club || 'Sin club'}</p>
+                <p className="font-medium">{sanitizeAscii(scorecard.player_club) || 'Sin club'}</p>
               </div>
             </div>
           </div>
@@ -486,21 +506,25 @@ export default function ScorecardPlayerSelection() {
     error: scorecardsError
   } = useTournamentScorecards(
     parseInt(clubId || '0'),
-    parseInt(tournamentId || '0')
+    parseInt(tournamentId || '0'),
+    true // includeAll = true para ver también los que no presentaron
   );
 
-  // Separate participants into completed and pending
+  // Separate participants into completed, pending, and no-show
   const participantsWithScorecards = useMemo(() => {
     if (!participants.length || !Array.isArray(scorecards)) return [];
     
     const playersWithScorecard = new Set();
     
     scorecards.forEach((scorecard: any) => {
-      if (scorecard.member_id) {
-        playersWithScorecard.add(`member_${scorecard.member_id}`);
-      }
-      if (scorecard.external_player_id) {
-        playersWithScorecard.add(`external_${scorecard.external_player_id}`);
+      // Solo agregar si NO es "no presentó" (verificar 0, false, null, undefined)
+      if (!scorecard.did_not_present || scorecard.did_not_present === 0) {
+        if (scorecard.member_id) {
+          playersWithScorecard.add(`member_${scorecard.member_id}`);
+        }
+        if (scorecard.external_player_id) {
+          playersWithScorecard.add(`external_${scorecard.external_player_id}`);
+        }
       }
     });
 
@@ -516,18 +540,47 @@ export default function ScorecardPlayerSelection() {
     return result;
   }, [participants, scorecards]);
 
-  // Filtrar jugadores que NO tienen tarjeta cargada
+  // Jugadores que NO presentaron tarjeta
+  const participantsNoShow = useMemo(() => {
+    if (!participants.length || !Array.isArray(scorecards)) return [];
+    
+    const playersNoShow = new Set();
+    
+    scorecards.forEach((scorecard: any) => {
+      // Solo agregar si ES "no presentó" (1 o true)
+      if (scorecard.did_not_present === 1 || scorecard.did_not_present === true) {
+        if (scorecard.member_id) {
+          playersNoShow.add(`member_${scorecard.member_id}`);
+        }
+        if (scorecard.external_player_id) {
+          playersNoShow.add(`external_${scorecard.external_player_id}`);
+        }
+      }
+    });
+
+    const result = participants.filter((participant: any) => {
+      const playerKey = participant.player_type === 'external' 
+        ? `external_${participant.external_player_id || participant.player_id}`
+        : `member_${participant.member_id || participant.player_id}`;
+      
+      return playersNoShow.has(playerKey);
+    });
+    
+    return result;
+  }, [participants, scorecards]);
+
+  // Filtrar jugadores que NO tienen tarjeta cargada (ni presentada ni no-presentada)
   const playersWithoutScorecard = useMemo(() => {
     if (!participants.length || !Array.isArray(scorecards)) return participants;
     
-    const playersWithScorecard = new Set();
+    const playersWithAnyScorecard = new Set();
     
     scorecards.forEach((scorecard: any) => {
       if (scorecard.member_id) {
-        playersWithScorecard.add(`member_${scorecard.member_id}`);
+        playersWithAnyScorecard.add(`member_${scorecard.member_id}`);
       }
       if (scorecard.external_player_id) {
-        playersWithScorecard.add(`external_${scorecard.external_player_id}`);
+        playersWithAnyScorecard.add(`external_${scorecard.external_player_id}`);
       }
     });
 
@@ -536,7 +589,7 @@ export default function ScorecardPlayerSelection() {
         ? `external_${participant.external_player_id || participant.player_id}`
         : `member_${participant.member_id || participant.player_id}`;
       
-      return !playersWithScorecard.has(playerKey);
+      return !playersWithAnyScorecard.has(playerKey);
     });
   }, [participants, scorecards]);
 
@@ -551,6 +604,9 @@ export default function ScorecardPlayerSelection() {
       case 'completed':
         baseList = participantsWithScorecards  // Jugadores con tarjeta
         break
+      case 'no_show':
+        baseList = participantsNoShow  // Jugadores que no presentaron
+        break
       case 'all':
         baseList = participants
         break
@@ -563,7 +619,7 @@ export default function ScorecardPlayerSelection() {
       (p.member_number || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (p.player_club || '').toLowerCase().includes(searchTerm.toLowerCase())
     )
-  }, [participants, playersWithoutScorecard, participantsWithScorecards, selectedFilter, searchTerm]);
+  }, [participants, playersWithoutScorecard, participantsWithScorecards, participantsNoShow, selectedFilter, searchTerm]);
 
 
 
@@ -605,7 +661,7 @@ export default function ScorecardPlayerSelection() {
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center space-x-4">
               <button
-                onClick={() => navigate(`/club/${clubId}/admin`)}
+                onClick={() => navigate(-1)}
                 className="flex items-center text-gray-600 hover:text-gray-900"
               >
                 <ArrowLeft className="h-5 w-5 mr-2" />
@@ -629,21 +685,21 @@ export default function ScorecardPlayerSelection() {
 
       {/* Stats Cards - Clickeable */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
           <button
             onClick={() => {
               setViewMode('participants')
               setSelectedFilter('all')
             }}
-            className={`bg-white rounded-lg shadow p-6 transition-all hover:shadow-lg hover:scale-105 text-left ${
+            className={`bg-white rounded-lg shadow p-4 transition-all hover:shadow-lg hover:scale-105 text-left ${
               selectedFilter === 'all' && viewMode === 'participants' ? 'ring-2 ring-blue-500 bg-blue-50' : ''
             }`}
           >
             <div className="flex items-center">
-              <User className={`h-8 w-8 ${selectedFilter === 'all' ? 'text-blue-600' : 'text-blue-600'}`} />
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Total Participantes</p>
-                <p className="text-2xl font-bold text-gray-900">{participants.length}</p>
+              <User className="h-6 w-6 text-blue-600" />
+              <div className="ml-3">
+                <p className="text-xs font-medium text-gray-600">Total Participantes</p>
+                <p className="text-xl font-bold text-gray-900">{participants.length}</p>
               </div>
             </div>
           </button>
@@ -653,15 +709,15 @@ export default function ScorecardPlayerSelection() {
               setViewMode('scorecards')
               setSelectedFilter('completed')
             }}
-            className={`bg-white rounded-lg shadow p-6 transition-all hover:shadow-lg hover:scale-105 text-left ${
+            className={`bg-white rounded-lg shadow p-4 transition-all hover:shadow-lg hover:scale-105 text-left ${
               viewMode === 'scorecards' ? 'ring-2 ring-green-500 bg-green-50' : 'hover:bg-green-50'
             }`}
           >
             <div className="flex items-center">
-              <CheckCircle className={`h-8 w-8 ${viewMode === 'scorecards' ? 'text-green-600' : 'text-green-600'}`} />
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Tarjetas Cargadas</p>
-                <p className="text-2xl font-bold text-gray-900">{participantsWithScorecards.length}</p>
+              <CheckCircle className="h-6 w-6 text-green-600" />
+              <div className="ml-3">
+                <p className="text-xs font-medium text-gray-600">Tarjetas Cargadas</p>
+                <p className="text-xl font-bold text-gray-900">{participantsWithScorecards.length}</p>
               </div>
             </div>
           </button>
@@ -671,15 +727,33 @@ export default function ScorecardPlayerSelection() {
               setViewMode('participants')
               setSelectedFilter('pending')
             }}
-            className={`bg-white rounded-lg shadow p-6 transition-all hover:shadow-lg hover:scale-105 text-left ${
+            className={`bg-white rounded-lg shadow p-4 transition-all hover:shadow-lg hover:scale-105 text-left ${
               selectedFilter === 'pending' && viewMode === 'participants' ? 'ring-2 ring-orange-500 bg-orange-50' : ''
             }`}
           >
             <div className="flex items-center">
-              <FileText className={`h-8 w-8 ${selectedFilter === 'pending' ? 'text-orange-600' : 'text-orange-600'}`} />
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Pendientes</p>
-                <p className="text-2xl font-bold text-gray-900">{playersWithoutScorecard.length}</p>
+              <FileText className="h-6 w-6 text-orange-600" />
+              <div className="ml-3">
+                <p className="text-xs font-medium text-gray-600">Pendientes</p>
+                <p className="text-xl font-bold text-gray-900">{playersWithoutScorecard.length}</p>
+              </div>
+            </div>
+          </button>
+          
+          <button
+            onClick={() => {
+              setViewMode('participants')
+              setSelectedFilter('no_show')
+            }}
+            className={`bg-white rounded-lg shadow p-4 transition-all hover:shadow-lg hover:scale-105 text-left ${
+              selectedFilter === 'no_show' && viewMode === 'participants' ? 'ring-2 ring-red-500 bg-red-50' : ''
+            }`}
+          >
+            <div className="flex items-center">
+              <X className="h-6 w-6 text-red-600" />
+              <div className="ml-3">
+                <p className="text-xs font-medium text-gray-600">No Presentaron</p>
+                <p className="text-xl font-bold text-gray-900">{participantsNoShow.length}</p>
               </div>
             </div>
           </button>
@@ -796,6 +870,7 @@ export default function ScorecardPlayerSelection() {
               <h3 className="text-lg font-semibold">
                 {selectedFilter === 'pending' && 'Jugadores pendientes'}
                 {selectedFilter === 'completed' && 'Tarjetas cargadas'}
+                {selectedFilter === 'no_show' && 'No presentaron tarjeta'}
                 {selectedFilter === 'all' && 'Todos los participantes'}
                 ({filteredParticipants.length})
               </h3>
@@ -849,7 +924,10 @@ export default function ScorecardPlayerSelection() {
                               <span>#{participant.member_number}</span>
                             )}
                             {participant.player_club && (
-                              <span>Club: {participant.player_club}</span>
+                              <span>Club: {(() => {
+                                const base = (participant.player_club ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7E]/g, '');
+                                return base.replace(/\s+/g, ' ').trim();
+                              })()}</span>
                             )}
                             {hasScorecard && (
                               <span className="px-2 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-full">

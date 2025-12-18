@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Trophy, Medal, Award, Crown, Printer } from 'lucide-react';
 import { useTournamentScorecards } from '../hooks/useScorecards';
@@ -38,9 +38,31 @@ export default function TournamentResults() {
   const { data: scorecards, isLoading } = useTournamentScorecards(clubIdNum, tournamentIdNum);
   
   const tournament = tournaments?.find(t => t.tournament_id === tournamentIdNum);
+
+  // Sanitize to ASCII to avoid corrupted glyphs in some environments
+  const sanitizeAscii = (text: string | undefined | null) => {
+    const base = (text ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')   // remove diacritics
+      .replace(/[^\x20-\x7E]/g, '')      // strip non-ASCII visible characters
+    return base.replace(/\s+/g, ' ').trim();
+  }
   
-  // Definir las categorías
-  const categories: Category[] = [
+  // Configuración del torneo (solo lectura, viene de la base de datos)
+  const [separateLadies, setSeparateLadies] = useState<boolean>(false);
+  const [ladiesByHcp, setLadiesByHcp] = useState<boolean>(false);
+  const resultsMode = (tournament as any)?.results_mode || 'standard';
+
+  // Actualizar valores cuando el torneo cambie
+  useEffect(() => {
+    if (tournament) {
+      setSeparateLadies((tournament as any)?.separate_ladies === 1 || (tournament as any)?.separate_ladies === true);
+      setLadiesByHcp((tournament as any)?.ladies_by_hcp === 1 || (tournament as any)?.ladies_by_hcp === true);
+    }
+  }, [tournament]);
+
+  // Definir las categorías (dependen de separateLadies y resultsMode)
+  const categories: Category[] = resultsMode === 'standard' ? [
     {
       id: 'primera',
       name: '1ra Categoría',
@@ -51,6 +73,8 @@ export default function TournamentResults() {
         // Verificar que el jugador realmente tenga un HCP válido asignado
         const hcp_local = scorecard.handicap_local;
         const hcp_index = scorecard.handicap_index;
+        // Si se separan damas, excluir género femenino de categorías generales
+        if (separateLadies && (scorecard.gender === 'F')) return false;
         
         // Si tiene handicap_local válido, usarlo
         if (hcp_local !== null && hcp_local !== undefined && hcp_local !== '') {
@@ -76,6 +100,7 @@ export default function TournamentResults() {
       filter: (scorecard) => {
         const hcp_local = scorecard.handicap_local;
         const hcp_index = scorecard.handicap_index;
+        if (separateLadies && (scorecard.gender === 'F')) return false;
         
         if (hcp_local !== null && hcp_local !== undefined && hcp_local !== '') {
           const hcp = parseFloat(hcp_local);
@@ -99,6 +124,7 @@ export default function TournamentResults() {
       filter: (scorecard) => {
         const hcp_local = scorecard.handicap_local;
         const hcp_index = scorecard.handicap_index;
+        if (separateLadies && (scorecard.gender === 'F')) return false;
         
         if (hcp_local !== null && hcp_local !== undefined && hcp_local !== '') {
           const hcp = parseFloat(hcp_local);
@@ -122,6 +148,7 @@ export default function TournamentResults() {
       filter: (scorecard) => {
         const hcp_local = scorecard.handicap_local;
         const hcp_index = scorecard.handicap_index;
+        if (separateLadies && (scorecard.gender === 'F')) return false;
         
         if (hcp_local !== null && hcp_local !== undefined && hcp_local !== '') {
           const hcp = parseFloat(hcp_local);
@@ -136,18 +163,76 @@ export default function TournamentResults() {
         return false;
       }
     },
-    {
-      id: 'damas',
-      name: 'Damas',
-      description: 'Categoría Femenina',
-      color: 'bg-pink-50 border-pink-200', 
-      icon: Crown,
-      filter: (scorecard) => {
-        // Asumiendo que hay un campo gender o se puede determinar por otros medios
-        // Por ahora usaremos una lógica temporal
-        return scorecard.gender === 'F' || scorecard.category === 'damas';
-      }
-    },
+    // Categorías de Damas
+    ...(separateLadies
+      ? (ladiesByHcp
+        ? [
+          {
+            id: 'damas_primera',
+            name: 'Damas 1ra',
+            description: 'HCP 0 - 7.9 (Femenino)',
+            color: 'bg-pink-50 border-pink-200',
+            icon: Crown,
+            filter: (s: any) => {
+              if (s.gender !== 'F') return false
+              const hl = s.handicap_local, hi = s.handicap_index
+              if (hl !== null && hl !== undefined && hl !== '') { const h = parseFloat(hl); return !isNaN(h) && h >= 0 && h <= 7.9 }
+              if (hi !== null && hi !== undefined && hi !== '' && hi !== '0.0' && hi !== 0) { const h = parseFloat(hi); return !isNaN(h) && h >= 0 && h <= 7.9 }
+              return false
+            }
+          },
+          {
+            id: 'damas_segunda',
+            name: 'Damas 2da',
+            description: 'HCP 8 - 13.9 (Femenino)',
+            color: 'bg-pink-50 border-pink-200',
+            icon: Trophy,
+            filter: (s: any) => {
+              if (s.gender !== 'F') return false
+              const hl = s.handicap_local, hi = s.handicap_index
+              if (hl !== null && hl !== undefined && hl !== '') { const h = parseFloat(hl); return !isNaN(h) && h >= 8 && h <= 13.9 }
+              if (hi !== null && hi !== undefined && hi !== '' && hi !== '0.0' && hi !== 0) { const h = parseFloat(hi); return !isNaN(h) && h >= 8 && h <= 13.9 }
+              return false
+            }
+          },
+          {
+            id: 'damas_tercera',
+            name: 'Damas 3ra',
+            description: 'HCP 14 - 21.9 (Femenino)',
+            color: 'bg-pink-50 border-pink-200',
+            icon: Medal,
+            filter: (s: any) => {
+              if (s.gender !== 'F') return false
+              const hl = s.handicap_local, hi = s.handicap_index
+              if (hl !== null && hl !== undefined && hl !== '') { const h = parseFloat(hl); return !isNaN(h) && h >= 14 && h <= 21.9 }
+              if (hi !== null && hi !== undefined && hi !== '' && hi !== '0.0' && hi !== 0) { const h = parseFloat(hi); return !isNaN(h) && h >= 14 && h <= 21.9 }
+              return false
+            }
+          },
+          {
+            id: 'damas_cuarta',
+            name: 'Damas 4ta',
+            description: 'HCP 22 - 53.9 (Femenino)',
+            color: 'bg-pink-50 border-pink-200',
+            icon: Award,
+            filter: (s: any) => {
+              if (s.gender !== 'F') return false
+              const hl = s.handicap_local, hi = s.handicap_index
+              if (hl !== null && hl !== undefined && hl !== '') { const h = parseFloat(hl); return !isNaN(h) && h >= 22 && h <= 53.9 }
+              if (hi !== null && hi !== undefined && hi !== '' && hi !== '0.0' && hi !== 0) { const h = parseFloat(hi); return !isNaN(h) && h >= 22 && h <= 53.9 }
+              return false
+            }
+          }
+        ]
+        : [{
+          id: 'damas',
+          name: 'Damas',
+          description: 'Categoría Femenina (todas juntas)',
+          color: 'bg-pink-50 border-pink-200',
+          icon: Crown,
+          filter: (scorecard: any) => scorecard.gender === 'F'
+        } as Category])
+      : []),
     {
       id: 'no_hcp',
       name: 'Sin HCP',
@@ -161,8 +246,8 @@ export default function TournamentResults() {
         // No tiene handicap_local válido
         const noHcpLocal = hcp_local === null || hcp_local === undefined || hcp_local === '';
         
-        // No tiene handicap_index válido (incluyendo '0.0' que indica sin HCP)
-        const noHcpIndex = hcp_index === null || hcp_index === undefined || hcp_index === '' || hcp_index === '0.0' || hcp_index === 0;
+        // No tiene handicap_index válido (0 y '0.0' son válidos - scratch)
+        const noHcpIndex = hcp_index === null || hcp_index === undefined || hcp_index === '';
         
         return noHcpLocal && noHcpIndex;
       }
@@ -177,6 +262,124 @@ export default function TournamentResults() {
         return scorecard.category === 'principiantes';
       }
     }
+  ] : [
+    // scratch mode: agregar categoría Scratch (gross)
+    ...(separateLadies ? [] : [{
+      id: 'scratch_general',
+      name: 'Scratch (Gross)',
+      description: 'Clasificación por golpes (sin HCP)',
+      color: 'bg-yellow-50 border-yellow-200',
+      icon: Crown,
+      filter: (_s: any) => true
+    } as Category]),
+    // Si se separan damas, scratch exclusivo damas
+    ...(separateLadies ? [{
+      id: 'scratch_damas',
+      name: 'Damas Scratch (Gross)',
+      description: 'Clasificación por golpes (sin HCP)',
+      color: 'bg-pink-50 border-pink-200',
+      icon: Crown,
+      filter: (s: any) => s.gender === 'F'
+    } as Category] : []),
+    // Bandas de HCP: -5–7.9, 8–15.8, 15.9–54 (excluir damas si se separan)
+    {
+      id: 'band_1',
+      name: 'HCP -5 a 7.9',
+      description: 'Clasificación por neto dentro de banda',
+      color: 'bg-blue-50 border-blue-200',
+      icon: Trophy,
+      filter: (s: any) => {
+        if (separateLadies && s.gender === 'F') return false
+        const hl = s.handicap_local, hi = s.handicap_index
+        const val = hl !== null && hl !== undefined && hl !== '' ? parseFloat(hl) : (hi !== null && hi !== undefined && hi !== '' ? parseFloat(hi) : NaN)
+        return !isNaN(val) && val >= -5 && val <= 7.9
+      }
+    },
+    {
+      id: 'band_2',
+      name: 'HCP 8 a 15.8',
+      description: 'Clasificación por neto dentro de banda',
+      color: 'bg-green-50 border-green-200',
+      icon: Medal,
+      filter: (s: any) => {
+        if (separateLadies && s.gender === 'F') return false
+        const hl = s.handicap_local, hi = s.handicap_index
+        const val = hl !== null && hl !== undefined && hl !== '' ? parseFloat(hl) : (hi !== null && hi !== undefined && hi !== '' ? parseFloat(hi) : NaN)
+        return !isNaN(val) && val >= 8 && val <= 15.8
+      }
+    },
+    {
+      id: 'band_3',
+      name: 'HCP 15.9 a 54',
+      description: 'Clasificación por neto dentro de banda',
+      color: 'bg-purple-50 border-purple-200',
+      icon: Award,
+      filter: (s: any) => {
+        if (separateLadies && s.gender === 'F') return false
+        const hl = s.handicap_local, hi = s.handicap_index
+        const val = hl !== null && hl !== undefined && hl !== '' ? parseFloat(hl) : (hi !== null && hi !== undefined && hi !== '' ? parseFloat(hi) : NaN)
+        return !isNaN(val) && val >= 15.9 && val <= 54
+      }
+    },
+    // Damas por bandas si corresponde
+    ...(separateLadies && ladiesByHcp ? [
+      {
+        id: 'damas_band_1',
+        name: 'Damas HCP -5 a 7.9',
+        description: 'Femenino por neto',
+        color: 'bg-pink-50 border-pink-200',
+        icon: Trophy,
+        filter: (s: any) => {
+          if (s.gender !== 'F') return false
+          const hl = s.handicap_local, hi = s.handicap_index
+          const val = hl !== null && hl !== undefined && hl !== '' ? parseFloat(hl) : (hi !== null && hi !== undefined && hi !== '' ? parseFloat(hi) : NaN)
+          return !isNaN(val) && val >= -5 && val <= 7.9
+        }
+      } as Category,
+      {
+        id: 'damas_band_2',
+        name: 'Damas HCP 8 a 15.8',
+        description: 'Femenino por neto',
+        color: 'bg-pink-50 border-pink-200',
+        icon: Medal,
+        filter: (s: any) => {
+          if (s.gender !== 'F') return false
+          const hl = s.handicap_local, hi = s.handicap_index
+          const val = hl !== null && hl !== undefined && hl !== '' ? parseFloat(hl) : (hi !== null && hi !== undefined && hi !== '' ? parseFloat(hi) : NaN)
+          return !isNaN(val) && val >= 8 && val <= 15.8
+        }
+      } as Category,
+      {
+        id: 'damas_band_3',
+        name: 'Damas HCP 15.9 a 54',
+        description: 'Femenino por neto',
+        color: 'bg-pink-50 border-pink-200',
+        icon: Award,
+        filter: (s: any) => {
+          if (s.gender !== 'F') return false
+          const hl = s.handicap_local, hi = s.handicap_index
+          const val = hl !== null && hl !== undefined && hl !== '' ? parseFloat(hl) : (hi !== null && hi !== undefined && hi !== '' ? parseFloat(hi) : NaN)
+          return !isNaN(val) && val >= 15.9 && val <= 54
+        }
+      } as Category
+    ] : [])
+    ,
+    // Listado de jugadores sin HCP (para scratch_bands también)
+    {
+      id: 'no_hcp',
+      name: 'Sin HCP',
+      description: 'Jugadores sin Handicap',
+      color: 'bg-gray-50 border-gray-200',
+      icon: Award,
+      filter: (s: any) => {
+        const hl = s.handicap_local
+        const hi = s.handicap_index
+        // Considerar como "sin HCP" si ambos son null/undefined/'' o '0.0' o 0
+        const noLocal = hl === null || hl === undefined || hl === '' || hl === '0.0' || parseFloat(hl) === 0
+        const noIndex = hi === null || hi === undefined || hi === '' || hi === '0.0' || parseFloat(hi) === 0
+        return noLocal && noIndex
+      }
+    } as Category
   ];
 
   // Procesar los resultados por categoría
@@ -194,7 +397,18 @@ export default function TournamentResults() {
           handicap_local: (scorecard as any).handicap_local,
           handicap_index: scorecard.handicap_index || null,
           total_gross: scorecard.total_gross || 0,
-          total_net: (scorecard.total_gross || 0) - Math.round((scorecard as any).handicap_local || scorecard.handicap_index || 0),
+          // Calcular neto: si hay handicap_local usar redondeado; si no, usar index tal cual (puede ser negativo)
+          total_net: (() => {
+            // En categorías scratch, ordenar por gross: usamos gross como "neto" para el sort
+            if (category.id.startsWith('scratch')) {
+              return scorecard.total_gross || 0
+            }
+            return (scorecard.total_gross || 0) - (
+              (scorecard as any).handicap_local !== null && (scorecard as any).handicap_local !== undefined
+                ? Math.round((scorecard as any).handicap_local)
+                : Math.round(scorecard.handicap_index || 0)
+            )
+          })(),
           front_nine: scorecard.front_nine || 0,
           back_nine: scorecard.back_nine || 0,
           member_number: (scorecard as any).member_number,
@@ -210,8 +424,38 @@ export default function TournamentResults() {
       results[category.id] = categoryScores;
     });
 
+    // Regla: el ganador de Scratch no puede ganar en HCP -5 a 7.9
+    // - General: excluir ganador de 'scratch_general' de 'band_1'
+    // - Damas: excluir ganador de 'scratch_damas' de 'damas_band_1'
+    const getIdKey = (r: CategoryResult | undefined) => {
+      if (!r) return '';
+      const keyName = sanitizeAscii(r.player_name || '').toLowerCase();
+      const keyMat = (r.member_number || '').toString().trim().toLowerCase();
+      return keyMat ? `m:${keyMat}` : `n:${keyName}`;
+    };
+
+    const scratchWinnerGeneral = results['scratch_general'] && results['scratch_general'][0];
+    const scratchWinnerLadies = results['scratch_damas'] && results['scratch_damas'][0];
+
+    const scratchGeneralKey = getIdKey(scratchWinnerGeneral);
+    const scratchLadiesKey = getIdKey(scratchWinnerLadies);
+
+    const computeKey = (r: CategoryResult) => getIdKey(r);
+
+    if (results['band_1'] && scratchGeneralKey) {
+      results['band_1'] = results['band_1']
+        .filter(r => computeKey(r) !== scratchGeneralKey)
+        .map((r, idx) => ({ ...r, position: idx + 1 }));
+    }
+
+    if (results['damas_band_1'] && scratchLadiesKey) {
+      results['damas_band_1'] = results['damas_band_1']
+        .filter(r => computeKey(r) !== scratchLadiesKey)
+        .map((r, idx) => ({ ...r, position: idx + 1 }));
+    }
+
     return results;
-  }, [scorecards]);
+  }, [scorecards, separateLadies, ladiesByHcp, resultsMode]);
 
   const getPositionDisplay = (position: number) => {
     return <span className="text-gray-900 font-bold text-lg">{position}</span>;
@@ -345,7 +589,13 @@ export default function TournamentResults() {
                             {result.total_net}
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap text-center text-sm text-gray-900">
-                            {Math.round(result.handicap_local || result.handicap_index || 0)}
+                            {(() => {
+                              const hl = result.handicap_local
+                              const hi = result.handicap_index
+                              if (hl !== null && hl !== undefined) return Math.round(Number(hl))
+                              if (hi !== null && hi !== undefined) return Math.round(Number(hi))
+                              return 'N/A'
+                            })()}
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap text-center text-sm text-gray-900 font-medium">
                             {result.total_gross}
@@ -357,7 +607,7 @@ export default function TournamentResults() {
                             {result.back_nine}
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {result.club_name || 'Sin club'}
+                            {sanitizeAscii(result.club_name) || 'Sin club'}
                           </td>
                         </tr>
                       ))}

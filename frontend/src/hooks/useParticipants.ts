@@ -5,6 +5,7 @@ import {
   addTournamentParticipant, 
   removeTournamentParticipant,
   updateParticipantStatus,
+  updateParticipantPayment,
   searchPlayersForTournament,
   createExternalPlayer,
   updateExternalPlayer,
@@ -26,6 +27,21 @@ export const useParticipants = (clubId: number, tournamentId: number) => {
     enabled: clubId > 0 && tournamentId > 0,
     staleTime: 0,
     refetchOnWindowFocus: true,
+  });
+};
+
+export const useUpdateParticipantPayment = (clubId: number, tournamentId: number) => {
+  const queryClient = useQueryClient();
+  return useMutation<void, Error, { participantId: number; paymentData: any }>({
+    mutationFn: ({ participantId, paymentData }) => updateParticipantPayment(clubId, tournamentId, participantId, paymentData),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.participants(clubId, tournamentId) });
+      toast.success('Cobro actualizado');
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.message || 'Error al actualizar cobro');
+      console.error('Error updating payment:', error);
+    },
   });
 };
 
@@ -84,11 +100,11 @@ export const useSearchPlayers = (clubId: number) => {
   });
 };
 
-export const useExternalPlayers = (clubId: number) => {
+export const useExternalPlayers = (clubId: number, enabled: boolean = true) => {
   return useQuery<PlayerSearchResult[], Error>({
     queryKey: QUERY_KEYS.externalPlayers(clubId),
     queryFn: () => getExternalPlayers(clubId),
-    enabled: clubId > 0,
+    enabled: enabled && clubId > 0,
     staleTime: 0, // Always refresh
     refetchOnWindowFocus: true,
   });

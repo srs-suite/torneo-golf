@@ -12,15 +12,17 @@ import {
   UserCheck,
   UserX,
   Users,
-  Download
+  Download,
+  DollarSign
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { SearchInput } from './SearchInput'
 import { Tournament } from '@/types/tournament'
 import { Participant, PlayerSearchResult } from '@/types/participant'
 import { LoadingSpinner } from '@/components/LoadingSpinner'
-import { useParticipants, useAddParticipant, useRemoveParticipant, useUpdateParticipantStatus, useSearchPlayers, useExternalPlayers, useDeleteExternalPlayer } from '@/hooks/useParticipants'
+import { useParticipants, useAddParticipant, useRemoveParticipant, useUpdateParticipantStatus, useSearchPlayers, useExternalPlayers, useDeleteExternalPlayer, useUpdateParticipantPayment } from '@/hooks/useParticipants'
 import { CreateExternalPlayerModal } from '@/components/CreateExternalPlayerModal'
+import { PaymentModal } from '@/components/PaymentModal'
 
 interface TournamentParticipantsModalProps {
   isOpen: boolean
@@ -50,6 +52,9 @@ export function TournamentParticipantsModal({
   const [externalPlayerSearchTerm, setExternalPlayerSearchTerm] = useState('')
   const [externalPlayerNameForModal, setExternalPlayerNameForModal] = useState('')
   const [editingExternalPlayer, setEditingExternalPlayer] = useState<any>(null)
+  // Búsqueda/filtrado de participantes existentes
+  const [participantSearch, setParticipantSearch] = useState('')
+  const [paymentFilter, setPaymentFilter] = useState<'all' | 'pending' | 'paid' | 'waived'>('all')
 
   // Function to format names: Primera Letra Mayúscula y resto minúscula
   const formatName = (name: string): string => {
@@ -74,26 +79,39 @@ export function TournamentParticipantsModal({
 
   // React Query hooks
   const { data: participants = [], refetch } = useParticipants(clubId, tournament.tournament_id)
-  const { data: externalPlayersData = [] } = useExternalPlayers(clubId)
+  const { data: externalPlayersData = [] } = useExternalPlayers(clubId, showExternalPlayersList)
   const addParticipant = useAddParticipant(clubId, tournament.tournament_id)
   const removeParticipant = useRemoveParticipant(clubId, tournament.tournament_id)
   const updateStatus = useUpdateParticipantStatus(clubId, tournament.tournament_id)
   const deleteExternalPlayer = useDeleteExternalPlayer(clubId)
   const searchPlayers = useSearchPlayers(clubId)
+  const updatePayment = useUpdateParticipantPayment(clubId, tournament.tournament_id)
   // const createExternalPlayer = useCreateExternalPlayer(clubId)
 
-  // Reset search when modal opens/closes
+  const [paymentEditing, setPaymentEditing] = useState<Participant | null>(null)
+  const [paymentDraft, setPaymentDraft] = useState<{fee_amount?: number; paid_amount?: number; payment_status?: any; payment_method?: string; receipt_number?: string; payment_notes?: string}>({})
+
+  // Sanitize to ASCII like other pages
+  const sanitizeAscii = (text: string | undefined | null) => {
+    const base = (text ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^\x20-\x7E]/g, '')
+    return base.replace(/\s+/g, ' ').trim()
+  }
+
+  // Reset search when modal opens
   useEffect(() => {
-    if (isOpen) {
-      setPlayerSearchTerm('')
-      setSearchResults([])
-      setShowAddParticipant(false)
-      setSelectedMembers(new Set())
-      setSelectedExternalPlayers(new Set())
-      loadClubMembers()
-      refetch()
-    }
-  }, [isOpen, refetch])
+    if (!isOpen) return
+    setPlayerSearchTerm('')
+    setSearchResults([])
+    setShowAddParticipant(false)
+    setSelectedMembers(new Set())
+    setSelectedExternalPlayers(new Set())
+    loadClubMembers()
+    // Evitar bucles: refetch una vez al abrir
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen])
 
   // Load external players when data changes
   useEffect(() => {
@@ -232,31 +250,26 @@ export function TournamentParticipantsModal({
     }
   }
 
-  const handleConfirmAllParticipants = async () => {
-    const registeredParticipants = participants.filter(p => p.status === 'registered')
-    
-    if (registeredParticipants.length === 0) {
-      alert('No hay participantes registrados para confirmar.')
-      return
-    }
+  // Payments UI state
+  const [showPayments, setShowPayments] = useState(false)
+  const paymentMethods = ['Efectivo', 'Transferencia', 'Tarjeta', 'Otro']
 
-    const confirmMessage = `¿Estás seguro de que quieres confirmar ${registeredParticipants.length} participante(s) registrado(s)?`
-    
-    if (window.confirm(confirmMessage)) {
-      try {
-        // Confirmar todos los participantes registrados
-        for (const participant of registeredParticipants) {
-          await updateStatus.mutateAsync({ 
-            participantId: participant.participant_id, 
-            status: 'confirmed' 
-          })
+  const handleSavePayment = async (p: Participant, changes: Partial<Participant>) => {
+    try {
+      await updatePayment.mutateAsync({
+        participantId: p.participant_id,
+        paymentData: {
+          fee_amount: changes.fee_amount ?? p.fee_amount ?? tournament.entry_fee ?? 0,
+          paid_amount: changes.paid_amount ?? p.paid_amount ?? 0,
+          payment_status: (changes.payment_status ?? p.payment_status ?? 'pending') as any,
+          payment_method: changes.payment_method ?? p.payment_method ?? null,
+          receipt_number: changes.receipt_number ?? p.receipt_number ?? null,
+          payment_notes: changes.payment_notes ?? p.payment_notes ?? null,
         }
-        // Refetch para actualizar la lista
-        refetch()
-      } catch (error) {
-        console.error('Error confirming participants:', error)
-        alert('Hubo un error al confirmar los participantes. Intenta de nuevo.')
-      }
+      })
+      refetch()
+    } catch (e) {
+      // handled in hook toast
     }
   }
 
@@ -276,8 +289,7 @@ export function TournamentParticipantsModal({
       'Club': participant.player_club || '',
       'Tipo': participant.player_type === 'member' ? 'Socio' : 'Externo',
       'Estado': participant.status === 'registered' ? 'Registrado' : 
-               participant.status === 'confirmed' ? 'Confirmado' : 
-               participant.status === 'checked_in' ? 'Presente' : 
+               participant.status === 'cancelled' ? 'Cancelado' : 
                participant.status,
       'Email': participant.player_email || '',
       'Teléfono': participant.player_phone || ''
@@ -508,24 +520,35 @@ export function TournamentParticipantsModal({
     }
   }
 
-  const filteredParticipants = participants.filter(participant => 
-    statusFilter === 'all' || participant.status === statusFilter
-  )
+  const filteredParticipants = participants
+    .filter(participant => statusFilter === 'all' || participant.status === statusFilter)
+    .filter(participant => {
+      if (paymentFilter === 'all') return true
+      return (participant.payment_status || 'pending') === paymentFilter
+    })
+    .filter(participant => {
+      if (!participantSearch.trim()) return true
+      const q = participantSearch.toLowerCase()
+      return (
+        (participant.player_name || '').toLowerCase().includes(q) ||
+        (participant.member_number || '').toLowerCase().includes(q)
+      )
+    })
 
   // Statistics
   const stats = useMemo(() => {
     const total = participants.length
-    const confirmed = participants.filter(p => p.status === 'confirmed').length
     const registered = participants.filter(p => p.status === 'registered').length
     const cancelled = participants.filter(p => p.status === 'cancelled').length
+    const paid = participants.filter(p => p.payment_status === 'paid').length
+    const pending = participants.filter(p => p.payment_status === 'pending').length
     
-    return { total, confirmed, registered, cancelled }
+    return { total, registered, cancelled, paid, pending }
   }, [participants])
 
   const getStatusColor = (status: Participant['status']) => {
     switch (status) {
       case 'registered': return 'bg-yellow-100 text-yellow-800'
-      case 'confirmed': return 'bg-green-100 text-green-800'
       case 'cancelled': return 'bg-red-100 text-red-800'
       default: return 'bg-gray-100 text-gray-800'
     }
@@ -534,7 +557,6 @@ export function TournamentParticipantsModal({
   const getStatusLabel = (status: Participant['status']) => {
     switch (status) {
       case 'registered': return 'Registrado'
-      case 'confirmed': return 'Confirmado'
       case 'cancelled': return 'Cancelado'
       default: return status
     }
@@ -573,7 +595,7 @@ export function TournamentParticipantsModal({
 
   return (
     <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-6xl max-h-[95vh] flex flex-col">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-7xl h-[90vh] flex flex-col">
         {/* Header */}
         <div className="bg-black text-white p-4 flex justify-between items-center rounded-t-lg">
           <div>
@@ -606,22 +628,6 @@ export function TournamentParticipantsModal({
               </div>
             </div>
             <div 
-              className="bg-green-50 p-4 rounded-lg cursor-pointer hover:bg-green-100 transition-colors"
-              onClick={() => {
-                setStatusFilter('confirmed')
-                setShowMembersList(false)
-                setShowExternalPlayersList(false)
-              }}
-            >
-              <div className="flex items-center">
-                <CheckCircle className="w-8 h-8 text-green-600" />
-                <div className="ml-3">
-                  <p className="text-sm font-medium text-green-600">Confirmados</p>
-                  <p className="text-2xl font-bold text-green-900">{stats.confirmed}</p>
-                </div>
-              </div>
-            </div>
-            <div 
               className="bg-yellow-50 p-4 rounded-lg cursor-pointer hover:bg-yellow-100 transition-colors"
               onClick={() => {
                 setStatusFilter('registered')
@@ -629,11 +635,17 @@ export function TournamentParticipantsModal({
                 setShowExternalPlayersList(false)
               }}
             >
-              <div className="flex items-center">
-                <Clock className="w-8 h-8 text-yellow-600" />
-                <div className="ml-3">
-                  <p className="text-sm font-medium text-yellow-600">Registrados</p>
-                  <p className="text-2xl font-bold text-yellow-900">{stats.registered}</p>
+              <div className="flex flex-col">
+                <div className="flex items-center mb-2">
+                  <Clock className="w-8 h-8 text-yellow-600" />
+                  <div className="ml-3">
+                    <p className="text-sm font-medium text-yellow-600">Registrados</p>
+                    <p className="text-2xl font-bold text-yellow-900">{stats.registered}</p>
+                  </div>
+                </div>
+                <div className="flex gap-4 text-xs ml-11">
+                  <span className="text-green-700">✓ Pagados: {stats.paid}</span>
+                  <span className="text-orange-700">⏳ Pendientes: {stats.pending}</span>
                 </div>
               </div>
             </div>
@@ -651,8 +663,9 @@ export function TournamentParticipantsModal({
           </div>
 
           {/* Controls */}
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-4 sm:space-y-0 mb-6">
-            <div className="flex items-center space-x-4">
+          <div className="flex flex-col space-y-4 mb-6">
+            {/* Row 1: Acciones */}
+            <div className="flex items-center flex-wrap gap-3">
               <button
                 onClick={() => {
                   setShowMembersList(!showMembersList)
@@ -673,16 +686,6 @@ export function TournamentParticipantsModal({
                 <UserX className="w-4 h-4" />
                 <span>Agregar Jugador Externo</span>
               </button>
-              {participants.filter(p => p.status === 'registered').length > 0 && (
-                <button
-                  onClick={handleConfirmAllParticipants}
-                  className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-                  title={`Confirmar ${participants.filter(p => p.status === 'registered').length} participante(s) registrado(s)`}
-                >
-                  <CheckCircle className="w-4 h-4" />
-                  <span>Confirmar Todos ({participants.filter(p => p.status === 'registered').length})</span>
-                </button>
-              )}
               {participants.length > 0 && (
                 <button
                   onClick={handleExportToExcel}
@@ -693,6 +696,10 @@ export function TournamentParticipantsModal({
                   <span>Exportar Excel ({participants.length})</span>
                 </button>
               )}
+            </div>
+
+            {/* Row 2: Filtros */}
+            <div className="flex items-center flex-wrap gap-3">
               <div className="flex items-center space-x-2">
                 <Filter className="w-4 h-4 text-gray-500" />
                 <select
@@ -702,9 +709,41 @@ export function TournamentParticipantsModal({
                 >
                   <option value="all">Todos los estados</option>
                   <option value="registered">Registrados</option>
-                  <option value="confirmed">Confirmados</option>
                   <option value="cancelled">Cancelados</option>
                 </select>
+              </div>
+              <div className="flex items-center space-x-2">
+                <Filter className="w-4 h-4 text-gray-500" />
+                <select
+                  value={paymentFilter}
+                  onChange={(e) => setPaymentFilter(e.target.value as any)}
+                  className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-gray-500 focus:border-transparent"
+                >
+                  <option value="all">Pago: todos</option>
+                  <option value="pending">Pago: pendientes</option>
+                  <option value="paid">Pago: pagados</option>
+                  <option value="waived">Pago: bonificados</option>
+                </select>
+              </div>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Buscar participante o matrícula..."
+                  value={participantSearch}
+                  onChange={(e) => setParticipantSearch(e.target.value)}
+                  className="pl-10 pr-8 py-2 w-72 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
+                />
+                {participantSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setParticipantSearch('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    title="Limpiar búsqueda"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -900,7 +939,9 @@ export function TournamentParticipantsModal({
                             </span>
                           </div>
                           <div className="text-sm text-gray-500">
-                            {member.member_number && `N°: ${member.member_number} • `}Index: {member.handicap_index || 0} • HCP: {member.handicap_local || 0}
+                            {member.member_number && `N°: ${member.member_number} • `}
+                            Index: {member.handicap_index !== null && member.handicap_index !== undefined && member.handicap_index !== 0 ? member.handicap_index : 'N/A'}
+                            {' '}• HCP: {member.handicap_local !== null && member.handicap_local !== undefined ? member.handicap_local : 'N/A'}
                           </div>
                         </div>
                       </div>
@@ -1066,7 +1107,9 @@ export function TournamentParticipantsModal({
                             </span>
                           </div>
                           <div className="text-sm text-gray-500">
-                            {player.member_number && `N°: ${player.member_number} • `}Index: {player.handicap_index || 0} • HCP: {player.handicap_local || 0}
+                            {player.member_number && `N°: ${player.member_number} • `}
+                            Index: {player.handicap_index !== null && player.handicap_index !== undefined && player.handicap_index !== 0 ? player.handicap_index : 'N/A'}
+                            {' '}• HCP: {player.handicap_local !== null && player.handicap_local !== undefined ? player.handicap_local : 'N/A'}
                           </div>
                           <div className="text-xs text-gray-400">
                             {player.player_club}
@@ -1172,20 +1215,13 @@ export function TournamentParticipantsModal({
                       return (
                         <tr key={participant.participant_id} className="hover:bg-gray-50">
                           <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="flex items-center">
-                              <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center">
-                                <typeInfo.icon className="w-5 h-5 text-gray-500" />
-                              </div>
-                              <div className="ml-4">
-                                <div className="text-sm font-medium text-gray-900">{formatName(participant.player_name)}</div>
-                                {participant.player_type === 'external' && (
-                                  <div className="text-xs text-blue-600 font-medium">Externo</div>
-                                )}
-                              </div>
-                            </div>
+                            <div className="text-sm font-medium text-gray-900">{formatName(participant.player_name)}</div>
+                            {participant.player_type === 'external' && (
+                              <div className="text-xs text-blue-600 font-medium">Externo</div>
+                            )}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                            {participant.display_club || participant.player_club}
+                            {sanitizeAscii(participant.display_club || participant.player_club)}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                             {participant.member_number || 'N/A'}
@@ -1201,38 +1237,30 @@ export function TournamentParticipantsModal({
                               <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(participant.status)}`}>
                                 {getStatusLabel(participant.status)}
                               </span>
-                              {participant.status === 'registered' && (
-                                <button
-                                  onClick={() => handleChangeStatus(participant.participant_id, 'confirmed')}
-                                  className="text-green-600 hover:text-green-800"
-                                  title="Confirmar participante"
-                                >
-                                  <CheckCircle className="w-4 h-4" />
-                                </button>
-                              )}
-                              {participant.status === 'confirmed' && (
-                                <button
-                                  onClick={() => handleChangeStatus(participant.participant_id, 'registered')}
-                                  className="text-yellow-600 hover:text-yellow-800"
-                                  title="Cambiar a registrado"
-                                >
-                                  <Clock className="w-4 h-4" />
-                                </button>
-                              )}
                             </div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                             {new Date(participant.registration_date).toLocaleDateString('es-ES')}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium" style={{width: '120px'}}>
+                          <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium" style={{width: '140px'}}>
+                            <button
+                              onClick={() => setPaymentEditing(participant)}
+                              className={`inline-flex items-center px-2 py-1 text-xs font-medium rounded border transition-colors mr-2 ${
+                                (participant.payment_status === 'paid')
+                                  ? 'text-green-700 hover:text-green-900 hover:bg-green-50 border-green-200 hover:border-green-300'
+                                  : 'text-red-700 hover:text-red-900 hover:bg-red-50 border-red-200 hover:border-red-300'
+                              }`}
+                              title={(participant.payment_status === 'paid') ? 'Cobro registrado' : 'Registrar cobro'}
+                            >
+                              <DollarSign className="w-4 h-4" />
+                            </button>
                             <button
                               onClick={() => handleRemoveParticipant(participant.participant_id)}
                               disabled={removeParticipant.isPending}
                               className="inline-flex items-center px-2 py-1 text-xs font-medium text-red-600 hover:text-red-800 hover:bg-red-50 rounded border border-red-200 hover:border-red-300 disabled:opacity-50 transition-colors"
                               title="Eliminar participante"
                             >
-                              <Trash2 className="w-3 h-3 mr-1" />
-                              Eliminar
+                              <Trash2 className="w-4 h-4" />
                             </button>
                           </td>
                         </tr>
@@ -1264,6 +1292,7 @@ export function TournamentParticipantsModal({
             )}
           </div>
           )}
+          
         </div>
       </div>
 
@@ -1288,6 +1317,17 @@ export function TournamentParticipantsModal({
           clubId={clubId}
         />
       )}
+      
+      {/* Modal de Cobro */}
+      <PaymentModal
+        isOpen={!!paymentEditing}
+        onClose={() => setPaymentEditing(null)}
+        participant={paymentEditing}
+        clubId={clubId}
+        tournamentId={tournament.tournament_id}
+        defaultFee={tournament.entry_fee || 0}
+        onSaved={() => refetch()}
+      />
     </div>
   )
 }

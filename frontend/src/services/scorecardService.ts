@@ -37,9 +37,10 @@ export interface Scorecard {
 }
 
 class ScorecardService {
-  async getTournamentScorecards(clubId: number, tournamentId: number): Promise<Scorecard[]> {
-    console.log(`📊 API: GET /club/${clubId}/tournaments/${tournamentId}/scorecards`)
-    const response = await api.get(`/club/${clubId}/tournaments/${tournamentId}/scorecards`)
+  async getTournamentScorecards(clubId: number, tournamentId: number, includeAll: boolean = false): Promise<Scorecard[]> {
+    const params = includeAll ? '?includeAll=true' : '';
+    console.log(`📊 API: GET /club/${clubId}/tournaments/${tournamentId}/scorecards${params}`)
+    const response = await api.get(`/club/${clubId}/tournaments/${tournamentId}/scorecards${params}`)
     console.log('📊 Tournament scorecards response:', response.data)
     return response.data.data
   }

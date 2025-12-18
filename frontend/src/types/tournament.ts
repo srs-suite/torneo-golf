@@ -12,6 +12,10 @@ export interface Tournament {
   prize_pool: number
   description?: string
   rules?: string
+  is_ranking_event?: boolean
+  results_mode?: 'standard' | 'scratch_bands'
+  separate_ladies?: boolean
+  ladies_by_hcp?: boolean
   status: 'draft' | 'open' | 'closed' | 'in_progress' | 'completed' | 'cancelled'
   weather_conditions?: string
   created_by?: number
@@ -87,6 +91,10 @@ export interface CreateTournamentData {
   prize_pool: number
   description?: string
   rules?: string
+  is_ranking_event?: boolean
+  results_mode?: 'standard' | 'scratch_bands'
+  separate_ladies?: boolean
+  ladies_by_hcp?: boolean
 }
 
 export interface TournamentStats {

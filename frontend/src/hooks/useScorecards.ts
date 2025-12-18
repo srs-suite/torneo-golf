@@ -11,10 +11,10 @@ const QUERY_KEYS = {
     ['scorecard', 'print', clubId, tournamentId, scorecardId]
 }
 
-export function useTournamentScorecards(clubId: number, tournamentId: number) {
+export function useTournamentScorecards(clubId: number, tournamentId: number, includeAll: boolean = false) {
   return useQuery({
-    queryKey: QUERY_KEYS.tournamentScorecards(clubId, tournamentId),
-    queryFn: () => scorecardService.getTournamentScorecards(clubId, tournamentId),
+    queryKey: [...QUERY_KEYS.tournamentScorecards(clubId, tournamentId), includeAll],
+    queryFn: () => scorecardService.getTournamentScorecards(clubId, tournamentId, includeAll),
     enabled: !!(clubId && tournamentId)
   })
 }

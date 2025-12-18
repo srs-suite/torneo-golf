@@ -1,16 +1,18 @@
 import { useForm } from 'react-hook-form'
+import { useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { X, Trophy, Calendar, DollarSign } from 'lucide-react'
 import { useCreateTournament, useUpdateTournament } from '@/hooks/useTournaments'
 import { Tournament, CreateTournamentData } from '@/types/tournament'
+import { toast } from 'react-hot-toast'
 import { 
   getCurrentDateHTML
 } from '@/utils/dateFormatter'
 import { DateInput } from './DateInput'
 import { TimeInput } from './TimeInput'
 
-const tournamentSchema = z.object({
+const tournamentSchemaCreate = z.object({
   tournament_name: z.string().min(1, 'El nombre del torneo es requerido').max(255, 'Máximo 255 caracteres'),
   tournament_date: z.string().min(1, 'La fecha del torneo es requerida'),
   start_time: z.string().optional(),
@@ -20,9 +22,12 @@ const tournamentSchema = z.object({
   max_participants: z.number().min(1, 'Mínimo 1 participante').max(200, 'Máximo 200 participantes').optional(),
   registration_deadline: z.string().optional(),
   entry_fee: z.number().min(0, 'La tarifa debe ser mayor o igual a 0').default(0),
-  prize_pool: z.number().min(0, 'El premio debe ser mayor o igual a 0').optional().default(0),
   description: z.string().max(1000, 'Máximo 1000 caracteres').optional(),
   rules: z.string().max(2000, 'Máximo 2000 caracteres').optional()
+})
+
+const tournamentSchemaEdit = tournamentSchemaCreate.extend({
+  tournament_date: z.string().optional()
 })
 
 interface CreateTournamentModalProps {
@@ -38,6 +43,10 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
 
   const createTournament = useCreateTournament(clubId)
   const updateTournament = useUpdateTournament(clubId, tournament?.tournament_id || 0)
+  const [isRankingEvent, setIsRankingEvent] = useState<boolean>((tournament as any)?.is_ranking_event === 1 || (tournament as any)?.is_ranking_event === true)
+  const [resultsMode, setResultsMode] = useState<'standard' | 'scratch_bands'>(((tournament as any)?.results_mode as any) || 'standard')
+  const [separateLadies, setSeparateLadies] = useState<boolean>((tournament as any)?.separate_ladies === 1 || (tournament as any)?.separate_ladies === true)
+  const [ladiesByHcp, setLadiesByHcp] = useState<boolean>((tournament as any)?.ladies_by_hcp === 1 || (tournament as any)?.ladies_by_hcp === true)
 
   const {
     register,
@@ -47,18 +56,21 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
     watch,
     setValue
   } = useForm<CreateTournamentData>({
-    resolver: zodResolver(tournamentSchema),
+    resolver: zodResolver(isEditMode ? tournamentSchemaEdit : tournamentSchemaCreate),
     defaultValues: {
       tournament_name: tournament?.tournament_name || '',
-      tournament_date: tournament?.tournament_date?.split('T')[0] || '',
+      tournament_date: tournament?.tournament_date 
+        ? new Date(tournament.tournament_date).toISOString().split('T')[0] 
+        : '',
       start_time: tournament?.start_time || '',
       end_time: tournament?.end_time || '',
       tournament_type: tournament?.tournament_type || 'stroke_play',
       status: tournament?.status || 'draft',
       max_participants: tournament?.max_participants || undefined,
-      registration_deadline: tournament?.registration_deadline?.split('T')[0] || '',
+      registration_deadline: tournament?.registration_deadline 
+        ? new Date(tournament.registration_deadline).toISOString().split('T')[0]
+        : '',
       entry_fee: tournament?.entry_fee || 0,
-      prize_pool: tournament?.prize_pool || 0,
       description: tournament?.description || '',
       rules: tournament?.rules || ''
     }
@@ -67,11 +79,30 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
 
   const onSubmit = async (data: CreateTournamentData) => {
     console.log('Enviando datos del torneo:', data)
+    const tId = toast.loading(isEditMode ? 'Actualizando torneo…' : 'Creando torneo…')
     try {
+      const safeData: CreateTournamentData = {
+        ...data,
+        tournament_date: (isEditMode && (!data.tournament_date || data.tournament_date === ''))
+          ? (tournament?.tournament_date ? new Date(tournament.tournament_date).toISOString().split('T')[0] : '')
+          : data.tournament_date
+      }
       if (isEditMode) {
-        await updateTournament.mutateAsync(data)
+        await updateTournament.mutateAsync({ 
+          ...safeData, 
+          is_ranking_event: isRankingEvent,
+          results_mode: resultsMode,
+          separate_ladies: separateLadies,
+          ladies_by_hcp: ladiesByHcp
+        })
       } else {
-        await createTournament.mutateAsync(data)
+        await createTournament.mutateAsync({ 
+          ...safeData, 
+          is_ranking_event: isRankingEvent,
+          results_mode: resultsMode,
+          separate_ladies: separateLadies,
+          ladies_by_hcp: ladiesByHcp
+        })
       }
       // Si llegamos aquí, la operación fue exitosa
       handleClose()
@@ -80,6 +111,8 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
       console.error('Error saving tournament:', error)
       // Solo mostrar error si realmente falló la creación
       // El toast de error ya se maneja en el hook
+    } finally {
+      toast.dismiss(tId)
     }
   }
 
@@ -118,7 +151,21 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
 
         {/* Content */}
         <div className="overflow-y-auto max-h-[calc(90vh-120px)]">
-          <form onSubmit={handleSubmit(onSubmit)} className="p-6 space-y-6">
+          <form 
+            onSubmit={handleSubmit(onSubmit, (errs) => {
+              console.warn('❌ Validación de formulario fallida:', errs)
+              const requiredMissing = []
+              if (errs.tournament_name) requiredMissing.push('Nombre del Torneo')
+              if (errs.tournament_date) requiredMissing.push('Fecha del Torneo')
+              if (errs.tournament_type) requiredMissing.push('Tipo de Torneo')
+              if (requiredMissing.length) {
+                toast.error(`Completá: ${requiredMissing.join(', ')}`)
+              } else {
+                toast.error('Revisá los campos marcados en rojo')
+              }
+            })}
+            className="p-6 space-y-6"
+          >
             {/* Información Básica */}
             <div>
               <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
@@ -152,8 +199,9 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                     value={watch('tournament_date') || ''}
                     onChange={(value) => setValue('tournament_date', value)}
                     placeholder="dd/mm/yyyy"
-                    required
-                    min={getCurrentDateHTML()}
+                    required={!isEditMode}
+                    /* Al editar, permitir fechas pasadas; al crear, exigir fecha mínima hoy */
+                    min={isEditMode ? undefined : getCurrentDateHTML()}
                     error={errors.tournament_date?.message}
                   />
                 </div>
@@ -236,7 +284,15 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                   </label>
                   <input
                     type="number"
-                    {...register('max_participants', { valueAsNumber: true })}
+                    {...register('max_participants', { 
+                      valueAsNumber: true,
+                      setValueAs: (v) => {
+                        // Convertir vacío/NaN a undefined para que pase zod .optional()
+                        const num = typeof v === 'string' ? v.trim() : v
+                        const parsed = num === '' || num === null || num === undefined ? undefined : Number(num)
+                        return Number.isNaN(parsed) ? undefined : parsed
+                      }
+                    })}
                     min="1"
                     max="200"
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
@@ -256,7 +312,8 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                     value={watch('registration_deadline') || ''}
                     onChange={(value) => setValue('registration_deadline', value)}
                     placeholder="dd/mm/yyyy"
-                    min={getCurrentDateHTML()}
+                    /* Idem: al editar permitir fechas pasadas si ya pasó la inscripción */
+                    min={isEditMode ? undefined : getCurrentDateHTML()}
                   />
                 </div>
 
@@ -267,7 +324,14 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                   </label>
                   <input
                     type="number"
-                    {...register('entry_fee', { valueAsNumber: true })}
+                    {...register('entry_fee', { 
+                      valueAsNumber: true,
+                      setValueAs: (v) => {
+                        const num = typeof v === 'string' ? v.trim() : v
+                        const parsed = num === '' || num === null || num === undefined ? 0 : Number(num)
+                        return Number.isNaN(parsed) ? 0 : parsed
+                      }
+                    })}
                     min="0"
                     step="1"
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
@@ -340,6 +404,107 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                 </div>
               </div>
             </div>
+
+          {/* Ranking flag */}
+          <div className="px-6">
+            <div className="bg-yellow-50 border border-yellow-200 rounded p-4">
+              <label className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={isRankingEvent}
+                  onChange={(e) => setIsRankingEvent(e.target.checked)}
+                  className="h-4 w-4 text-yellow-600 border-gray-300 rounded"
+                />
+                <span className="text-sm text-yellow-800 font-medium">
+                  Contabilizar este torneo para el ranking anual del club
+                </span>
+              </label>
+              <p className="text-xs text-yellow-700 mt-2">
+                Se generan rankings solo con socios del club: con HCP (neto) y sin HCP (gross). Invitados/otros clubes no suman al ranking del club.
+              </p>
+            </div>
+          </div>
+
+          {/* Resultados - Configuración de categorías */}
+          <div className="px-6 mt-4">
+            <div className="bg-gray-50 border border-gray-200 rounded p-4">
+              <h4 className="text-sm font-semibold text-gray-800 mb-3">Resultados - Configuración</h4>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Modalidad de categorías</label>
+                  <select
+                    value={resultsMode}
+                    onChange={(e) => setResultsMode(e.target.value as any)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  >
+                    <option value="standard">Estándar (0–7.9, 8–13.9, 14–21.9, 22–53.9)</option>
+                    <option value="scratch_bands">Scratch (Gross) + Bandas (-5–7.9, 8–15.8, 15.9–54)</option>
+                  </select>
+                  
+                  {/* Descripción de la modalidad seleccionada */}
+                  <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded text-xs text-gray-700">
+                    {resultsMode === 'standard' ? (
+                      <div className="space-y-1">
+                        <p className="font-semibold text-blue-900">Modalidad Estándar:</p>
+                        <ul className="list-disc list-inside space-y-0.5 ml-2">
+                          <li><strong>1ra Categoría:</strong> HCP 0 - 7.9</li>
+                          <li><strong>2da Categoría:</strong> HCP 8.0 - 13.9</li>
+                          <li><strong>3ra Categoría:</strong> HCP 14.0 - 21.9</li>
+                          <li><strong>4ta Categoría:</strong> HCP 22.0 - 53.9</li>
+                          <li><strong>Sin HCP:</strong> Jugadores sin handicap asignado (agrupados por separado)</li>
+                        </ul>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        <p className="font-semibold text-blue-900">Modalidad Scratch:</p>
+                        <ul className="list-disc list-inside space-y-0.5 ml-2">
+                          <li><strong>Scratch (Gross):</strong> Ganador absoluto por score bruto</li>
+                          <li><strong>1ra Banda:</strong> HCP -5.0 - 7.9 (Net)</li>
+                          <li><strong>2da Banda:</strong> HCP 8.0 - 15.8 (Net)</li>
+                          <li><strong>3ra Banda:</strong> HCP 15.9 - 54.0 (Net)</li>
+                          <li><strong>Sin HCP:</strong> Jugadores sin handicap asignado (agrupados por separado)</li>
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                
+                <div className="flex flex-col gap-3">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={separateLadies}
+                      onChange={(e) => setSeparateLadies(e.target.checked)}
+                      className="h-4 w-4 text-blue-600 border-gray-300 rounded"
+                    />
+                    <span className="text-sm text-gray-700 font-medium">Separar Damas</span>
+                  </label>
+                  
+                  {separateLadies && (
+                    <div className="ml-6 space-y-2">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={ladiesByHcp}
+                          onChange={(e) => setLadiesByHcp(e.target.checked)}
+                          className="h-4 w-4 text-blue-600 border-gray-300 rounded"
+                        />
+                        <span className="text-sm text-gray-700">Damas por handicap (mismas categorías/bandas)</span>
+                      </label>
+                      
+                      <div className="p-2 bg-purple-50 border border-purple-200 rounded text-xs text-gray-700">
+                        {ladiesByHcp ? (
+                          <p>✓ Las damas se dividirán en las mismas categorías/bandas que los caballeros</p>
+                        ) : (
+                          <p>✓ Todas las damas competirán en un único grupo</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
 
             {/* Buttons */}
             <div className="border-t border-gray-200 pt-6 flex justify-end space-x-3">

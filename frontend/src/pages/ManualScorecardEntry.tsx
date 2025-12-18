@@ -35,28 +35,36 @@ export default function ManualScorecardEntry() {
   
   const { data: tournaments } = useTournaments(clubIdNum)
   const { data: participants } = useTournamentParticipants(clubIdNum, tournamentIdNum)
-  const { data: existingScorecards } = useTournamentScorecards(clubIdNum, tournamentIdNum)
+  const { data: existingScorecards } = useTournamentScorecards(clubIdNum, tournamentIdNum, true) // includeAll = true para ver también los que no presentaron
   const saveScorecard = useSaveScorecard(clubIdNum, tournamentIdNum)
   
   // Obtener datos de los hoyos del club
   const { data: courseHoles, isLoading: holesLoading } = useQuery({
-    queryKey: ['course-holes', clubIdNum],
+    queryKey: ['course-holes', clubIdNum, tournamentIdNum],
     queryFn: async () => {
-      const response = await fetch(`/api/club/${clubIdNum}/holes`)
+      const response = await fetch(`/api/club/${clubIdNum}/tournaments/${tournamentIdNum}/holes`)
       if (!response.ok) {
         throw new Error('Error al cargar los hoyos')
       }
       const result = await response.json()
       return result.data as CourseHole[]
     },
-    enabled: !!clubIdNum
+    enabled: !!clubIdNum && !!tournamentIdNum
   })
   
   const tournament = tournaments?.find(t => t.tournament_id === tournamentIdNum)
   
   const [selectedPlayer, setSelectedPlayer] = useState<any>(null)
   const [searchTerm, setSearchTerm] = useState('')
-  const [filterType, setFilterType] = useState<'pending' | 'completed' | 'all'>('pending')
+  const [filterType, setFilterType] = useState<'pending' | 'completed' | 'no_show' | 'all'>('pending')
+  // Sanitize to ASCII to prevent corrupted glyphs in some environments
+  const sanitizeAscii = (text: string | undefined | null) => {
+    const base = (text ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')   // remove diacritics
+      .replace(/[^\x20-\x7E]/g, '')      // strip non-ASCII visible characters
+    return base.replace(/\s+/g, ' ').trim()
+  }
   // Si viene playerId en la URL, iniciar en modo scorecard, sino en selection
   const [viewMode, setViewMode] = useState<'selection' | 'scorecard' | 'verification'>(() => {
     const initialMode = playerId ? 'scorecard' : 'selection'
@@ -108,6 +116,70 @@ export default function ManualScorecardEntry() {
       }
     }
   }, [playerId, participants, selectedPlayer])
+
+  // Cargar scorecard existente si el jugador ya tiene uno
+  useEffect(() => {
+    if (selectedPlayer && existingScorecards) {
+      const existingScorecard = existingScorecards.find((sc: any) => {
+        if (selectedPlayer.player_type === 'member' || selectedPlayer.member_id) {
+          return sc.member_id === (selectedPlayer.member_id || selectedPlayer.participant_id);
+        } else {
+          return sc.external_player_id === (selectedPlayer.external_player_id || selectedPlayer.participant_id);
+        }
+      });
+
+      if (existingScorecard && existingScorecard.scorecard_id) {
+        console.log('📋 Found existing scorecard, loading data:', existingScorecard);
+        
+        // Cargar los hole scores
+        fetch(`/api/club/${clubIdNum}/tournaments/${tournamentIdNum}/scorecard/${existingScorecard.scorecard_id}`)
+          .then(res => res.json())
+          .then(data => {
+            if (data.success && data.data) {
+              const scorecardData = data.data;
+              console.log('✅ Loaded scorecard with holes:', scorecardData);
+              
+              // hole_scores ya viene como objeto { 1: 4, 2: 5, ... }
+              const scoresObject: { [hole: number]: number } = {};
+              if (scorecardData.hole_scores) {
+                // Si es array, convertir
+                if (Array.isArray(scorecardData.hole_scores)) {
+                  scorecardData.hole_scores.forEach((hole: any) => {
+                    scoresObject[hole.hole_number] = hole.strokes;
+                  });
+                } else {
+                  // Si ya es objeto, usar directamente
+                  Object.assign(scoresObject, scorecardData.hole_scores);
+                }
+              }
+              
+              console.log('📊 Scores object:', scoresObject);
+              
+              setScorecard({
+                scores: scoresObject,
+                verified: scorecardData.verified_card || false,
+                archived: scorecardData.original_archived || false,
+                notes: scorecardData.entry_notes || '',
+                entryMethod: scorecardData.entry_method || 'manual'
+              });
+            }
+          })
+          .catch(error => {
+            console.error('❌ Error loading existing scorecard:', error);
+          });
+      } else {
+        // Reset scorecard if no existing one
+        setScorecard({
+          scores: {},
+          verified: false,
+          archived: false,
+          notes: '',
+          entryMethod: 'manual'
+        });
+      }
+    }
+  }, [selectedPlayer, existingScorecards, clubIdNum, tournamentIdNum]);
+
   const [scorecard, setScorecard] = useState<ManualScorecardData>({
     scores: {},
     verified: false,
@@ -138,27 +210,49 @@ export default function ManualScorecardEntry() {
   // Usar datos reales de los hoyos del club
   const courseData = courseHoles || []
 
-  // Separate participants into completed and pending
+  // Separate participants into completed, pending, and no-show
   const participantsWithScorecards = participants?.filter(participant => {
-    return existingScorecards?.some(scorecard => {
+    const hasScorecard = existingScorecards?.some(scorecard => {
       if (participant.player_type === 'member') {
-        return scorecard.member_id === participant.participant_id
+        // Tiene scorecard Y NO es "no presentó"
+        return scorecard.member_id === participant.member_id && !scorecard.did_not_present
       } else {
-        return scorecard.external_player_id === participant.participant_id
+        return scorecard.external_player_id === participant.external_player_id && !scorecard.did_not_present
       }
     })
+    return hasScorecard
+  }) || []
+
+  const participantsNoShow = participants?.filter(participant => {
+    const hasNoShowScorecard = existingScorecards?.some(scorecard => {
+      if (participant.player_type === 'member') {
+        // Tiene scorecard marcado como "no presentó"
+        return scorecard.member_id === participant.member_id && scorecard.did_not_present === true
+      } else {
+        return scorecard.external_player_id === participant.external_player_id && scorecard.did_not_present === true
+      }
+    })
+    return hasNoShowScorecard
   }) || []
 
   const participantsWithoutScorecards = participants?.filter(participant => {
-    const hasScorecard = existingScorecards?.some(scorecard => {
+    const hasAnyScorecard = existingScorecards?.some(scorecard => {
       if (participant.player_type === 'member') {
-        return scorecard.member_id === participant.participant_id
+        return scorecard.member_id === participant.member_id
       } else {
-        return scorecard.external_player_id === participant.participant_id
+        return scorecard.external_player_id === participant.external_player_id
       }
     })
-    return !hasScorecard
+    return !hasAnyScorecard
   }) || []
+
+  console.log('📊 Scorecards status:', {
+    totalParticipants: participants?.length,
+    withScorecards: participantsWithScorecards.length,
+    noShow: participantsNoShow.length,
+    withoutScorecards: participantsWithoutScorecards.length,
+    totalScorecards: existingScorecards?.length
+  })
 
   // Apply filters based on selected type
   const getFilteredParticipants = () => {
@@ -170,6 +264,9 @@ export default function ManualScorecardEntry() {
         break
       case 'completed':
         baseList = participantsWithScorecards
+        break
+      case 'no_show':
+        baseList = participantsNoShow
         break
       case 'all':
         baseList = participants || []
@@ -243,14 +340,12 @@ export default function ManualScorecardEntry() {
   }
 
   const handleSaveScorecard = async () => {
-    const completedHoles = getCompletedHoles()
-    
     if (!validateScorecard()) {
       alert('Por favor complete al menos un hoyo')
       return
     }
 
-    // Determinar si la tarjeta está completa (18 hoyos) o parcial
+    const completedHoles = getCompletedHoles()
     const isComplete = completedHoles === 18
     const shouldVerify = isComplete && scorecard.verified
 
@@ -269,7 +364,8 @@ export default function ManualScorecardEntry() {
       verified_card: shouldVerify || scorecard.verified,
       original_archived: scorecard.archived,
       entry_notes: `${scorecard.notes}${isComplete ? '' : ` (Parcial: ${completedHoles}/18 hoyos)`}`,
-      is_complete: isComplete
+      is_complete: isComplete,
+      did_not_present: false
     }
 
     console.log('🔍 Datos a enviar:', data)
@@ -277,7 +373,6 @@ export default function ManualScorecardEntry() {
     saveScorecard.mutate(data, {
       onSuccess: () => {
         console.log('✅ Tarjeta guardada exitosamente')
-        // Volver a la lista de jugadores pendientes
         navigate(`/club/${clubId}/tournaments/${tournamentId}/scorecard-selection`)
       },
       onError: (error) => {
@@ -418,6 +513,10 @@ export default function ManualScorecardEntry() {
                       <span className="text-gray-600">Pendientes: {participantsWithoutScorecards.length}</span>
                     </div>
                     <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+                      <span className="text-gray-600">No Presentaron: {participantsNoShow.length}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
                       <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
                       <span className="text-gray-600">Total: {participants?.length || 0}</span>
                     </div>
@@ -473,6 +572,22 @@ export default function ManualScorecardEntry() {
                   </button>
                   <button
                     onClick={() => {
+                      setFilterType('no_show')
+                      setViewMode('selection')
+                    }}
+                    className={`flex-1 px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                      filterType === 'no_show' && viewMode === 'selection'
+                        ? 'bg-white text-red-600 shadow-sm'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    <div className="flex items-center justify-center gap-2">
+                      <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+                      No Presentaron ({participantsNoShow.length})
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => {
                       setFilterType('all')
                       setViewMode('selection')
                     }}
@@ -504,7 +619,12 @@ export default function ManualScorecardEntry() {
               {/* Results Header */}
               <div className="flex items-center justify-between mb-4 text-sm text-gray-600">
                 <span>
-                  {filteredParticipants.length} {filterType === 'pending' ? 'pendientes' : filterType === 'completed' ? 'cargadas' : 'participantes'}
+                  {filteredParticipants.length} {
+                    filterType === 'pending' ? 'pendientes' : 
+                    filterType === 'completed' ? 'cargadas' : 
+                    filterType === 'no_show' ? 'no presentaron' : 
+                    'participantes'
+                  }
                   {searchTerm && ` encontrados para "${searchTerm}"`}
                 </span>
                 {searchTerm && (
@@ -585,7 +705,7 @@ export default function ManualScorecardEntry() {
                                 )}
                               </div>
                               {participant.player_club && (
-                                <p className="text-sm text-gray-500 mt-1">{participant.player_club}</p>
+                                <p className="text-sm text-gray-500 mt-1">{sanitizeAscii(participant.player_club)}</p>
                               )}
                             </div>
                           </div>
@@ -629,33 +749,38 @@ export default function ManualScorecardEntry() {
                     </div>
                   </div>
                   
-                  {/* Totals on the right */}
-                  <div className="flex items-center gap-6">
-                    {/* Total Real */}
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-green-600">
-                        {getTotalScore() || '0'}
-                      </div>
-                      <div className="text-xs font-medium text-gray-600">
-                        Total Real
-                      </div>
-                    </div>
+                  {/* Botón "No presentó" en la esquina superior derecha */}
+                  <button
+                    onClick={async () => {
+                      const confirmAction = confirm('¿Confirmas que este jugador NO PRESENTÓ tarjeta? No aparecerá en los resultados.')
+                      if (!confirmAction) return
 
-                    {/* Total Neto - solo si están completos los 18 hoyos */}
-                    {getCompletedHoles() === 18 && (
-                      <>
-                        <div className="w-px h-8 bg-gray-300"></div>
-                        <div className="text-center">
-                          <div className="text-2xl font-bold text-blue-600">
-                            {getNetScore()}
-                          </div>
-                          <div className="text-xs font-medium text-blue-600">
-                            Total Neto
-                          </div>
-                        </div>
-                      </>
-                    )}
-                  </div>
+                      const data = {
+                        member_id: selectedPlayer.member_id || null,
+                        external_player_id: selectedPlayer.external_player_id || null,
+                        scores: {},
+                        entry_method: 'manual' as 'manual',
+                        verified_card: false,
+                        original_archived: false,
+                        entry_notes: 'NO PRESENTÓ TARJETA',
+                        is_complete: false,
+                        did_not_present: true
+                      }
+
+                      saveScorecard.mutate(data, {
+                        onSuccess: () => {
+                          navigate(`/club/${clubId}/tournaments/${tournamentId}/scorecard-selection`)
+                        },
+                        onError: (error: any) => {
+                          alert(`Error: ${error.response?.data?.message || error.message}`)
+                        }
+                      })
+                    }}
+                    disabled={saveScorecard.isPending}
+                    className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    ❌ No Presentó Tarjeta
+                  </button>
                 </div>
               </div>
 

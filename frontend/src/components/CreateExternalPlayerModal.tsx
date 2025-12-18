@@ -13,6 +13,7 @@ const externalPlayerSchema = z.object({
   member_number: z.string().optional().or(z.literal('')),
   email: z.string().email('Email inválido').optional().or(z.literal('')),
   phone: z.string().optional().or(z.literal('')),
+  gender: z.enum(['M', 'F', 'Other']).optional(),
   handicap_index: z.preprocess(
     (val) => val === '' ? 0 : Number(val),
     z.number().min(-10, 'Index mínimo: -10').max(54, 'Index máximo: 54')
@@ -70,6 +71,7 @@ export function CreateExternalPlayerModal({
       member_number: '',
       email: '',
       phone: '',
+      gender: undefined,
       handicap_index: 0,
       handicap_local: 0,
       home_club: '',
@@ -88,6 +90,7 @@ export function CreateExternalPlayerModal({
           member_number: editingPlayer.member_number || '',
           email: editingPlayer.player_email || '',
           phone: editingPlayer.player_phone || '',
+          gender: editingPlayer.gender || undefined,
           handicap_index: parseFloat(editingPlayer.handicap_index) || 0,
           handicap_local: editingPlayer.handicap_local || 0,
           home_club: editingPlayer.player_club || '',
@@ -101,6 +104,7 @@ export function CreateExternalPlayerModal({
           member_number: '',
           email: '',
           phone: '',
+          gender: undefined,
           handicap_index: 0,
           handicap_local: 0,
           home_club: '',
@@ -119,6 +123,7 @@ export function CreateExternalPlayerModal({
         member_number: '',
         email: '',
         phone: '',
+        gender: undefined,
         handicap_index: 0,
         handicap_local: 0,
         home_club: '',
@@ -391,6 +396,23 @@ export function CreateExternalPlayerModal({
             {errors.email && (
               <p className="mt-1 text-sm text-red-600">{errors.email.message}</p>
             )}
+          </div>
+
+          {/* Género */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Género (Opcional)
+            </label>
+            <select
+              {...register('gender')}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
+              defaultValue=""
+            >
+              <option value="">Sin especificar</option>
+              <option value="M">Masculino</option>
+              <option value="F">Femenino</option>
+              <option value="Other">Otro</option>
+            </select>
           </div>
 
           {/* Teléfono */}

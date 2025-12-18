@@ -21,6 +21,8 @@ import PrintableScorecard from '@/pages/PrintableScorecard'
 import HolesManagement from '@/pages/HolesManagement'
 import TeesManagement from '@/pages/TeesManagement'
 import TournamentResults from '@/pages/TournamentResults'
+import Rankings from '@/pages/Rankings'
+import Payments from '@/pages/Payments'
 
 
 function App() {
@@ -74,6 +76,14 @@ function App() {
       
       {/* Resultados finales por categorías */}
       <Route path="/club/:clubId/tournaments/:tournamentId/results" element={<TournamentResults />} />
+      
+      {/* Rankings del club */}
+      <Route path="/club/:clubId/rankings" element={<Rankings />} />
+      
+      {/* Contabilidad del club (incluye cobros) */}
+      <Route path="/club/:clubId/accounting" element={<Payments />} />
+      {/* Compatibilidad: ruta anterior de cobros */}
+      <Route path="/club/:clubId/payments" element={<Payments />} />
       
 
     </Routes>

@@ -265,18 +265,29 @@ export function ExcelImportModal({ isOpen, onClose, clubId, onImportSuccess }: E
     )
   }
 
-  // Función para formatear nombres: Primera letra mayúscula, resto minúscula
+  // Formatear nombre completo y corregir "Apellido, Nombre" -> "Nombre Apellido"
   const formatName = (name: string): string => {
     if (!name || typeof name !== 'string') return ''
-    
-    return name
-      .trim()
+
+    // Normalizar espacios
+    let raw = name.replace(/\s+/g, ' ').trim()
+
+    // Si viene como "Apellido, Nombre [SegundoNombre]" o con ';' o '|', reordenar
+    const splitter = /[,;|]/
+    if (splitter.test(raw)) {
+      const parts = raw.split(splitter).map(s => s.trim()).filter(Boolean)
+      if (parts.length >= 2) {
+        const lastName = parts[0]
+        const firstNames = parts.slice(1).join(' ')
+        raw = `${firstNames} ${lastName}`
+      }
+    }
+
+    // Title Case
+    return raw
       .split(' ')
-      .map(word => {
-        if (word.length === 0) return ''
-        return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
-      })
-      .filter(word => word.length > 0) // Remover palabras vacías
+      .map(word => (word ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() : ''))
+      .filter(Boolean)
       .join(' ')
   }
 
@@ -354,7 +365,7 @@ export function ExcelImportModal({ isOpen, onClose, clubId, onImportSuccess }: E
       const fullName = row['APELLIDO Y NOMBRE'] || row['Apellido y Nombre'] || row['apellido y nombre'] ||
                        row['Nombre Y Apellido'] || row['Nombre y Apellido'] || row['Nombre'] || 
                        row['NOMBRE Y APELLIDO'] || row['nombre y apellido'] || row['Nombre y apellido'] || 
-                       row['nombre'] || ''
+                       row['nombre'] || row['Socio'] || row['SOCIO'] || row['socio'] || ''
       
       console.log(`Fila ${rowNum}: Columnas disponibles:`, Object.keys(row))
       console.log(`Fila ${rowNum}: Nombre encontrado:`, fullName)
@@ -577,24 +588,44 @@ export function ExcelImportModal({ isOpen, onClose, clubId, onImportSuccess }: E
             })
           }
         } else {
-          // MODO ACTUALIZAR: Buscar ÚNICAMENTE por matrícula (requerida)
+          // MODO ACTUALIZAR: Prioridad matrícula; si no hay, intentar por nombre (exacto o inteligente)
           if (member.member_number && member.member_number.trim() !== '') {
             searchCriteria = `matrícula: ${member.member_number}`
             existingMember = existingMembers.find((existing: any) => 
               existing.member_number === member.member_number?.trim()
             )
           } else {
-            // En modo actualizar, sin matrícula = no se puede procesar
-            console.log(`❌ MODO ACTUALIZAR: "${fullName}" no tiene matrícula → SALTADO`)
-            console.log(`🔍 Datos del Excel para "${fullName}":`, {
-              member_number: member.member_number,
-              member_number_type: typeof member.member_number,
-              full_name: member.full_name,
-              handicap_index: member.handicap_index,
-              handicap_local: member.handicap_local
+            // Intentar por nombre si no hay matrícula
+            searchCriteria = `nombre: ${fullName}`
+            existingMember = existingMembers.find((existing: any) => {
+              const existingFullName = `${existing.first_name} ${existing.last_name}`.trim()
+              const isExactMatch = existingFullName.toLowerCase() === fullName.toLowerCase()
+              const isIntelligentMatch = !isExactMatch && namesMatch(existingFullName, fullName)
+              
+              if (isExactMatch || isIntelligentMatch) {
+                nameMatches.push({
+                  row: rowNumber,
+                  excelName: fullName,
+                  dbName: existingFullName,
+                  dbId: existing.member_id,
+                  matchType: isExactMatch ? 'exact' : 'intelligent',
+                  action: 'skipped'
+                })
+                
+                if (isIntelligentMatch) {
+                  console.log(`🎯 COINCIDENCIA INTELIGENTE (ACTUALIZAR): BD="${existingFullName}" | Excel="${fullName}"`)
+                }
+              }
+              
+              return isExactMatch || isIntelligentMatch
             })
-            skipped++
-            continue
+            
+            if (!existingMember) {
+              // Sin coincidencia por nombre tampoco
+              console.log(`❌ MODO ACTUALIZAR: No se encontró por matrícula ni por nombre → SALTADO: "${fullName}"`)
+              skipped++
+              continue
+            }
           }
         }
 
@@ -842,11 +873,10 @@ export function ExcelImportModal({ isOpen, onClose, clubId, onImportSuccess }: E
                 </>
               ) : (
                 <>
-                  <li>• <strong>Nombre Y Apellido</strong>: Para identificar el socio (puede estar en diferente orden)</li>
-                  <li>• <strong>Matricula</strong>: Número de matrícula (REQUERIDO para identificación exacta)</li>
+                  <li>• <strong>Matricula</strong>: Se usa primero para identificar; si falta, se intentará por <strong>Nombre y Apellido</strong> (también admite “Apellido, Nombre”).</li>
                   <li>• <strong>Index</strong>: Nuevo índice de handicap -10 a 72 con decimales (requerido)</li>
                   <li>• <strong>HCP</strong>: Nuevo handicap manual -10 a 72 sin decimales (requerido)</li>
-                  <li className="text-green-600 font-medium mt-2">• Solo se actualizarán socios existentes por matrícula</li>
+                  <li className="text-green-600 font-medium mt-2">• Se actualizarán socios existentes por matrícula o por nombre si no hay matrícula.</li>
                   <li className="text-green-600 font-medium">• No se crearán socios nuevos en este modo</li>
                 </>
               )}
