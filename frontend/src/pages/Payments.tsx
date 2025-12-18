@@ -162,7 +162,6 @@ export default function Payments() {
     
     // Contar separadores
     const commas = (cleaned.match(/,/g) || []).length
-    const dots = (cleaned.match(/\./g) || []).length
     
     // Si hay más de una coma, mantener solo la última
     if (commas > 1) {
@@ -280,10 +279,6 @@ export default function Payments() {
     return rows.reduce((s, r) => s + (Number(r.total_paid) || 0), 0)
   }, [rows])
   
-  const totalOtherIncomes = useMemo(() => {
-    return otherIncomes.reduce((s, i) => s + (Number(i.amount) || 0), 0)
-  }, [otherIncomes])
-  
   // Obtener descripciones únicas para reutilizar
   const uniqueDescriptions = useMemo(() => {
     const descriptions = otherIncomes
@@ -342,16 +337,6 @@ export default function Payments() {
       .reduce((s, e) => s + (Number(e.amount) || 0), 0)
   }, [expenses])
   
-  const totalAllIncomes = useMemo(() => totalPaid + totalOtherIncomes, [totalPaid, totalOtherIncomes])
-  
-  const totalExpenses = useMemo(() => {
-    return expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0)
-  }, [expenses])
-  
-  const netBalance = useMemo(() => {
-    return totalAllIncomes - totalExpenses
-  }, [totalAllIncomes, totalExpenses])
-
   // Balance neto por moneda
   const netBalanceARS = useMemo(() => {
     return totalPaid + totalOtherIncomesARS - totalExpensesARS
@@ -1989,7 +1974,7 @@ export default function Payments() {
                         })
                       }}
                       className={`flex-1 px-3 py-2 border rounded ${
-                        exchangeDraft.from_amount && parseFormattedNumber(exchangeDraft.from_amount) > currencyBalance[exchangeDraft.from_currency]
+                        exchangeDraft.from_amount && parseFormattedNumber(exchangeDraft.from_amount) > currencyBalance[exchangeDraft.from_currency as 'ARS' | 'USD']
                           ? 'border-red-500 bg-red-50'
                           : ''
                       }`}
@@ -2004,9 +1989,9 @@ export default function Payments() {
                       <option value="USD">USD</option>
                     </select>
                   </div>
-                  {exchangeDraft.from_amount && parseFormattedNumber(exchangeDraft.from_amount) > currencyBalance[exchangeDraft.from_currency] && (
+                  {exchangeDraft.from_amount && parseFormattedNumber(exchangeDraft.from_amount) > currencyBalance[exchangeDraft.from_currency as 'ARS' | 'USD'] && (
                     <p className="text-xs text-red-600 mt-1">
-                      ⚠️ Fondos insuficientes. Disponible: {exchangeDraft.from_currency === 'USD' ? 'US$' : '$'}{formatCurrency(currencyBalance[exchangeDraft.from_currency])}
+                      ⚠️ Fondos insuficientes. Disponible: {exchangeDraft.from_currency === 'USD' ? 'US$' : '$'}{formatCurrency(currencyBalance[exchangeDraft.from_currency as 'ARS' | 'USD'])}
                     </p>
                   )}
                 </div>
@@ -2145,14 +2130,14 @@ export default function Payments() {
                     !exchangeDraft.from_amount || 
                     !exchangeDraft.to_amount || 
                     !exchangeDraft.exchange_rate ||
-                    parseFormattedNumber(exchangeDraft.from_amount) > currencyBalance[exchangeDraft.from_currency] ||
+                    parseFormattedNumber(exchangeDraft.from_amount) > currencyBalance[exchangeDraft.from_currency as 'ARS' | 'USD'] ||
                     parseFormattedNumber(exchangeDraft.from_amount) === 0
                   }
                   className={`px-4 py-2 rounded ${
                     !exchangeDraft.from_amount || 
                     !exchangeDraft.to_amount || 
                     !exchangeDraft.exchange_rate ||
-                    parseFormattedNumber(exchangeDraft.from_amount) > currencyBalance[exchangeDraft.from_currency] ||
+                    parseFormattedNumber(exchangeDraft.from_amount) > currencyBalance[exchangeDraft.from_currency as 'ARS' | 'USD'] ||
                     parseFormattedNumber(exchangeDraft.from_amount) === 0
                       ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                       : 'bg-blue-600 text-white hover:bg-blue-700'

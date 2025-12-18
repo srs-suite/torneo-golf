@@ -34,6 +34,7 @@ export interface Scorecard {
   player_last_name: string
   handicap_index?: number
   hole_scores: { [hole: number]: number }
+  did_not_present?: boolean
 }
 
 class ScorecardService {
