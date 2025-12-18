@@ -7,6 +7,7 @@ import {
   Trophy,
   Trash2,
   Filter,
+  CheckCircle,
   Clock,
   UserCheck,
   UserX,
@@ -19,7 +20,7 @@ import { SearchInput } from './SearchInput'
 import { Tournament } from '@/types/tournament'
 import { Participant, PlayerSearchResult } from '@/types/participant'
 import { LoadingSpinner } from '@/components/LoadingSpinner'
-import { useParticipants, useAddParticipant, useRemoveParticipant, useSearchPlayers, useExternalPlayers, useDeleteExternalPlayer } from '@/hooks/useParticipants'
+import { useParticipants, useAddParticipant, useRemoveParticipant, useUpdateParticipantStatus, useSearchPlayers, useExternalPlayers, useDeleteExternalPlayer, useUpdateParticipantPayment } from '@/hooks/useParticipants'
 import { CreateExternalPlayerModal } from '@/components/CreateExternalPlayerModal'
 import { PaymentModal } from '@/components/PaymentModal'
 
@@ -81,11 +82,14 @@ export function TournamentParticipantsModal({
   const { data: externalPlayersData = [] } = useExternalPlayers(clubId, showExternalPlayersList)
   const addParticipant = useAddParticipant(clubId, tournament.tournament_id)
   const removeParticipant = useRemoveParticipant(clubId, tournament.tournament_id)
+  const updateStatus = useUpdateParticipantStatus(clubId, tournament.tournament_id)
   const deleteExternalPlayer = useDeleteExternalPlayer(clubId)
   const searchPlayers = useSearchPlayers(clubId)
+  const updatePayment = useUpdateParticipantPayment(clubId, tournament.tournament_id)
   // const createExternalPlayer = useCreateExternalPlayer(clubId)
 
   const [paymentEditing, setPaymentEditing] = useState<Participant | null>(null)
+  const [paymentDraft, setPaymentDraft] = useState<{fee_amount?: number; paid_amount?: number; payment_status?: any; payment_method?: string; receipt_number?: string; payment_notes?: string}>({})
 
   // Sanitize to ASCII like other pages
   const sanitizeAscii = (text: string | undefined | null) => {
@@ -243,6 +247,29 @@ export function TournamentParticipantsModal({
       } catch (error) {
         console.error('Error deleting external player:', error)
       }
+    }
+  }
+
+  // Payments UI state
+  const [showPayments, setShowPayments] = useState(false)
+  const paymentMethods = ['Efectivo', 'Transferencia', 'Tarjeta', 'Otro']
+
+  const handleSavePayment = async (p: Participant, changes: Partial<Participant>) => {
+    try {
+      await updatePayment.mutateAsync({
+        participantId: p.participant_id,
+        paymentData: {
+          fee_amount: changes.fee_amount ?? p.fee_amount ?? tournament.entry_fee ?? 0,
+          paid_amount: changes.paid_amount ?? p.paid_amount ?? 0,
+          payment_status: (changes.payment_status ?? p.payment_status ?? 'pending') as any,
+          payment_method: changes.payment_method ?? p.payment_method ?? null,
+          receipt_number: changes.receipt_number ?? p.receipt_number ?? null,
+          payment_notes: changes.payment_notes ?? p.payment_notes ?? null,
+        }
+      })
+      refetch()
+    } catch (e) {
+      // handled in hook toast
     }
   }
 
@@ -485,6 +512,14 @@ export function TournamentParticipantsModal({
     }
   }
 
+  const handleChangeStatus = async (participantId: number, newStatus: Participant['status']) => {
+    try {
+      await updateStatus.mutateAsync({ participantId, status: newStatus })
+    } catch (error) {
+      console.error('Error updating status:', error)
+    }
+  }
+
   const filteredParticipants = participants
     .filter(participant => statusFilter === 'all' || participant.status === statusFilter)
     .filter(participant => {
@@ -524,6 +559,35 @@ export function TournamentParticipantsModal({
       case 'registered': return 'Registrado'
       case 'cancelled': return 'Cancelado'
       default: return status
+    }
+  }
+
+  const getPlayerTypeInfo = (participant: Participant) => {
+    switch (participant.player_type) {
+      case 'member':
+        return { 
+          label: 'Miembro', 
+          color: 'bg-blue-100 text-blue-800', 
+          icon: UserCheck 
+        }
+      case 'visitor':
+        return { 
+          label: 'Visitante', 
+          color: 'bg-purple-100 text-purple-800', 
+          icon: User 
+        }
+      case 'external':
+        return { 
+          label: 'Externo', 
+          color: 'bg-gray-100 text-gray-800', 
+          icon: UserX 
+        }
+      default:
+        return { 
+          label: 'Desconocido', 
+          color: 'bg-gray-100 text-gray-800', 
+          icon: User 
+        }
     }
   }
 
@@ -1146,6 +1210,8 @@ export function TournamentParticipantsModal({
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
                     {filteredParticipants.map((participant) => {
+                      const typeInfo = getPlayerTypeInfo(participant)
+                      
                       return (
                         <tr key={participant.participant_id} className="hover:bg-gray-50">
                           <td className="px-6 py-4 whitespace-nowrap">

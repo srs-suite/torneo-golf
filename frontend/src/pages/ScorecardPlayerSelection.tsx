@@ -377,7 +377,7 @@ export default function ScorecardPlayerSelection() {
   const navigate = useNavigate();
   
   const [searchTerm, setSearchTerm] = useState('')
-  const [selectedFilter, setSelectedFilter] = useState<'pending' | 'completed' | 'all' | 'no_show'>('pending')
+  const [selectedFilter, setSelectedFilter] = useState<'pending' | 'completed' | 'all'>('pending')
   const [viewMode, setViewMode] = useState<'participants' | 'scorecards'>('participants')
   const [selectedScorecard, setSelectedScorecard] = useState<any>(null)
   

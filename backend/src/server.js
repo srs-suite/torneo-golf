@@ -6,8 +6,12 @@ import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 
-// Load environment variables from root directory
-dotenv.config({ path: '../../.env' });
+// Define __dirname for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Load environment variables from backend directory
+dotenv.config({ path: path.join(__dirname, '../../.env') });
 
 // Database functions (using real exports)
 import {
@@ -55,9 +59,6 @@ import {
     generateWhatsAppUrl,
     isValidPhoneNumber
 } from './services/whatsapp.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const PORT = 8000;
 
@@ -751,6 +752,107 @@ async function handleClubAPI(req, res, pathParts) {
     }
 }
 
+// Public Finance API handler (for members transparency)
+async function handlePublicFinanceAPI(req, res, pathParts) {
+    const method = req.method;
+    const clubId = pathParts[3];
+    
+    if (method === 'OPTIONS') {
+        res.writeHead(200, corsHeaders);
+        res.end();
+        return;
+    }
+
+    try {
+        // Simple password authentication
+        const authHeader = req.headers.authorization;
+        const publicPassword = process.env.PUBLIC_FINANCE_PASSWORD || 'socios2024';
+        
+        if (!authHeader || authHeader !== `Bearer ${publicPassword}`) {
+            sendError(res, 'Contraseña incorrecta', 401);
+            return;
+        }
+
+        if (method === 'GET' && clubId) {
+            // Get date filters from query params
+            const url = new URL(req.url, `http://${req.headers.host}`);
+            const from = url.searchParams.get('from');
+            const to = url.searchParams.get('to');
+
+            // Get all financial data
+            const [
+                tournaments,
+                expenses,
+                otherIncomes,
+                balance
+            ] = await Promise.all([
+                getAllTournaments(parseInt(clubId)),
+                getExpenses(parseInt(clubId), from, to),
+                getOtherIncomes(parseInt(clubId), from, to),
+                getCurrencyBalance(parseInt(clubId))
+            ]);
+
+            // Calculate tournament income (paid participants)
+            const tournamentIncome = tournaments.reduce((total, tournament) => {
+                return total + (tournament.paid_participants_count || 0) * (tournament.entry_fee || 0);
+            }, 0);
+
+            // Calculate other income total
+            const otherIncomeTotal = otherIncomes.reduce((total, income) => {
+                return total + parseFloat(income.amount || 0);
+            }, 0);
+
+            // Calculate expenses total
+            const expensesTotal = expenses.reduce((total, expense) => {
+                return total + parseFloat(expense.amount || 0);
+            }, 0);
+
+            // Prepare response
+            const financialData = {
+                summary: {
+                    tournamentIncome: tournamentIncome,
+                    otherIncome: otherIncomeTotal,
+                    totalIncome: tournamentIncome + otherIncomeTotal,
+                    totalExpenses: expensesTotal,
+                    balance: tournamentIncome + otherIncomeTotal - expensesTotal,
+                    currencyBalance: balance
+                },
+                tournaments: tournaments.map(t => ({
+                    tournament_id: t.tournament_id,
+                    tournament_name: t.tournament_name,
+                    tournament_date: t.tournament_date,
+                    entry_fee: t.entry_fee,
+                    paid_participants: t.paid_participants_count,
+                    income: (t.paid_participants_count || 0) * (t.entry_fee || 0)
+                })),
+                otherIncomes: otherIncomes.map(i => ({
+                    income_id: i.income_id,
+                    date: i.income_date,
+                    concept: i.concept,
+                    amount: parseFloat(i.amount),
+                    currency: i.currency,
+                    member_name: i.member_name || 'N/A'
+                })),
+                expenses: expenses.map(e => ({
+                    expense_id: e.expense_id,
+                    date: e.expense_date,
+                    concept: e.concept,
+                    amount: parseFloat(e.amount),
+                    category: e.category,
+                    payment_method: e.payment_method
+                }))
+            };
+
+            sendJSON(res, { success: true, data: financialData });
+        } else {
+            sendError(res, 'Endpoint no encontrado', 404);
+        }
+    } catch (error) {
+        console.error('Error en Public Finance API:', error);
+        sendError(res, error.message, 500);
+    }
+}
+
 // Main server
 const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
@@ -769,6 +871,9 @@ const server = http.createServer(async (req, res) => {
             return;
         } else if (pathParts[1] === 'club') {
             await handleClubAPI(req, res, pathParts);
+            return;
+        } else if (pathParts[1] === 'public' && pathParts[2] === 'finance') {
+            await handlePublicFinanceAPI(req, res, pathParts);
             return;
         }
     }
@@ -815,13 +920,13 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log('📊 SERVIDOR CON BASE DE DATOS REAL');
     console.log('🎯 ===================================');
     console.log(`📡 Backend: http://localhost:${PORT}`);
-    console.log(`🌐 Frontend: http://localhost:5174`);
+    console.log(`🌐 Frontend: http://localhost:5173`);
     console.log('💾 Base de Datos: ✅ MYSQL REAL');
     console.log('📝 Sistema: ✅ MANUAL SCORECARDS');
     console.log('🎯 ===================================');
     console.log('');
     console.log('✅ SISTEMA COMPLETO FUNCIONANDO:');
-    console.log('   http://localhost:5174');
+    console.log('   http://localhost:5173');
     console.log('');
 });
 

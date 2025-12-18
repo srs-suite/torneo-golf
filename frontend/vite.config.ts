@@ -11,7 +11,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5174,
+    port: 5173,
     host: true, // Permite acceso desde cualquier host
     allowedHosts: [
       'localhost',
@@ -31,7 +31,7 @@ export default defineConfig({
     }
   },
   preview: {
-    port: 4174,
+    port: 4173,
     host: true, // Permite acceso desde cualquier host en preview también
     allowedHosts: [
       'localhost',

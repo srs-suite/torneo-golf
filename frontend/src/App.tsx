@@ -23,6 +23,7 @@ import TeesManagement from '@/pages/TeesManagement'
 import TournamentResults from '@/pages/TournamentResults'
 import Rankings from '@/pages/Rankings'
 import Payments from '@/pages/Payments'
+import PublicFinance from '@/pages/PublicFinance'
 
 
 function App() {
@@ -85,6 +86,8 @@ function App() {
       {/* Compatibilidad: ruta anterior de cobros */}
       <Route path="/club/:clubId/payments" element={<Payments />} />
       
+      {/* Finanzas públicas para socios (transparencia) */}
+      <Route path="/club/:clubId/public-finance" element={<PublicFinance />} />
 
     </Routes>
   )

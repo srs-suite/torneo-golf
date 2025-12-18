@@ -6,6 +6,7 @@ import {
   CreditCard, 
   FileText, 
   Trophy,
+  DollarSign,
   Settings,
   LogOut
 } from 'lucide-react'

@@ -70,7 +70,7 @@ pm2 startup             # Configurar inicio automático
 ```
 
 ### URLs del Sistema:
-- **Backend API**: `http://localhost:3005`
+- **Backend API**: `http://localhost:8000`
 - **Frontend**: `http://localhost:5173`
 
 ### Deployment Automático:
@@ -84,7 +84,7 @@ pm2 deploy production
 
 ### Configuración de Firewall (Ubuntu):
 ```bash
-sudo ufw allow 3005  # Backend
+sudo ufw allow 8000  # Backend
 sudo ufw allow 5173  # Frontend
 sudo ufw allow 22    # SSH
 sudo ufw enable

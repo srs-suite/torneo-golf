@@ -1,11 +1,21 @@
-const mysql = require('mysql2/promise');
-const crypto = require('crypto');
+import mysql from 'mysql2/promise';
+import crypto from 'crypto';
+import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Load environment variables
+dotenv.config({ path: path.join(__dirname, '../.env') });
 
 const dbConfig = {
-    host: 'localhost',
-    user: 'root',
-    password: '',
-    database: 'torneogolf'
+    host: process.env.DB_HOST || 'localhost',
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || '',
+    database: process.env.DB_NAME || 'teetracker_pro',
+    port: parseInt(process.env.DB_PORT || '3306')
 };
 
 async function showAdmins() {
@@ -13,7 +23,7 @@ async function showAdmins() {
     
     try {
         const [admins] = await connection.execute(
-            'SELECT admin_id, username, full_name, email, club_id FROM club_administrators ORDER BY admin_id'
+            'SELECT admin_id, username, full_name, email, created_at FROM club_administrators ORDER BY admin_id'
         );
         
         console.log('\n=== ADMINISTRADORES REGISTRADOS ===\n');
@@ -22,7 +32,7 @@ async function showAdmins() {
             console.log(`Usuario: ${admin.username}`);
             console.log(`Nombre: ${admin.full_name}`);
             console.log(`Email: ${admin.email}`);
-            console.log(`Club ID: ${admin.club_id}`);
+            console.log(`Creado: ${admin.created_at}`);
             console.log('---');
         });
         
