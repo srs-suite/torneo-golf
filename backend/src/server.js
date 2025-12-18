@@ -16,14 +16,16 @@ import {
     
     // Administrator functions  
     getAllAdministrators, authenticateAdmin,
+    getClubUsers, createClubUser, updateUserInfo, updateUserPermissions, deleteClubUser,
     
     // Member functions
     getAllMembers, getMemberById, createMember, updateMember, deleteMember, updateMemberStatus,
-    getMemberTournaments, getMemberScorecards, getMemberHandicapHistory,
+    getMemberTournaments, getMemberScorecards, getMemberHandicapHistory, getMemberContributions,
     
     // Tournament functions
     getAllTournaments, getTournamentById, createTournament, updateTournament, deleteTournament,
     getTournamentParticipants, getTournamentParticipantsById, addTournamentParticipant, removeTournamentParticipant,
+    updateParticipantPayment,
     // Tee time and groups functions
     getTournamentGroups, generateTournamentGroups, assignTeeTimesToGroups,
     movePlayerToGroup, moveGroupToHole, swapGroupNumbers, createEmptyGroup, deleteEmptyGroup,
@@ -38,11 +40,21 @@ import {
     getAnnualRankings, getTournamentRanking,
     
     // Payments and accounting functions
-    getPaymentsSummary, getExpenses, addExpense, deleteExpense,
+    getPaymentsSummary, getExpenses, addExpense, updateExpense, deleteExpense,
+    getOtherIncomes, addOtherIncome, updateOtherIncome, deleteOtherIncome,
+    getCurrencyExchanges, addCurrencyExchange, updateCurrencyExchange, deleteCurrencyExchange,
+    getCurrencyBalance,
     
     // System functions
     getSystemStats, getRecentActivity
 } from './services/database.js';
+
+// WhatsApp service
+import {
+    generatePaymentReceiptMessage,
+    generateWhatsAppUrl,
+    isValidPhoneNumber
+} from './services/whatsapp.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -81,6 +93,11 @@ async function parseBody(req) {
         });
         req.on('end', () => {
             try {
+                // Si el body está vacío, retornar objeto vacío
+                if (!body || body.trim() === '') {
+                    resolve({});
+                    return;
+                }
                 resolve(JSON.parse(body));
             } catch (error) {
                 reject(new Error('Invalid JSON'));
@@ -104,19 +121,28 @@ async function handleAuthAPI(req, res, pathParts) {
         switch (endpoint) {
             case 'login':
                 if (method === 'POST') {
+                    console.log('📥 Intento de login recibido');
                     const loginData = await parseBody(req);
+                    console.log('👤 Usuario:', loginData.username);
+                    
                     if (!loginData.username || !loginData.password) {
+                        console.log('❌ Faltan credenciales');
                         sendError(res, 'Usuario y contraseña son requeridos', 400);
                         return;
                     }
 
+                    console.log('🔍 Autenticando...');
                     const admin = await authenticateAdmin(loginData.username, loginData.password);
+                    console.log('🔑 Resultado autenticación:', admin ? 'SUCCESS' : 'FAIL');
+                    
                     if (!admin) {
+                        console.log('❌ Credenciales inválidas');
                         sendError(res, 'Credenciales inválidas', 401);
                         return;
                     }
 
                     const token = crypto.randomBytes(32).toString('hex');
+                    console.log('✅ Login exitoso para:', admin.username);
                     
                     sendJSON(res, {
                         success: true,
@@ -126,7 +152,8 @@ async function handleAuthAPI(req, res, pathParts) {
                             username: admin.username,
                             name: admin.full_name,
                             email: admin.email,
-                            club_id: admin.club_id
+                            role: admin.role || 'club_admin',
+                            club_id: admin.course_id
                         }
                     });
                 } else {
@@ -241,7 +268,9 @@ async function handleClubAPI(req, res, pathParts) {
                     sendError(res, 'Método no permitido', 405);
                 }
             } else {
-                const subAction = pathParts[4]; // tournaments, scorecards, handicap-history
+                const subAction = pathParts[5]; // tournaments, scorecards, handicap-history
+                
+                console.log('🔍 Member details request:', { clubId, resourceId, subAction, pathParts });
                 
                 if (!subAction) {
                     // Basic member operations
@@ -270,6 +299,10 @@ async function handleClubAPI(req, res, pathParts) {
                     // Get member handicap history
                     const history = await getMemberHandicapHistory(parseInt(clubId), parseInt(resourceId));
                     sendJSON(res, { success: true, data: history });
+                } else if (subAction === 'contributions' && method === 'GET') {
+                    // Get member contributions
+                    const contributions = await getMemberContributions(parseInt(clubId), parseInt(resourceId));
+                    sendJSON(res, { success: true, data: contributions });
                 } else {
                     sendError(res, 'Recurso no encontrado', 404);
                 }
@@ -377,32 +410,48 @@ async function handleClubAPI(req, res, pathParts) {
             
             // Tournament participants
             else if (subResource === 'participants') {
-                if (method === 'GET') {
+                const participantId = pathParts[6];
+                const action = pathParts[7]; // 'payment' o nada
+                
+                // Update participant payment: PUT /participants/{id}/payment
+                if (method === 'PUT' && participantId && action === 'payment') {
+                    const paymentData = await parseBody(req);
+                    await updateParticipantPayment(
+                        parseInt(clubId), 
+                        parseInt(resourceId), 
+                        parseInt(participantId), 
+                        paymentData
+                    );
+                    sendJSON(res, { success: true, message: 'Pago actualizado exitosamente' });
+                }
+                // Get all participants
+                else if (method === 'GET' && !participantId) {
                     const participants = await getTournamentParticipants(parseInt(clubId), parseInt(resourceId));
                     sendJSON(res, { success: true, data: participants });
-                } else if (method === 'POST') {
+                } 
+                // Add participant
+                else if (method === 'POST' && !participantId) {
                     const participantData = await parseBody(req);
                     const newParticipant = await addTournamentParticipant(parseInt(clubId), parseInt(resourceId), participantData);
                     sendJSON(res, { success: true, data: newParticipant, message: 'Participante agregado exitosamente' });
-                } else if (method === 'DELETE') {
+                } 
+                // Delete participant
+                else if (method === 'DELETE') {
                     // Aceptar tanto DELETE /participants/:id como DELETE /participants con body { participantId }
-                    let participantId;
-                    // Intentar tomar ID desde la URL: /api/club/{clubId}/tournaments/{tournamentId}/participants/{participantId}
-                    if (pathParts[6]) {
-                        participantId = parseInt(pathParts[6]);
-                    }
+                    let participantIdToDelete = participantId ? parseInt(participantId) : null;
+                    
                     // Si no vino en la URL, intentar desde el body
-                    if (!participantId || Number.isNaN(participantId)) {
+                    if (!participantIdToDelete || Number.isNaN(participantIdToDelete)) {
                         try {
                             const participantData = await parseBody(req);
-                            participantId = parseInt(participantData.participantId || participantData.id);
+                            participantIdToDelete = parseInt(participantData.participantId || participantData.id);
                         } catch (_) {}
                     }
-                    if (!participantId || Number.isNaN(participantId)) {
+                    if (!participantIdToDelete || Number.isNaN(participantIdToDelete)) {
                         sendError(res, 'participantId es requerido', 400);
                         return;
                     }
-                    await removeTournamentParticipant(parseInt(clubId), parseInt(resourceId), participantId);
+                    await removeTournamentParticipant(parseInt(clubId), parseInt(resourceId), participantIdToDelete);
                     sendJSON(res, { success: true, message: 'Participante eliminado exitosamente' });
                 } else {
                     sendError(res, 'Método no permitido', 405);
@@ -412,7 +461,11 @@ async function handleClubAPI(req, res, pathParts) {
             // Scorecards
             else if (subResource === 'scorecards') {
                 if (method === 'GET') {
-                    const scorecards = await getScorecardsByTournament(parseInt(clubId), parseInt(resourceId));
+                    // Obtener parámetro includeAll para mostrar también los que no presentaron
+                    const url = new URL(req.url, `http://${req.headers.host}`);
+                    const includeAll = url.searchParams.get('includeAll') === 'true';
+                    
+                    const scorecards = await getScorecardsByTournament(parseInt(clubId), parseInt(resourceId), includeAll);
                     sendJSON(res, { success: true, data: scorecards });
                 } else if (method === 'POST') {
                     const scorecardData = await parseBody(req);
@@ -504,7 +557,7 @@ async function handleClubAPI(req, res, pathParts) {
         
         // Accounting (expenses)
         else if (resource === 'accounting') {
-            const action = pathParts[3];
+            const action = pathParts[4]; // Changed from pathParts[3] to pathParts[4]
             
             if (action === 'expenses') {
                 if (method === 'GET') {
@@ -517,6 +570,12 @@ async function handleClubAPI(req, res, pathParts) {
                     const expenseData = await parseBody(req);
                     const newExpense = await addExpense(parseInt(clubId), expenseData);
                     sendJSON(res, { success: true, data: newExpense, message: 'Gasto agregado exitosamente' });
+                } else if (method === 'PUT') {
+                    const url = new URL(req.url, `http://${req.headers.host}`);
+                    const expenseId = parseInt(url.searchParams.get('id'));
+                    const expenseData = await parseBody(req);
+                    await updateExpense(parseInt(clubId), expenseId, expenseData);
+                    sendJSON(res, { success: true, message: 'Gasto actualizado exitosamente' });
                 } else if (method === 'DELETE') {
                     const url = new URL(req.url, `http://${req.headers.host}`);
                     const expenseId = parseInt(url.searchParams.get('id'));
@@ -525,8 +584,160 @@ async function handleClubAPI(req, res, pathParts) {
                 } else {
                     sendError(res, 'Método no permitido', 405);
                 }
+            } 
+            // Other incomes (non-tournament incomes)
+            else if (action === 'incomes') {
+                // Get income by ID and send WhatsApp receipt - Handle path like /api/club/1/accounting/incomes/123/send-whatsapp
+                const url = new URL(req.url, `http://${req.headers.host}`);
+                const pathParts = url.pathname.split('/');
+                // pathParts: ['', 'api', 'club', '1', 'accounting', 'incomes', '5', 'send-whatsapp']
+                const incomeIdInPath = pathParts[6]; // The income ID
+                const subAction = pathParts[7]; // 'send-whatsapp' or undefined
+                
+                if (subAction === 'send-whatsapp' && method === 'POST') {
+                    try {
+                        const incomeId = parseInt(incomeIdInPath);
+                        
+                        // Get the income details
+                        const incomes = await getOtherIncomes(parseInt(clubId), null, null);
+                        const income = incomes.find(i => i.income_id === incomeId);
+                        
+                        if (!income) {
+                            return sendError(res, 'Ingreso no encontrado', 404);
+                        }
+                        
+                        // Check if income has a member associated
+                        if (!income.member_id) {
+                            return sendError(res, 'Este ingreso no tiene un socio asociado', 400);
+                        }
+                        
+                        // Get member details
+                        const member = await getMemberById(income.member_id);
+                        
+                        if (!member) {
+                            return sendError(res, 'Socio no encontrado', 404);
+                        }
+                        
+                        // Check if member has phone number
+                        if (!member.phone) {
+                            return sendError(res, 'El socio no tiene teléfono registrado', 400);
+                        }
+                        
+                        // Validate phone number
+                        if (!isValidPhoneNumber(member.phone)) {
+                            return sendError(res, 'El número de teléfono del socio no es válido', 400);
+                        }
+                        
+                        // Get club details
+                        const club = await getClubById(parseInt(clubId));
+                        const clubName = club?.course_name || 'Club de Golf';
+                        const memberName = `${member.first_name} ${member.last_name}`;
+                        
+                        // Generate WhatsApp message
+                        const message = generatePaymentReceiptMessage(clubName, memberName, income);
+                        
+                        // Generate WhatsApp URL
+                        const result = generateWhatsAppUrl(member.phone, message);
+                        
+                        if (result.success) {
+                            sendJSON(res, {
+                                success: true,
+                                message: 'Enlace de WhatsApp generado',
+                                whatsappUrl: result.url
+                            });
+                        } else {
+                            sendError(res, result.error || 'Error al generar enlace de WhatsApp', 500);
+                        }
+                    } catch (error) {
+                        console.error('Error al procesar WhatsApp:', error);
+                        sendError(res, 'Error al procesar solicitud de WhatsApp', 500);
+                    }
+                } else if (method === 'GET') {
+                    const from = url.searchParams.get('from');
+                    const to = url.searchParams.get('to');
+                    const incomes = await getOtherIncomes(parseInt(clubId), from, to);
+                    sendJSON(res, { success: true, data: incomes });
+                } else if (method === 'POST' && !subAction) {
+                    const incomeData = await parseBody(req);
+                    const newIncome = await addOtherIncome(parseInt(clubId), incomeData);
+                    sendJSON(res, { success: true, data: newIncome, message: 'Ingreso agregado exitosamente' });
+                } else if (method === 'PUT') {
+                    const url = new URL(req.url, `http://${req.headers.host}`);
+                    const incomeId = parseInt(url.searchParams.get('id'));
+                    const incomeData = await parseBody(req);
+                    await updateOtherIncome(parseInt(clubId), incomeId, incomeData);
+                    sendJSON(res, { success: true, message: 'Ingreso actualizado exitosamente' });
+                } else if (method === 'DELETE') {
+                    const url = new URL(req.url, `http://${req.headers.host}`);
+                    const incomeId = parseInt(url.searchParams.get('id'));
+                    await deleteOtherIncome(parseInt(clubId), incomeId);
+                    sendJSON(res, { success: true, message: 'Ingreso eliminado exitosamente' });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
+            }
+            // Currency exchanges
+            else if (action === 'exchanges') {
+                if (method === 'GET') {
+                    const url = new URL(req.url, `http://${req.headers.host}`);
+                    const from = url.searchParams.get('from');
+                    const to = url.searchParams.get('to');
+                    const exchanges = await getCurrencyExchanges(parseInt(clubId), from, to);
+                    sendJSON(res, { success: true, data: exchanges });
+                } else if (method === 'POST') {
+                    const exchangeData = await parseBody(req);
+                    const newExchange = await addCurrencyExchange(parseInt(clubId), exchangeData);
+                    sendJSON(res, { success: true, data: newExchange, message: 'Conversión registrada exitosamente' });
+                } else if (method === 'PUT') {
+                    const url = new URL(req.url, `http://${req.headers.host}`);
+                    const exchangeId = parseInt(url.searchParams.get('id'));
+                    const exchangeData = await parseBody(req);
+                    await updateCurrencyExchange(parseInt(clubId), exchangeId, exchangeData);
+                    sendJSON(res, { success: true, message: 'Conversión actualizada exitosamente' });
+                } else if (method === 'DELETE') {
+                    const url = new URL(req.url, `http://${req.headers.host}`);
+                    const exchangeId = parseInt(url.searchParams.get('id'));
+                    await deleteCurrencyExchange(parseInt(clubId), exchangeId);
+                    sendJSON(res, { success: true, message: 'Conversión eliminada exitosamente' });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
+            }
+            // Currency balance
+            else if (action === 'balance') {
+                if (method === 'GET') {
+                    const balance = await getCurrencyBalance(parseInt(clubId));
+                    sendJSON(res, { success: true, data: balance });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
             } else {
                 sendError(res, 'Recurso no encontrado', 404);
+            }
+        }
+        
+        // User management
+        else if (resource === 'users') {
+            if (method === 'GET') {
+                // Get all users for the club
+                const users = await getClubUsers(parseInt(clubId));
+                sendJSON(res, { success: true, data: users });
+            } else if (method === 'POST') {
+                // Create new user
+                const userData = await parseBody(req);
+                const newUserId = await createClubUser(parseInt(clubId), userData);
+                sendJSON(res, { success: true, data: { userId: newUserId }, message: 'Usuario creado exitosamente' });
+            } else if (method === 'PUT' && resourceId) {
+                // Update user permissions
+                const permissions = await parseBody(req);
+                await updateUserPermissions(parseInt(resourceId), permissions);
+                sendJSON(res, { success: true, message: 'Permisos actualizados exitosamente' });
+            } else if (method === 'DELETE' && resourceId) {
+                // Delete user
+                await deleteClubUser(parseInt(resourceId));
+                sendJSON(res, { success: true, message: 'Usuario eliminado exitosamente' });
+            } else {
+                sendError(res, 'Método no permitido', 405);
             }
         }
         

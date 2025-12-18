@@ -263,8 +263,7 @@ async function getAdministratorByUsername(username) {
     const query = `
         SELECT 
             ca.*,
-            gc.club_name as club_name,
-            gc.club_code
+            gc.club_name as club_name
         FROM club_administrators ca
         LEFT JOIN clubs gc ON ca.course_id = gc.club_id
         WHERE ca.username = ? AND ca.is_active = true
@@ -297,6 +296,192 @@ async function authenticateAdmin(username, password) {
     }
     
     return null;
+}
+
+/**
+ * Get all users with their permissions for a club
+ */
+async function getClubUsers(clubId) {
+    const query = `
+        SELECT 
+            ca.*,
+            up.*,
+            ca.admin_id as user_id
+        FROM club_administrators ca
+        LEFT JOIN user_permissions up ON ca.admin_id = up.admin_id
+        WHERE ca.course_id = ? AND ca.is_active = TRUE
+        ORDER BY ca.is_primary_admin DESC, ca.created_at DESC
+    `;
+    const { rows } = await executeQuery(query, [clubId]);
+    return rows;
+}
+
+/**
+ * Create a new user with permissions
+ */
+async function createClubUser(clubId, userData) {
+    // Insert user
+    const userQuery = `
+        INSERT INTO club_administrators (
+            course_id, username, email, password_hash, full_name,
+            role, is_primary_admin, is_active, created_by
+        ) VALUES (?, ?, ?, ?, ?, 'club_admin', FALSE, TRUE, ?)
+    `;
+    
+    const hashedPassword = crypto.createHash('sha256').update(userData.password).digest('hex');
+    
+    const { rows: userResult } = await executeQuery(userQuery, [
+        clubId,
+        userData.username,
+        userData.email,
+        hashedPassword,
+        userData.fullName,
+        userData.createdBy || null
+    ]);
+    
+    const newUserId = userResult.insertId;
+    
+    // Insert permissions
+    const permQuery = `
+        INSERT INTO user_permissions (
+            admin_id,
+            can_view_members, can_view_tournaments, can_view_groups,
+            can_view_scorecards, can_view_photos, can_view_settings,
+            can_view_rankings, can_view_accounting,
+            can_create_members, can_edit_members, can_delete_members,
+            can_create_tournaments, can_edit_tournaments, can_delete_tournaments,
+            can_manage_participants, can_manage_groups, can_manage_scorecards,
+            can_manage_payments
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+    
+    const perms = userData.permissions || {};
+    await executeQuery(permQuery, [
+        newUserId,
+        perms.can_view_members !== false,
+        perms.can_view_tournaments !== false,
+        perms.can_view_groups !== false,
+        perms.can_view_scorecards !== false,
+        perms.can_view_photos !== false,
+        perms.can_view_settings || false,
+        perms.can_view_rankings !== false,
+        perms.can_view_accounting || false,
+        perms.can_create_members !== false,
+        perms.can_edit_members !== false,
+        perms.can_delete_members || false,
+        perms.can_create_tournaments !== false,
+        perms.can_edit_tournaments !== false,
+        perms.can_delete_tournaments || false,
+        perms.can_manage_participants !== false,
+        perms.can_manage_groups !== false,
+        perms.can_manage_scorecards !== false,
+        perms.can_manage_payments || false
+    ]);
+    
+    return newUserId;
+}
+
+/**
+ * Update user info (name, email, username, password)
+ */
+async function updateUserInfo(userId, userData) {
+    const updates = [];
+    const params = [];
+    
+    if (userData.fullName) {
+        updates.push('full_name = ?');
+        params.push(userData.fullName);
+    }
+    if (userData.email) {
+        updates.push('email = ?');
+        params.push(userData.email);
+    }
+    if (userData.username) {
+        updates.push('username = ?');
+        params.push(userData.username);
+    }
+    if (userData.password) {
+        const hashedPassword = crypto.createHash('sha256').update(userData.password).digest('hex');
+        updates.push('password_hash = ?');
+        params.push(hashedPassword);
+    }
+    
+    if (updates.length === 0) {
+        return true;
+    }
+    
+    params.push(userId);
+    
+    const query = `
+        UPDATE club_administrators 
+        SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP
+        WHERE admin_id = ?
+    `;
+    
+    await executeQuery(query, params);
+    return true;
+}
+
+/**
+ * Update user permissions
+ */
+async function updateUserPermissions(userId, permissions) {
+    const query = `
+        UPDATE user_permissions SET
+            can_view_members = ?,
+            can_view_tournaments = ?,
+            can_view_groups = ?,
+            can_view_scorecards = ?,
+            can_view_photos = ?,
+            can_view_settings = ?,
+            can_view_rankings = ?,
+            can_view_accounting = ?,
+            can_create_members = ?,
+            can_edit_members = ?,
+            can_delete_members = ?,
+            can_create_tournaments = ?,
+            can_edit_tournaments = ?,
+            can_delete_tournaments = ?,
+            can_manage_participants = ?,
+            can_manage_groups = ?,
+            can_manage_scorecards = ?,
+            can_manage_payments = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE admin_id = ?
+    `;
+    
+    await executeQuery(query, [
+        permissions.can_view_members !== false,
+        permissions.can_view_tournaments !== false,
+        permissions.can_view_groups !== false,
+        permissions.can_view_scorecards !== false,
+        permissions.can_view_photos !== false,
+        permissions.can_view_settings || false,
+        permissions.can_view_rankings !== false,
+        permissions.can_view_accounting || false,
+        permissions.can_create_members !== false,
+        permissions.can_edit_members !== false,
+        permissions.can_delete_members || false,
+        permissions.can_create_tournaments !== false,
+        permissions.can_edit_tournaments !== false,
+        permissions.can_delete_tournaments || false,
+        permissions.can_manage_participants !== false,
+        permissions.can_manage_groups !== false,
+        permissions.can_manage_scorecards !== false,
+        permissions.can_manage_payments || false,
+        userId
+    ]);
+    
+    return true;
+}
+
+/**
+ * Delete user (soft delete)
+ */
+async function deleteClubUser(userId) {
+    const query = `UPDATE club_administrators SET is_active = FALSE WHERE admin_id = ? AND is_primary_admin = FALSE`;
+    await executeQuery(query, [userId]);
+    return true;
 }
 
 // ================================
@@ -1198,10 +1383,11 @@ async function getPaymentsSummary(clubId, fromDate, toDate) {
                 t.tournament_id,
                 t.tournament_name,
                 t.tournament_date,
-                SUM(COALESCE(tp.fee_amount, t.default_fee, 0)) as total_fee,
+                COALESCE(t.currency, 'ARS') as currency,
+                SUM(COALESCE(tp.fee_amount, t.entry_fee, 0)) as total_fee,
                 SUM(COALESCE(tp.paid_amount, 0)) as total_paid
             FROM tournaments t
-            LEFT JOIN tournament_participation tp ON t.tournament_id = tp.tournament_id
+            LEFT JOIN tournament_participants tp ON t.tournament_id = tp.tournament_id
             WHERE t.course_id = ?
         `;
         
@@ -1217,7 +1403,7 @@ async function getPaymentsSummary(clubId, fromDate, toDate) {
             params.push(toDate);
         }
         
-        query += ` GROUP BY t.tournament_id, t.tournament_name, t.tournament_date ORDER BY t.tournament_date DESC`;
+        query += ` GROUP BY t.tournament_id, t.tournament_name, t.tournament_date, t.currency ORDER BY t.tournament_date DESC`;
         
         const { rows } = await executeQuery(query, params);
         return rows;
@@ -1237,6 +1423,7 @@ async function getExpenses(clubId, fromDate, toDate) {
                 expense_id,
                 expense_date,
                 amount,
+                COALESCE(currency, 'ARS') as currency,
                 receipt_number,
                 detail,
                 created_at
@@ -1273,14 +1460,15 @@ async function addExpense(clubId, expenseData) {
     try {
         const query = `
             INSERT INTO club_expenses (
-                club_id, expense_date, amount, receipt_number, detail, created_at
-            ) VALUES (?, ?, ?, ?, ?, NOW())
+                club_id, expense_date, amount, currency, receipt_number, detail, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, NOW())
         `;
         
         const params = [
             clubId,
             expenseData.expense_date,
             expenseData.amount,
+            expenseData.currency || 'ARS',
             expenseData.receipt_number || null,
             expenseData.detail || null
         ];
@@ -1303,6 +1491,428 @@ async function deleteExpense(clubId, expenseId) {
         return { success: true };
     } catch (error) {
         console.error('❌ Error deleting expense:', error);
+        throw error;
+    }
+}
+
+/**
+ * Update an expense
+ */
+async function updateExpense(clubId, expenseId, expenseData) {
+    try {
+        const query = `
+            UPDATE club_expenses 
+            SET 
+                expense_date = ?,
+                amount = ?,
+                currency = ?,
+                receipt_number = ?,
+                detail = ?
+            WHERE club_id = ? AND expense_id = ?
+        `;
+        
+        const params = [
+            expenseData.expense_date,
+            expenseData.amount,
+            expenseData.currency || 'ARS',
+            expenseData.receipt_number || null,
+            expenseData.detail || null,
+            clubId,
+            expenseId
+        ];
+        
+        const { rows } = await executeQuery(query, params);
+        return { success: true, affectedRows: rows.affectedRows };
+    } catch (error) {
+        console.error('❌ Error updating expense:', error);
+        throw error;
+    }
+}
+
+// ================================
+// OTHER INCOMES FUNCTIONS
+// ================================
+
+/**
+ * Get other incomes (non-tournament incomes)
+ */
+async function getMemberContributions(clubId, memberId) {
+    try {
+        const query = `
+            SELECT 
+                income_id,
+                income_date,
+                amount,
+                COALESCE(currency, 'ARS') as currency,
+                payment_type,
+                description
+            FROM other_incomes
+            WHERE club_id = ? AND member_id = ?
+            ORDER BY income_date DESC
+        `;
+        const { rows } = await executeQuery(query, [clubId, memberId]);
+        return rows;
+    } catch (error) {
+        console.error('❌ Error getting member contributions:', error);
+        throw error;
+    }
+}
+
+async function getOtherIncomes(clubId, fromDate, toDate) {
+    try {
+        let query = `
+            SELECT 
+                oi.income_id,
+                oi.member_id,
+                oi.income_date,
+                oi.amount,
+                COALESCE(oi.currency, 'ARS') as currency,
+                oi.payment_type,
+                oi.description,
+                oi.created_at,
+                CONCAT(m.first_name, ' ', m.last_name) as member_name
+            FROM other_incomes oi
+            LEFT JOIN members m ON oi.member_id = m.member_id
+            WHERE oi.club_id = ?
+        `;
+        
+        const params = [clubId];
+        
+        if (fromDate) {
+            query += ` AND oi.income_date >= ?`;
+            params.push(fromDate);
+        }
+        
+        if (toDate) {
+            query += ` AND oi.income_date <= ?`;
+            params.push(toDate);
+        }
+        
+        query += ` ORDER BY oi.income_date DESC`;
+        
+        const { rows } = await executeQuery(query, params);
+        return rows;
+    } catch (error) {
+        console.error('❌ Error getting other incomes:', error);
+        throw error;
+    }
+}
+
+/**
+ * Add other income
+ */
+async function addOtherIncome(clubId, incomeData) {
+    try {
+        const query = `
+            INSERT INTO other_incomes (
+                club_id, member_id, income_date, amount, currency, payment_type, description, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+        `;
+        
+        const params = [
+            clubId,
+            incomeData.member_id || null,
+            incomeData.income_date,
+            incomeData.amount,
+            incomeData.currency || 'ARS',
+            incomeData.payment_type || 'efectivo',
+            incomeData.description || null
+        ];
+        
+        const { rows } = await executeQuery(query, params);
+        return { income_id: rows.insertId };
+    } catch (error) {
+        console.error('❌ Error adding other income:', error);
+        throw error;
+    }
+}
+
+/**
+ * Delete other income
+ */
+async function deleteOtherIncome(clubId, incomeId) {
+    try {
+        const query = `DELETE FROM other_incomes WHERE club_id = ? AND income_id = ?`;
+        await executeQuery(query, [clubId, incomeId]);
+        return { success: true };
+    } catch (error) {
+        console.error('❌ Error deleting other income:', error);
+        throw error;
+    }
+}
+
+/**
+ * Update an other income
+ */
+async function updateOtherIncome(clubId, incomeId, incomeData) {
+    try {
+        const query = `
+            UPDATE other_incomes 
+            SET 
+                member_id = ?,
+                income_date = ?,
+                amount = ?,
+                currency = ?,
+                payment_type = ?,
+                description = ?
+            WHERE club_id = ? AND income_id = ?
+        `;
+        
+        const params = [
+            incomeData.member_id || null,
+            incomeData.income_date,
+            incomeData.amount,
+            incomeData.currency || 'ARS',
+            incomeData.payment_type || 'efectivo',
+            incomeData.description || null,
+            clubId,
+            incomeId
+        ];
+        
+        const { rows } = await executeQuery(query, params);
+        return { success: true, affectedRows: rows.affectedRows };
+    } catch (error) {
+        console.error('❌ Error updating other income:', error);
+        throw error;
+    }
+}
+
+// ================================
+// CURRENCY EXCHANGES FUNCTIONS
+// ================================
+
+/**
+ * Get currency exchanges
+ */
+async function getCurrencyExchanges(clubId, fromDate, toDate) {
+    try {
+        let query = `
+            SELECT 
+                exchange_id,
+                exchange_date,
+                from_currency,
+                from_amount,
+                to_currency,
+                to_amount,
+                exchange_rate,
+                notes,
+                created_at
+            FROM currency_exchanges
+            WHERE club_id = ?
+        `;
+        
+        const params = [clubId];
+        
+        if (fromDate) {
+            query += ` AND exchange_date >= ?`;
+            params.push(fromDate);
+        }
+        
+        if (toDate) {
+            query += ` AND exchange_date <= ?`;
+            params.push(toDate);
+        }
+        
+        query += ` ORDER BY exchange_date DESC, created_at DESC`;
+        
+        const { rows } = await executeQuery(query, params);
+        return rows || [];
+    } catch (error) {
+        console.error('❌ Error getting currency exchanges:', error);
+        throw error;
+    }
+}
+
+/**
+ * Get currency balance for a club
+ */
+async function getCurrencyBalance(clubId) {
+    try {
+        // Calcular balance por moneda
+        const balance = { ARS: 0, USD: 0 };
+        
+        // 1. Ingresos de torneos por moneda
+        try {
+            const incomesQuery = `
+                SELECT 
+                    COALESCE(tp.currency, 'ARS') as currency,
+                    SUM(tp.paid_amount) as total
+                FROM tournament_participants tp
+                JOIN tournaments t ON tp.tournament_id = t.tournament_id
+                WHERE t.course_id = ? AND tp.payment_status = 'paid'
+                GROUP BY COALESCE(tp.currency, 'ARS')
+            `;
+            const incomes = await executeQuery(incomesQuery, [clubId]);
+            incomes.rows.forEach(r => {
+                balance[r.currency] = (balance[r.currency] || 0) + Number(r.total || 0);
+            });
+        } catch (error) {
+            console.error('Error en ingresos torneos:', error);
+        }
+        
+        // 2. Otros ingresos por moneda
+        try {
+            const otherIncomesQuery = `
+                SELECT 
+                    COALESCE(currency, 'ARS') as currency,
+                    SUM(amount) as total
+                FROM other_incomes
+                WHERE club_id = ?
+                GROUP BY COALESCE(currency, 'ARS')
+            `;
+            const otherIncomes = await executeQuery(otherIncomesQuery, [clubId]);
+            otherIncomes.rows.forEach(r => {
+                balance[r.currency] = (balance[r.currency] || 0) + Number(r.total || 0);
+            });
+        } catch (error) {
+            console.error('Error en otros ingresos:', error);
+        }
+        
+        // 3. Gastos por moneda
+        try {
+            const expensesQuery = `
+                SELECT 
+                    COALESCE(currency, 'ARS') as currency,
+                    SUM(amount) as total
+                FROM club_expenses
+                WHERE club_id = ?
+                GROUP BY COALESCE(currency, 'ARS')
+            `;
+            const expenses = await executeQuery(expensesQuery, [clubId]);
+            expenses.rows.forEach(r => {
+                balance[r.currency] = (balance[r.currency] || 0) - Number(r.total || 0);
+            });
+        } catch (error) {
+            console.error('Error en gastos:', error);
+        }
+        
+        // 4. Conversiones de moneda (solo si la tabla existe)
+        try {
+            const exchangesOutQuery = `
+                SELECT 
+                    from_currency as currency,
+                    SUM(from_amount) as total
+                FROM currency_exchanges
+                WHERE club_id = ?
+                GROUP BY from_currency
+            `;
+            const exchangesOut = await executeQuery(exchangesOutQuery, [clubId]);
+            exchangesOut.rows.forEach(r => {
+                balance[r.currency] = (balance[r.currency] || 0) - Number(r.total || 0);
+            });
+            
+            const exchangesInQuery = `
+                SELECT 
+                    to_currency as currency,
+                    SUM(to_amount) as total
+                FROM currency_exchanges
+                WHERE club_id = ?
+                GROUP BY to_currency
+            `;
+            const exchangesIn = await executeQuery(exchangesInQuery, [clubId]);
+            exchangesIn.rows.forEach(r => {
+                balance[r.currency] = (balance[r.currency] || 0) + Number(r.total || 0);
+            });
+        } catch (error) {
+            // La tabla currency_exchanges puede no existir aún
+            console.log('ℹ️ Tabla currency_exchanges no disponible aún');
+        }
+        
+        console.log('💰 Balance calculado para club', clubId, ':', balance);
+        return balance;
+    } catch (error) {
+        console.error('❌ Error getting currency balance:', error);
+        return { ARS: 0, USD: 0 }; // Retornar balance vacío en caso de error
+    }
+}
+
+/**
+ * Add currency exchange (with balance validation)
+ */
+async function addCurrencyExchange(clubId, exchangeData) {
+    try {
+        // Validar que haya fondos suficientes
+        const balance = await getCurrencyBalance(clubId);
+        const availableAmount = balance[exchangeData.from_currency] || 0;
+        
+        if (availableAmount < exchangeData.from_amount) {
+            throw new Error(`Fondos insuficientes. Disponible: ${availableAmount.toFixed(2)} ${exchangeData.from_currency}, Requerido: ${exchangeData.from_amount} ${exchangeData.from_currency}`);
+        }
+        
+        const query = `
+            INSERT INTO currency_exchanges (
+                club_id, exchange_date, from_currency, from_amount, 
+                to_currency, to_amount, exchange_rate, notes, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        `;
+        
+        const params = [
+            clubId,
+            exchangeData.exchange_date,
+            exchangeData.from_currency,
+            exchangeData.from_amount,
+            exchangeData.to_currency,
+            exchangeData.to_amount,
+            exchangeData.exchange_rate,
+            exchangeData.notes || null
+        ];
+        
+        const { rows } = await executeQuery(query, params);
+        return { exchange_id: rows.insertId };
+    } catch (error) {
+        console.error('❌ Error adding currency exchange:', error);
+        throw error;
+    }
+}
+
+/**
+ * Update currency exchange
+ */
+async function updateCurrencyExchange(clubId, exchangeId, exchangeData) {
+    try {
+        const query = `
+            UPDATE currency_exchanges 
+            SET 
+                exchange_date = ?,
+                from_currency = ?,
+                from_amount = ?,
+                to_currency = ?,
+                to_amount = ?,
+                exchange_rate = ?,
+                notes = ?
+            WHERE club_id = ? AND exchange_id = ?
+        `;
+        
+        const params = [
+            exchangeData.exchange_date,
+            exchangeData.from_currency,
+            exchangeData.from_amount,
+            exchangeData.to_currency,
+            exchangeData.to_amount,
+            exchangeData.exchange_rate,
+            exchangeData.notes || null,
+            clubId,
+            exchangeId
+        ];
+        
+        const { rows } = await executeQuery(query, params);
+        return { success: true, affectedRows: rows.affectedRows };
+    } catch (error) {
+        console.error('❌ Error updating currency exchange:', error);
+        throw error;
+    }
+}
+
+/**
+ * Delete currency exchange
+ */
+async function deleteCurrencyExchange(clubId, exchangeId) {
+    try {
+        const query = `DELETE FROM currency_exchanges WHERE club_id = ? AND exchange_id = ?`;
+        const { rows } = await executeQuery(query, [clubId, exchangeId]);
+        return { success: true, affectedRows: rows.affectedRows };
+    } catch (error) {
+        console.error('❌ Error deleting currency exchange:', error);
         throw error;
     }
 }
@@ -1397,6 +2007,18 @@ async function getAllMembers(courseId) {
         ORDER BY last_name, first_name
     `;
     const { rows } = await executeQuery(query, [courseId]);
+    
+    // DEBUG: Ver qué devuelve la consulta
+    console.log('🔍 DEBUG getAllMembers - Total rows:', rows.length);
+    if (rows.length > 0) {
+        console.log('🔍 DEBUG Sample member (first):', {
+            member_id: rows[0].member_id,
+            name: rows[0].first_name + ' ' + rows[0].last_name,
+            gender: rows[0].gender,
+            updated_at: rows[0].updated_at
+        });
+    }
+    
     return rows;
 }
 
@@ -2248,31 +2870,67 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
 
 async function removeTournamentParticipant(courseId, tournamentId, participantId) {
     console.log('🗑️ Ejecutando eliminación en DB:', { courseId, tournamentId, participantId });
-    const query = `DELETE FROM tournament_participants WHERE participation_id = ? AND tournament_id = ?`;
-    const { rows } = await executeQuery(query, [participantId, tournamentId]);
-    console.log('🗑️ Resultado de query DELETE:', { affectedRows: rows.affectedRows });
     
-    if (rows.affectedRows > 0) {
-        try {
-            await logActivity(
-                courseId,
-                null,
-                'admin',
-                'participant_removed',
-                'tournament',
-                tournamentId,
-                `Participante eliminado del torneo`,
-                null,
-                null
-            );
-        } catch (logError) {
-            console.warn('Error logging activity:', logError);
+    try {
+        // Primero, obtener el member_id o external_player_id del participante
+        const getParticipantQuery = `
+            SELECT member_id, external_player_id 
+            FROM tournament_participants 
+            WHERE participation_id = ? AND tournament_id = ?
+        `;
+        const { rows: participantRows } = await executeQuery(getParticipantQuery, [participantId, tournamentId]);
+        
+        if (participantRows && participantRows.length > 0) {
+            const participant = participantRows[0];
+            
+            // Eliminar scorecard si existe
+            if (participant.member_id) {
+                const deleteScorecardQuery = `
+                    DELETE FROM scorecards 
+                    WHERE tournament_id = ? AND member_id = ?
+                `;
+                await executeQuery(deleteScorecardQuery, [tournamentId, participant.member_id]);
+                console.log('🗑️ Scorecard del miembro eliminado (si existía)');
+            } else if (participant.external_player_id) {
+                const deleteScorecardQuery = `
+                    DELETE FROM scorecards 
+                    WHERE tournament_id = ? AND external_player_id = ?
+                `;
+                await executeQuery(deleteScorecardQuery, [tournamentId, participant.external_player_id]);
+                console.log('🗑️ Scorecard del jugador externo eliminado (si existía)');
+            }
         }
+        
+        // Ahora eliminar el participante
+        const query = `DELETE FROM tournament_participants WHERE participation_id = ? AND tournament_id = ?`;
+        const { rows } = await executeQuery(query, [participantId, tournamentId]);
+        console.log('🗑️ Resultado de query DELETE:', { affectedRows: rows.affectedRows });
+        
+        if (rows.affectedRows > 0) {
+            try {
+                await logActivity(
+                    courseId,
+                    null,
+                    'admin',
+                    'participant_removed',
+                    'tournament',
+                    tournamentId,
+                    `Participante eliminado del torneo (incluyendo datos relacionados)`,
+                    null,
+                    null
+                );
+            } catch (logError) {
+                console.warn('Error logging activity:', logError);
+            }
+        }
+        
+        const result = rows.affectedRows > 0;
+        console.log('🗑️ Retornando resultado:', result);
+        return result;
+    } catch (error) {
+        console.error('❌ Error al eliminar participante:', error);
+        throw error;
     }
-    
-    const result = rows.affectedRows > 0;
-    console.log('🗑️ Retornando resultado:', result);
-    return result;
 }
 
 async function updateParticipantStatus(courseId, tournamentId, participantId, status) {
@@ -2303,6 +2961,35 @@ async function updateParticipantStatus(courseId, tournamentId, participantId, st
         return await getTournamentParticipants(courseId, tournamentId);
     }
     return null;
+}
+
+async function updateParticipantPayment(courseId, tournamentId, participantId, paymentData) {
+    const query = `
+        UPDATE tournament_participants 
+        SET 
+            fee_amount = ?,
+            paid_amount = ?,
+            currency = ?,
+            payment_status = ?,
+            payment_method = ?,
+            receipt_number = ?,
+            payment_notes = ?
+        WHERE participation_id = ? AND tournament_id = ?
+    `;
+    
+    const { rows } = await executeQuery(query, [
+        paymentData.fee_amount ?? 0,
+        paymentData.paid_amount ?? 0,
+        paymentData.currency || 'ARS',
+        paymentData.payment_status ?? 'pending',
+        paymentData.payment_method || null,
+        paymentData.receipt_number || null,
+        paymentData.payment_notes || null,
+        participantId,
+        tournamentId
+    ]);
+    
+    return rows.affectedRows > 0;
 }
 
 /**
@@ -2365,11 +3052,12 @@ async function findDuplicateExternalPlayers(playerData) {
 async function createExternalPlayer(playerData) {
     const query = `
         INSERT INTO external_players (
-            full_name, email, phone, handicap_index, handicap_local, member_number, home_club, notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            full_name, email, phone, gender, handicap_index, handicap_local, member_number, home_club, notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
             full_name = VALUES(full_name),
             phone = VALUES(phone),
+            gender = VALUES(gender),
             handicap_index = VALUES(handicap_index),
             handicap_local = VALUES(handicap_local),
             member_number = VALUES(member_number),
@@ -2382,6 +3070,7 @@ async function createExternalPlayer(playerData) {
         playerData.full_name,
         playerData.email || null,
         playerData.phone || null,
+        playerData.gender || null,
         playerData.handicap_index || 0,
         playerData.handicap_local || 0,
         playerData.member_number || null,
@@ -2424,6 +3113,7 @@ async function updateExternalPlayer(playerId, playerData) {
         SET full_name = ?, 
             email = ?, 
             phone = ?, 
+            gender = ?,
             handicap_index = ?, 
             handicap_local = ?, 
             member_number = ?, 
@@ -2437,6 +3127,7 @@ async function updateExternalPlayer(playerId, playerData) {
         playerData.full_name,
         playerData.email || null,
         playerData.phone || null,
+        playerData.gender || null,
         playerData.handicap_index || 0,
         playerData.handicap_local || 0,
         playerData.member_number || null,
@@ -3662,7 +4353,8 @@ async function saveScorecard(clubId, tournamentId, scorecardData) {
             verified_card = false,
             original_archived = false,
             entry_notes = '',
-            entered_by
+            entered_by,
+            did_not_present = false
         } = scorecardData;
 
         // Ensure null instead of undefined for database
@@ -3678,13 +4370,13 @@ async function saveScorecard(clubId, tournamentId, scorecardData) {
             throw new Error('Cannot provide both member_id and external_player_id');
         }
 
-        // Calculate totals
+        // Calculate totals (si no presentó tarjeta, todos en 0)
         const holes = Object.keys(scores);
-        const totalGross = Object.values(scores).reduce((sum, score) => sum + score, 0);
-        const front9 = Object.entries(scores)
+        const totalGross = did_not_present ? 0 : Object.values(scores).reduce((sum, score) => sum + score, 0);
+        const front9 = did_not_present ? 0 : Object.entries(scores)
             .filter(([hole]) => parseInt(hole) <= 9)
             .reduce((sum, [, score]) => sum + score, 0);
-        const back9 = Object.entries(scores)
+        const back9 = did_not_present ? 0 : Object.entries(scores)
             .filter(([hole]) => parseInt(hole) > 9)
             .reduce((sum, [, score]) => sum + score, 0);
 
@@ -3711,6 +4403,7 @@ async function saveScorecard(clubId, tournamentId, scorecardData) {
                     total_gross = ?, front_nine = ?, back_nine = ?,
                     holes_completed = ?, entry_method = ?, verified_card = ?,
                     original_archived = ?, entry_notes = ?, entered_by = ?,
+                    did_not_present = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE scorecard_id = ?
             `;
@@ -3719,6 +4412,7 @@ async function saveScorecard(clubId, tournamentId, scorecardData) {
                 totalGross, front9, back9,
                 holes.length, entry_method, verified_card,
                 original_archived, entry_notes, safeEnteredBy,
+                did_not_present,
                 insertId
             ]);
             
@@ -3734,8 +4428,8 @@ async function saveScorecard(clubId, tournamentId, scorecardData) {
                     tournament_id, member_id, external_player_id, course_id, 
                     total_gross, front_nine, back_nine,
                     holes_completed, entry_method, verified_card,
-                    original_archived, entry_notes, entered_by
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    original_archived, entry_notes, entered_by, did_not_present
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
 
             console.log('🔍 SQL Parameters Debug:', {
@@ -3758,7 +4452,7 @@ async function saveScorecard(clubId, tournamentId, scorecardData) {
                 tournamentId, safeMemberId, safeExternalPlayerId, clubId,
                 totalGross, front9, back9,
                 holes.length, entry_method, verified_card,
-                original_archived, entry_notes, safeEnteredBy
+                original_archived, entry_notes, safeEnteredBy, did_not_present
             ]);
 
             console.log('🔍 INSERT Result:', result);
@@ -3810,8 +4504,12 @@ async function saveScorecard(clubId, tournamentId, scorecardData) {
 /**
  * Get all scorecards for a tournament
  */
-async function getScorecardsByTournament(clubId, tournamentId) {
-    console.log('📊 Getting scorecards for tournament:', { clubId, tournamentId });
+async function getScorecardsByTournament(clubId, tournamentId, includeDidNotPresent = false) {
+    console.log('📊 Getting scorecards for tournament:', { clubId, tournamentId, includeDidNotPresent });
+    
+    const whereClause = includeDidNotPresent 
+        ? 'WHERE s.tournament_id = ?' 
+        : 'WHERE s.tournament_id = ? AND (s.did_not_present = 0 OR s.did_not_present IS NULL)';
     
     const query = `
         SELECT 
@@ -3819,15 +4517,20 @@ async function getScorecardsByTournament(clubId, tournamentId) {
             COALESCE(CONCAT(m.first_name, ' ', m.last_name), ep.full_name) as player_name,
             COALESCE(m.handicap_index, ep.handicap_index) as handicap_index,
             COALESCE(m.handicap_local, ep.handicap_local) as handicap_local,
+            COALESCE(m.gender, ep.gender) as gender,
             m.member_number,
             t.tournament_name,
-            gc.club_name as club_name
+            gc.club_name as club_name,
+            tp.player_type
         FROM scorecards s
         LEFT JOIN members m ON s.member_id = m.member_id
         LEFT JOIN external_players ep ON s.external_player_id = ep.external_id
         LEFT JOIN tournaments t ON s.tournament_id = t.tournament_id
         LEFT JOIN clubs gc ON s.course_id = gc.club_id
-        WHERE s.tournament_id = ?
+        LEFT JOIN tournament_participants tp ON tp.tournament_id = s.tournament_id 
+            AND ((tp.member_id = s.member_id AND s.member_id IS NOT NULL) 
+                OR (tp.external_player_id = s.external_player_id AND s.external_player_id IS NOT NULL))
+        ${whereClause}
         ORDER BY s.total_gross ASC, s.created_at DESC
     `;
 
@@ -4112,77 +4815,110 @@ async function getScorecardForPrint(clubId, tournamentId, scorecardId) {
 /**
  * Get tournaments a member has participated in
  */
-async function getMemberTournaments(memberId) {
+async function getMemberTournaments(clubId, memberId) {
+    // Obtener torneos con scorecards del miembro
     const query = `
         SELECT DISTINCT
             t.tournament_id,
             t.tournament_name,
-            t.start_date,
-            t.end_date,
+            t.tournament_date as start_date,
+            t.tournament_date as end_date,
             t.status,
-            tp.registration_date as participation_date,
-            tp.confirmed,
-            tp.checked_in,
-            -- Intentar obtener scorecard para calcular posición
+            t.tournament_date as participation_date,
+            t.results_mode,
             sc.total_gross,
-            -- Subconsulta para obtener la posición en el torneo
-            (
-                SELECT COUNT(*) + 1 
-                FROM scorecards sc2 
-                WHERE sc2.tournament_id = t.tournament_id 
-                AND sc2.total_gross < sc.total_gross
-            ) as position
+            sc.total_net,
+            sc.did_not_present,
+            tp.handicap_used,
+            tp.payment_status,
+            tp.fee_amount,
+            tp.paid_amount,
+            m.handicap_local,
+            m.handicap_index
         FROM tournaments t
         INNER JOIN tournament_participants tp ON t.tournament_id = tp.tournament_id
-        LEFT JOIN scorecards sc ON t.tournament_id = sc.tournament_id 
-            AND (sc.member_id = ? OR sc.external_player_id = tp.external_player_id)
-        WHERE tp.member_id = ? OR tp.external_player_id IN (
-            SELECT ep.external_id 
-            FROM external_players ep 
-            WHERE ep.player_id = ?
-        )
-        ORDER BY t.start_date DESC
+        LEFT JOIN scorecards sc ON sc.tournament_id = t.tournament_id AND sc.member_id = tp.member_id
+        LEFT JOIN members m ON tp.member_id = m.member_id
+        WHERE tp.member_id = ? AND t.course_id = ?
+        ORDER BY t.tournament_date DESC
     `;
     
-    const { rows } = await executeQuery(query, [memberId, memberId, memberId]);
-    return rows;
+    const { rows: tournaments } = await executeQuery(query, [memberId, clubId]);
+    
+    // Para cada torneo, calcular la posición por categoría
+    for (let tournament of tournaments) {
+        if (!tournament.total_gross) {
+            tournament.position = null;
+            continue;
+        }
+        
+        // Determinar la categoría del jugador según su handicap
+        const handicap = tournament.handicap_used || tournament.handicap_local || tournament.handicap_index || 0;
+        const hcp = parseFloat(handicap);
+        
+        let categoryCondition = '';
+        if (hcp >= 0 && hcp <= 7.9) {
+            categoryCondition = 'BETWEEN 0 AND 7.9';
+        } else if (hcp >= 8.0 && hcp <= 17.9) {
+            categoryCondition = 'BETWEEN 8.0 AND 17.9';
+        } else if (hcp >= 18.0 && hcp <= 36.0) {
+            categoryCondition = 'BETWEEN 18.0 AND 36.0';
+        } else {
+            categoryCondition = 'IS NOT NULL'; // Sin categoría definida
+        }
+        
+        // Calcular posición dentro de su categoría
+        const positionQuery = `
+            SELECT COUNT(*) + 1 as position
+            FROM scorecards sc2
+            INNER JOIN tournament_participants tp2 ON sc2.tournament_id = tp2.tournament_id AND sc2.member_id = tp2.member_id
+            INNER JOIN members m2 ON tp2.member_id = m2.member_id
+            WHERE sc2.tournament_id = ?
+            AND COALESCE(tp2.handicap_used, m2.handicap_local, m2.handicap_index, 0) ${categoryCondition}
+            AND sc2.total_net < ?
+        `;
+        
+        const { rows: positionResult } = await executeQuery(positionQuery, [
+            tournament.tournament_id,
+            tournament.total_net || 999
+        ]);
+        
+        tournament.position = positionResult[0]?.position || null;
+    }
+    
+    return tournaments;
 }
 
 /**
  * Get scorecards for a member
  */
-async function getMemberScorecards(memberId) {
+async function getMemberScorecards(clubId, memberId) {
     const query = `
         SELECT 
             sc.scorecard_id,
             sc.total_gross,
+            sc.total_net,
             sc.front_nine,
             sc.back_nine,
             sc.holes_completed,
             sc.created_at as date,
             t.tournament_name,
-            t.start_date
+            t.tournament_date as start_date
         FROM scorecards sc
         INNER JOIN tournaments t ON sc.tournament_id = t.tournament_id
-        WHERE sc.member_id = ? OR sc.external_player_id IN (
-            SELECT ep.external_id 
-            FROM external_players ep 
-            WHERE ep.player_id = ?
-        )
+        WHERE sc.member_id = ? AND t.course_id = ?
         ORDER BY sc.created_at DESC
         LIMIT 20
     `;
     
-    const { rows } = await executeQuery(query, [memberId, memberId]);
+    const { rows } = await executeQuery(query, [memberId, clubId]);
     return rows;
 }
 
 /**
  * Get handicap history for a member
  */
-async function getMemberHandicapHistory(memberId) {
-    // Esta función puede expandirse para incluir un verdadero historial de cambios
-    // Por ahora, simulamos con los datos actuales y algunos datos de scorecards
+async function getMemberHandicapHistory(clubId, memberId) {
     const currentQuery = `
         SELECT 
             handicap_index,
@@ -4190,20 +4926,19 @@ async function getMemberHandicapHistory(memberId) {
             updated_at as date,
             'current' as type
         FROM members 
-        WHERE member_id = ?
+        WHERE member_id = ? AND course_id = ?
     `;
     
     const scorecardQuery = `
         SELECT DISTINCT
             DATE(sc.created_at) as date,
-            AVG(sc.total_gross) as avg_score,
             t.tournament_name,
             m.handicap_index,
             m.handicap_local
         FROM scorecards sc
         INNER JOIN tournaments t ON sc.tournament_id = t.tournament_id
         INNER JOIN members m ON sc.member_id = m.member_id
-        WHERE sc.member_id = ?
+        WHERE sc.member_id = ? AND t.course_id = ?
         GROUP BY DATE(sc.created_at), t.tournament_name, m.handicap_index, m.handicap_local
         ORDER BY DATE(sc.created_at) DESC
         LIMIT 10
@@ -4211,39 +4946,20 @@ async function getMemberHandicapHistory(memberId) {
     
     try {
         const [currentResult, scorecardResult] = await Promise.all([
-            executeQuery(currentQuery, [memberId]),
-            executeQuery(scorecardQuery, [memberId])
+            executeQuery(currentQuery, [memberId, clubId]),
+            executeQuery(scorecardQuery, [memberId, clubId])
         ]);
         
-        const history = [];
-        
-        // Agregar estado actual
-        if (currentResult.rows.length > 0) {
-            const current = currentResult.rows[0];
-            history.push({
-                date: current.date,
-                handicap_index: parseFloat(current.handicap_index) || 0,
-                handicap_local: parseInt(current.handicap_local) || 0,
-                tournament_name: 'Estado actual'
-            });
-        }
-        
-        // Agregar entradas basadas en scorecards
-        scorecardResult.rows.forEach(row => {
-            history.push({
-                date: row.date,
-                handicap_index: parseFloat(row.handicap_index) || 0,
-                handicap_local: parseInt(row.handicap_local) || 0,
-                tournament_name: row.tournament_name
-            });
-        });
-        
-        return history;
+        return [...currentResult.rows, ...scorecardResult.rows];
     } catch (error) {
-        console.error('Error getting handicap history:', error);
+        console.error('❌ Error getting member handicap history:', error);
         return [];
     }
 }
+
+// ================================
+// SYSTEM FUNCTIONS  
+// ================================
 
 // Export all functions
 export {
@@ -4252,14 +4968,15 @@ export {
     
     // Administrator functions  
     getAllAdministrators, authenticateAdmin,
+    getClubUsers, createClubUser, updateUserInfo, updateUserPermissions, deleteClubUser,
     
     // Member functions
-    getAllMembers, getMemberById, createMember, updateMember, deleteMember, clearClubMembers, updateMemberStatus, searchMembers,
+    getAllMembers, getMemberById, createMember, updateMember, deleteMember, updateMemberStatus,
     
     // Tournament functions
     getAllTournaments, getTournamentById, createTournament, updateTournament, deleteTournament,
-    updateTournamentStatus, getTournamentParticipants, getTournamentParticipantsById, addTournamentParticipant, removeTournamentParticipant,
-    updateParticipantStatus, getTournamentStats, searchPlayersForTournament, findDuplicateExternalPlayers, createExternalPlayer, updateExternalPlayer, getExternalPlayers, deleteExternalPlayer,
+    getTournamentParticipants, getTournamentParticipantsById, addTournamentParticipant, removeTournamentParticipant,
+    updateParticipantStatus, updateParticipantPayment, getTournamentStats, searchPlayersForTournament, findDuplicateExternalPlayers, createExternalPlayer, updateExternalPlayer, getExternalPlayers, deleteExternalPlayer,
     
     // Tournament groups functions
     getTournamentGroups, generateTournamentGroups, assignTeeTimesToGroups, movePlayerToGroup, moveGroupToHole, swapGroupNumbers, createEmptyGroup, deleteEmptyGroup,
@@ -4268,13 +4985,16 @@ export {
     saveScorecard, getScorecardsByTournament, getScorecardByPlayer, updateScorecard, deleteScorecard, getScorecardForPrint,
     
     // Member details functions
-    getMemberTournaments, getMemberScorecards, getMemberHandicapHistory,
+    getMemberTournaments, getMemberScorecards, getMemberHandicapHistory, getMemberContributions,
     
     // Rankings functions
     getAnnualRankings, getTournamentRanking,
     
     // Payments and accounting functions
-    getPaymentsSummary, getExpenses, addExpense, deleteExpense,
+    getPaymentsSummary, getExpenses, addExpense, updateExpense, deleteExpense,
+    getOtherIncomes, addOtherIncome, updateOtherIncome, deleteOtherIncome,
+    getCurrencyExchanges, addCurrencyExchange, updateCurrencyExchange, deleteCurrencyExchange,
+    getCurrencyBalance,
     
     // Course holes functions
     createCourseHolesTable, getCourseHoles, updateCourseHole, updateMultipleCourseHoles, getCourseStatistics,
