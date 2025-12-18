@@ -29,13 +29,23 @@ export function Login() {
       const data = await response.json()
 
       if (response.ok) {
-        // Guardar token y datos del club
+        // Guardar token y datos del admin
         localStorage.setItem('clubToken', data.token)
-        localStorage.setItem('clubId', data.club_id.toString())
-        localStorage.setItem('adminName', data.admin_name)
+        localStorage.setItem('adminId', data.admin.id.toString())
+        localStorage.setItem('adminName', data.admin.name)
+        localStorage.setItem('adminUsername', data.admin.username)
+        localStorage.setItem('adminEmail', data.admin.email)
+        localStorage.setItem('adminRole', data.admin.role)
         
-        // Redirigir a la administración del club
-        navigate(`/club/${data.club_id}/admin`)
+        // Redirigir según el rol
+        if (data.admin.role === 'system_admin') {
+          // Administrador del sistema -> panel principal
+          navigate('/dashboard')
+        } else {
+          // Administrador de club -> panel del club
+          localStorage.setItem('clubId', data.admin.club_id.toString())
+          navigate(`/club/${data.admin.club_id}/admin`)
+        }
       } else {
         setError(data.message || 'Error al iniciar sesión')
       }

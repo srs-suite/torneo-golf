@@ -429,7 +429,7 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
           <div className="px-6 mt-4">
             <div className="bg-gray-50 border border-gray-200 rounded p-4">
               <h4 className="text-sm font-semibold text-gray-800 mb-3">Resultados - Configuración</h4>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Modalidad de categorías</label>
                   <select
@@ -440,8 +440,36 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                     <option value="standard">Estándar (0–7.9, 8–13.9, 14–21.9, 22–53.9)</option>
                     <option value="scratch_bands">Scratch (Gross) + Bandas (-5–7.9, 8–15.8, 15.9–54)</option>
                   </select>
+                  
+                  {/* Descripción de la modalidad seleccionada */}
+                  <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded text-xs text-gray-700">
+                    {resultsMode === 'standard' ? (
+                      <div className="space-y-1">
+                        <p className="font-semibold text-blue-900">Modalidad Estándar:</p>
+                        <ul className="list-disc list-inside space-y-0.5 ml-2">
+                          <li><strong>1ra Categoría:</strong> HCP 0 - 7.9</li>
+                          <li><strong>2da Categoría:</strong> HCP 8.0 - 13.9</li>
+                          <li><strong>3ra Categoría:</strong> HCP 14.0 - 21.9</li>
+                          <li><strong>4ta Categoría:</strong> HCP 22.0 - 53.9</li>
+                          <li><strong>Sin HCP:</strong> Jugadores sin handicap asignado (agrupados por separado)</li>
+                        </ul>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        <p className="font-semibold text-blue-900">Modalidad Scratch:</p>
+                        <ul className="list-disc list-inside space-y-0.5 ml-2">
+                          <li><strong>Scratch (Gross):</strong> Ganador absoluto por score bruto</li>
+                          <li><strong>1ra Banda:</strong> HCP -5.0 - 7.9 (Net)</li>
+                          <li><strong>2da Banda:</strong> HCP 8.0 - 15.8 (Net)</li>
+                          <li><strong>3ra Banda:</strong> HCP 15.9 - 54.0 (Net)</li>
+                          <li><strong>Sin HCP:</strong> Jugadores sin handicap asignado (agrupados por separado)</li>
+                        </ul>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div className="flex items-center gap-4">
+                
+                <div className="flex flex-col gap-3">
                   <label className="flex items-center gap-2">
                     <input
                       type="checkbox"
@@ -449,18 +477,30 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                       onChange={(e) => setSeparateLadies(e.target.checked)}
                       className="h-4 w-4 text-blue-600 border-gray-300 rounded"
                     />
-                    <span className="text-sm text-gray-700">Separar Damas</span>
+                    <span className="text-sm text-gray-700 font-medium">Separar Damas</span>
                   </label>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={ladiesByHcp}
-                      onChange={(e) => setLadiesByHcp(e.target.checked)}
-                      disabled={!separateLadies}
-                      className="h-4 w-4 text-blue-600 border-gray-300 rounded disabled:opacity-50"
-                    />
-                    <span className="text-sm text-gray-700">Damas por handicap</span>
-                  </label>
+                  
+                  {separateLadies && (
+                    <div className="ml-6 space-y-2">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={ladiesByHcp}
+                          onChange={(e) => setLadiesByHcp(e.target.checked)}
+                          className="h-4 w-4 text-blue-600 border-gray-300 rounded"
+                        />
+                        <span className="text-sm text-gray-700">Damas por handicap (mismas categorías/bandas)</span>
+                      </label>
+                      
+                      <div className="p-2 bg-purple-50 border border-purple-200 rounded text-xs text-gray-700">
+                        {ladiesByHcp ? (
+                          <p>✓ Las damas se dividirán en las mismas categorías/bandas que los caballeros</p>
+                        ) : (
+                          <p>✓ Todas las damas competirán en un único grupo</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

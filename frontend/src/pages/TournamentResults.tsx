@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Trophy, Medal, Award, Crown, Printer } from 'lucide-react';
 import { useTournamentScorecards } from '../hooks/useScorecards';
@@ -48,10 +48,18 @@ export default function TournamentResults() {
     return base.replace(/\s+/g, ' ').trim();
   }
   
-  // Toggle: separar Damas o combinarlas; y opción de dividir Damas por handicap
-  const [separateLadies, setSeparateLadies] = useState<boolean>((tournament as any)?.separate_ladies === 1 || (tournament as any)?.separate_ladies === true);
-  const [ladiesByHcp, setLadiesByHcp] = useState<boolean>((tournament as any)?.ladies_by_hcp === 1 || (tournament as any)?.ladies_by_hcp === true);
+  // Configuración del torneo (solo lectura, viene de la base de datos)
+  const [separateLadies, setSeparateLadies] = useState<boolean>(false);
+  const [ladiesByHcp, setLadiesByHcp] = useState<boolean>(false);
   const resultsMode = (tournament as any)?.results_mode || 'standard';
+
+  // Actualizar valores cuando el torneo cambie
+  useEffect(() => {
+    if (tournament) {
+      setSeparateLadies((tournament as any)?.separate_ladies === 1 || (tournament as any)?.separate_ladies === true);
+      setLadiesByHcp((tournament as any)?.ladies_by_hcp === 1 || (tournament as any)?.ladies_by_hcp === true);
+    }
+  }, [tournament]);
 
   // Definir las categorías (dependen de separateLadies y resultsMode)
   const categories: Category[] = resultsMode === 'standard' ? [
@@ -366,8 +374,9 @@ export default function TournamentResults() {
       filter: (s: any) => {
         const hl = s.handicap_local
         const hi = s.handicap_index
-        const noLocal = hl === null || hl === undefined || hl === ''
-        const noIndex = hi === null || hi === undefined || hi === ''
+        // Considerar como "sin HCP" si ambos son null/undefined/'' o '0.0' o 0
+        const noLocal = hl === null || hl === undefined || hl === '' || hl === '0.0' || parseFloat(hl) === 0
+        const noIndex = hi === null || hi === undefined || hi === '' || hi === '0.0' || parseFloat(hi) === 0
         return noLocal && noIndex
       }
     } as Category
@@ -489,36 +498,13 @@ export default function TournamentResults() {
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-6">
-              <div className="flex items-center gap-2">
-                <label className="text-sm text-gray-700">Separar Damas</label>
-                <input
-                  type="checkbox"
-                  checked={separateLadies}
-                  onChange={(e) => setSeparateLadies(e.target.checked)}
-                  className="h-4 w-4 text-blue-600 border-gray-300 rounded"
-                  title="Mostrar categoría Damas aparte"
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="text-sm text-gray-700">Damas por handicap</label>
-                <input
-                  type="checkbox"
-                  checked={ladiesByHcp}
-                  onChange={(e) => setLadiesByHcp(e.target.checked)}
-                  disabled={!separateLadies}
-                  className="h-4 w-4 text-blue-600 border-gray-300 rounded disabled:opacity-50"
-                  title="Dividir Damas en categorías por HCP"
-                />
-              </div>
-              <button
-                onClick={handlePrint}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-              >
-                <Printer className="h-4 w-4" />
-                Imprimir
-              </button>
-            </div>
+            <button
+              onClick={handlePrint}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              <Printer className="h-4 w-4" />
+              Imprimir
+            </button>
           </div>
         </div>
       </div>

@@ -250,34 +250,6 @@ export function TournamentParticipantsModal({
     }
   }
 
-  const handleConfirmAllParticipants = async () => {
-    const registeredParticipants = participants.filter(p => p.status === 'registered')
-    
-    if (registeredParticipants.length === 0) {
-      alert('No hay participantes registrados para confirmar.')
-      return
-    }
-
-    const confirmMessage = `¿Estás seguro de que quieres confirmar ${registeredParticipants.length} participante(s) registrado(s)?`
-    
-    if (window.confirm(confirmMessage)) {
-      try {
-        // Confirmar todos los participantes registrados
-        for (const participant of registeredParticipants) {
-          await updateStatus.mutateAsync({ 
-            participantId: participant.participant_id, 
-            status: 'confirmed' 
-          })
-        }
-        // Refetch para actualizar la lista
-        refetch()
-      } catch (error) {
-        console.error('Error confirming participants:', error)
-        alert('Hubo un error al confirmar los participantes. Intenta de nuevo.')
-      }
-    }
-  }
-
   // Payments UI state
   const [showPayments, setShowPayments] = useState(false)
   const paymentMethods = ['Efectivo', 'Transferencia', 'Tarjeta', 'Otro']
@@ -317,8 +289,7 @@ export function TournamentParticipantsModal({
       'Club': participant.player_club || '',
       'Tipo': participant.player_type === 'member' ? 'Socio' : 'Externo',
       'Estado': participant.status === 'registered' ? 'Registrado' : 
-               participant.status === 'confirmed' ? 'Confirmado' : 
-               participant.status === 'checked_in' ? 'Presente' : 
+               participant.status === 'cancelled' ? 'Cancelado' : 
                participant.status,
       'Email': participant.player_email || '',
       'Teléfono': participant.player_phone || ''
@@ -567,17 +538,17 @@ export function TournamentParticipantsModal({
   // Statistics
   const stats = useMemo(() => {
     const total = participants.length
-    const confirmed = participants.filter(p => p.status === 'confirmed').length
     const registered = participants.filter(p => p.status === 'registered').length
     const cancelled = participants.filter(p => p.status === 'cancelled').length
+    const paid = participants.filter(p => p.payment_status === 'paid').length
+    const pending = participants.filter(p => p.payment_status === 'pending').length
     
-    return { total, confirmed, registered, cancelled }
+    return { total, registered, cancelled, paid, pending }
   }, [participants])
 
   const getStatusColor = (status: Participant['status']) => {
     switch (status) {
       case 'registered': return 'bg-yellow-100 text-yellow-800'
-      case 'confirmed': return 'bg-green-100 text-green-800'
       case 'cancelled': return 'bg-red-100 text-red-800'
       default: return 'bg-gray-100 text-gray-800'
     }
@@ -586,7 +557,6 @@ export function TournamentParticipantsModal({
   const getStatusLabel = (status: Participant['status']) => {
     switch (status) {
       case 'registered': return 'Registrado'
-      case 'confirmed': return 'Confirmado'
       case 'cancelled': return 'Cancelado'
       default: return status
     }
@@ -658,22 +628,6 @@ export function TournamentParticipantsModal({
               </div>
             </div>
             <div 
-              className="bg-green-50 p-4 rounded-lg cursor-pointer hover:bg-green-100 transition-colors"
-              onClick={() => {
-                setStatusFilter('confirmed')
-                setShowMembersList(false)
-                setShowExternalPlayersList(false)
-              }}
-            >
-              <div className="flex items-center">
-                <CheckCircle className="w-8 h-8 text-green-600" />
-                <div className="ml-3">
-                  <p className="text-sm font-medium text-green-600">Confirmados</p>
-                  <p className="text-2xl font-bold text-green-900">{stats.confirmed}</p>
-                </div>
-              </div>
-            </div>
-            <div 
               className="bg-yellow-50 p-4 rounded-lg cursor-pointer hover:bg-yellow-100 transition-colors"
               onClick={() => {
                 setStatusFilter('registered')
@@ -681,11 +635,17 @@ export function TournamentParticipantsModal({
                 setShowExternalPlayersList(false)
               }}
             >
-              <div className="flex items-center">
-                <Clock className="w-8 h-8 text-yellow-600" />
-                <div className="ml-3">
-                  <p className="text-sm font-medium text-yellow-600">Registrados</p>
-                  <p className="text-2xl font-bold text-yellow-900">{stats.registered}</p>
+              <div className="flex flex-col">
+                <div className="flex items-center mb-2">
+                  <Clock className="w-8 h-8 text-yellow-600" />
+                  <div className="ml-3">
+                    <p className="text-sm font-medium text-yellow-600">Registrados</p>
+                    <p className="text-2xl font-bold text-yellow-900">{stats.registered}</p>
+                  </div>
+                </div>
+                <div className="flex gap-4 text-xs ml-11">
+                  <span className="text-green-700">✓ Pagados: {stats.paid}</span>
+                  <span className="text-orange-700">⏳ Pendientes: {stats.pending}</span>
                 </div>
               </div>
             </div>
@@ -726,16 +686,6 @@ export function TournamentParticipantsModal({
                 <UserX className="w-4 h-4" />
                 <span>Agregar Jugador Externo</span>
               </button>
-              {participants.filter(p => p.status === 'registered').length > 0 && (
-                <button
-                  onClick={handleConfirmAllParticipants}
-                  className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-                  title={`Confirmar ${participants.filter(p => p.status === 'registered').length} participante(s) registrado(s)`}
-                >
-                  <CheckCircle className="w-4 h-4" />
-                  <span>Confirmar Todos ({participants.filter(p => p.status === 'registered').length})</span>
-                </button>
-              )}
               {participants.length > 0 && (
                 <button
                   onClick={handleExportToExcel}
@@ -759,7 +709,6 @@ export function TournamentParticipantsModal({
                 >
                   <option value="all">Todos los estados</option>
                   <option value="registered">Registrados</option>
-                  <option value="confirmed">Confirmados</option>
                   <option value="cancelled">Cancelados</option>
                 </select>
               </div>
@@ -1288,24 +1237,6 @@ export function TournamentParticipantsModal({
                               <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(participant.status)}`}>
                                 {getStatusLabel(participant.status)}
                               </span>
-                              {participant.status === 'registered' && (
-                                <button
-                                  onClick={() => handleChangeStatus(participant.participant_id, 'confirmed')}
-                                  className="text-green-600 hover:text-green-800"
-                                  title="Confirmar participante"
-                                >
-                                  <CheckCircle className="w-4 h-4" />
-                                </button>
-                              )}
-                              {participant.status === 'confirmed' && (
-                                <button
-                                  onClick={() => handleChangeStatus(participant.participant_id, 'registered')}
-                                  className="text-yellow-600 hover:text-yellow-800"
-                                  title="Cambiar a registrado"
-                                >
-                                  <Clock className="w-4 h-4" />
-                                </button>
-                              )}
                             </div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">

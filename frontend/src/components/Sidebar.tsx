@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom'
+import { NavLink, useNavigate } from 'react-router-dom'
 import { 
   LayoutGrid, 
   Building2, 
@@ -22,6 +22,13 @@ const navigation = [
 ]
 
 export function Sidebar() {
+  const navigate = useNavigate()
+  
+  const handleLogout = () => {
+    localStorage.clear()
+    navigate('/login')
+  }
+  
   return (
     <div className="w-64 bg-black text-white flex flex-col">
       {/* Logo/Header */}
@@ -67,7 +74,10 @@ export function Sidebar() {
 
       {/* Logout */}
       <div className="px-3 py-4 border-t border-gray-800">
-        <button className="flex items-center w-full px-3 py-2 text-sm font-medium text-gray-300 rounded-lg hover:bg-gray-800 hover:text-white transition-colors">
+        <button 
+          onClick={handleLogout}
+          className="flex items-center w-full px-3 py-2 text-sm font-medium text-gray-300 rounded-lg hover:bg-gray-800 hover:text-white transition-colors"
+        >
           <LogOut className="w-5 h-5 mr-3" />
           Cerrar Sesión
         </button>

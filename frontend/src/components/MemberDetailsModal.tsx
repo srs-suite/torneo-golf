@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Trophy, FileText, TrendingUp, User, Phone, Mail, Calendar, Award } from 'lucide-react';
+import { X, Trophy, FileText, TrendingUp, User, Phone, Mail, Calendar, Award, DollarSign, MessageCircle } from 'lucide-react';
 import type { Member } from '@/types/member';
 
 interface Tournament {
@@ -35,6 +35,15 @@ interface HandicapHistory {
   tournament_name?: string;
 }
 
+interface Contribution {
+  income_id: number;
+  income_date: string;
+  amount: number;
+  currency: string;
+  payment_type: string;
+  description?: string;
+}
+
 interface MemberDetailsModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -43,10 +52,11 @@ interface MemberDetailsModalProps {
 }
 
 export function MemberDetailsModal({ isOpen, onClose, member, clubId }: MemberDetailsModalProps) {
-  const [activeTab, setActiveTab] = useState<'info' | 'tournaments' | 'scorecards' | 'handicap'>('info');
+  const [activeTab, setActiveTab] = useState<'info' | 'payments' | 'scorecards' | 'handicap'>('info');
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [scorecards, setScorecards] = useState<Scorecard[]>([]);
   const [handicapHistory, setHandicapHistory] = useState<HandicapHistory[]>([]);
+  const [contributions, setContributions] = useState<Contribution[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -61,10 +71,11 @@ export function MemberDetailsModal({ isOpen, onClose, member, clubId }: MemberDe
     setLoading(true);
     try {
       // Cargar datos en paralelo
-      const [tournamentsRes, scorecardsRes, handicapRes] = await Promise.allSettled([
+      const [tournamentsRes, scorecardsRes, handicapRes, contributionsRes] = await Promise.allSettled([
         fetch(`/api/club/${clubId}/members/${member.member_id}/tournaments`),
         fetch(`/api/club/${clubId}/members/${member.member_id}/scorecards`),
-        fetch(`/api/club/${clubId}/members/${member.member_id}/handicap-history`)
+        fetch(`/api/club/${clubId}/members/${member.member_id}/handicap-history`),
+        fetch(`/api/club/${clubId}/members/${member.member_id}/contributions`)
       ]);
 
       // Procesar torneos
@@ -86,6 +97,12 @@ export function MemberDetailsModal({ isOpen, onClose, member, clubId }: MemberDe
       if (handicapRes.status === 'fulfilled' && handicapRes.value.ok) {
         const handicapData = await handicapRes.value.json();
         setHandicapHistory(handicapData.data || []);
+      }
+
+      // Procesar contribuciones/aportes
+      if (contributionsRes.status === 'fulfilled' && contributionsRes.value.ok) {
+        const contributionsData = await contributionsRes.value.json();
+        setContributions(contributionsData.data || []);
       }
     } catch (error) {
       console.error('Error loading member data:', error);
@@ -169,7 +186,7 @@ export function MemberDetailsModal({ isOpen, onClose, member, clubId }: MemberDe
           <nav className="flex space-x-8 px-6">
             {[
               { id: 'info', label: 'Información', icon: User },
-              { id: 'tournaments', label: 'Torneos', icon: Trophy },
+              { id: 'payments', label: 'Pagos', icon: DollarSign },
               { id: 'scorecards', label: 'Tarjetas', icon: FileText },
               { id: 'handicap', label: 'Evolución HCP', icon: TrendingUp }
             ].map(({ id, label, icon: Icon }) => (
@@ -234,6 +251,16 @@ export function MemberDetailsModal({ isOpen, onClose, member, clubId }: MemberDe
                         )}
                         
                         <div className="flex items-center space-x-3">
+                          <User className="w-5 h-5 text-gray-400" />
+                          <div>
+                            <p className="text-sm font-medium text-gray-900">Género</p>
+                            <p className="text-sm text-gray-500">
+                              {member.gender === 'M' ? 'Masculino' : member.gender === 'F' ? 'Femenino' : member.gender === 'Other' ? 'Otro' : 'No especificado'}
+                            </p>
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center space-x-3">
                           <Calendar className="w-5 h-5 text-gray-400" />
                           <div>
                             <p className="text-sm font-medium text-gray-900">Estado</p>
@@ -286,78 +313,165 @@ export function MemberDetailsModal({ isOpen, onClose, member, clubId }: MemberDe
                 </div>
               )}
 
-              {/* Torneos */}
-              {activeTab === 'tournaments' && (
-                <div className="space-y-4">
-                  <h3 className="text-lg font-medium text-gray-900">Torneos Participados</h3>
-                  {tournaments.length > 0 ? (
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-gray-50">
-                          <tr>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Torneo</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Score</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Posición</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Pagado</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estado Pago</th>
-                          </tr>
-                        </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
-                          {tournaments.map((tournament) => (
-                            <tr key={tournament.tournament_id}>
-                              <td className="px-4 py-3">
-                                <div className="text-sm font-medium text-gray-900">{tournament.tournament_name}</div>
+              {/* Pagos (Torneos y Contribuciones) */}
+              {activeTab === 'payments' && (
+                <div className="space-y-6">
+                  {/* Pagos de Torneos */}
+                  <div>
+                    <h3 className="text-lg font-medium text-gray-900 mb-3">Pagos de Torneos</h3>
+                    {tournaments.length > 0 ? (
+                      <div className="overflow-x-auto border rounded-lg">
+                        <table className="min-w-full divide-y divide-gray-200">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Torneo</th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha</th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Score</th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Posición</th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Pagado</th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estado</th>
+                            </tr>
+                          </thead>
+                          <tbody className="bg-white divide-y divide-gray-200">
+                            {tournaments.map((tournament) => (
+                              <tr key={tournament.tournament_id}>
+                                <td className="px-4 py-3">
+                                  <div className="text-sm font-medium text-gray-900">{tournament.tournament_name}</div>
+                                </td>
+                                <td className="px-4 py-3 text-sm text-gray-500">
+                                  {formatDate(tournament.start_date)}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-gray-900">
+                                  {(tournament as any).did_not_present === 1 || (tournament as any).did_not_present === true ? (
+                                    <span className="px-2 py-1 bg-red-100 text-red-800 text-xs font-medium rounded">
+                                      No presentó
+                                    </span>
+                                  ) : tournament.total_gross || tournament.total_net ? (
+                                    <div>
+                                      {tournament.total_net && tournament.total_net > 0 ? (
+                                        <>
+                                          <div className="font-medium">Net: {tournament.total_net}</div>
+                                          {tournament.total_gross && <div className="text-gray-500 text-xs">Gross: {tournament.total_gross}</div>}
+                                        </>
+                                      ) : tournament.total_gross ? (
+                                        <div className="font-medium">{tournament.total_gross}</div>
+                                      ) : null}
+                                    </div>
+                                  ) : (
+                                    <span className="text-gray-400">-</span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3 text-sm font-medium text-blue-600">
+                                  {tournament.position ? (
+                                    <div>
+                                      <div>{tournament.position}°</div>
+                                      {tournament.category && (
+                                        <div className="text-xs text-gray-500 font-normal">{tournament.category}</div>
+                                      )}
+                                    </div>
+                                  ) : '-'}
+                                </td>
+                                <td className="px-4 py-3 text-sm font-medium text-green-600">
+                                  {tournament.paid_amount ? `$${formatCurrency(tournament.paid_amount)}` : '-'}
+                                </td>
+                                <td className="px-4 py-3 text-sm">
+                                  {getPaymentStatusBadge(tournament.payment_status)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="text-center py-6 border rounded-lg bg-gray-50">
+                        <Trophy className="mx-auto h-10 w-10 text-gray-400" />
+                        <p className="mt-2 text-sm text-gray-500">Sin pagos de torneos registrados</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Contribuciones y Aportes */}
+                  <div>
+                    <h3 className="text-lg font-medium text-gray-900 mb-3">Contribuciones y Aportes</h3>
+                    {contributions.length > 0 ? (
+                      <div className="overflow-x-auto border rounded-lg">
+                        <table className="min-w-full divide-y divide-gray-200">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha</th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Descripción</th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tipo Pago</th>
+                              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Monto</th>
+                              <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Acción</th>
+                            </tr>
+                          </thead>
+                          <tbody className="bg-white divide-y divide-gray-200">
+                            {contributions.map((contribution) => (
+                              <tr key={contribution.income_id}>
+                                <td className="px-4 py-3 text-sm text-gray-500">
+                                  {formatDate(contribution.income_date)}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-gray-900">
+                                  {contribution.description || '-'}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-gray-500 capitalize">
+                                  {contribution.payment_type || '-'}
+                                </td>
+                                <td className="px-4 py-3 text-sm font-medium text-green-600 text-right">
+                                  {contribution.currency === 'USD' ? 'US$' : '$'}{formatCurrency(contribution.amount)}
+                                </td>
+                                <td className="px-4 py-3 text-center">
+                                  <button
+                                    onClick={async () => {
+                                      try {
+                                        const response = await fetch(`/api/club/${clubId}/accounting/incomes/${contribution.income_id}/send-whatsapp`, {
+                                          method: 'POST',
+                                          headers: { 'Content-Type': 'application/json' }
+                                        })
+                                        const data = await response.json()
+                                        if (data.success && data.whatsappUrl) {
+                                          window.open(data.whatsappUrl, '_blank')
+                                        } else {
+                                          alert(data.message || 'Error al enviar WhatsApp')
+                                        }
+                                      } catch (error) {
+                                        alert('Error al enviar WhatsApp')
+                                      }
+                                    }}
+                                    className="text-green-600 hover:text-green-900"
+                                    title="Enviar comprobante por WhatsApp"
+                                  >
+                                    <MessageCircle className="h-4 w-4" />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot className="bg-gray-50 border-t">
+                            <tr>
+                              <td colSpan={3} className="px-4 py-3 text-sm font-medium text-gray-900 text-right">
+                                Total:
                               </td>
-                              <td className="px-4 py-3 text-sm text-gray-500">
-                                {formatDate(tournament.start_date)}
-                              </td>
-                              <td className="px-4 py-3 text-sm text-gray-900">
-                                {tournament.total_gross || tournament.total_net ? (
-                                  <div>
-                                    {tournament.total_net && tournament.total_net > 0 ? (
-                                      <>
-                                        <div className="font-medium">Net: {tournament.total_net}</div>
-                                        {tournament.total_gross && <div className="text-gray-500 text-xs">Gross: {tournament.total_gross}</div>}
-                                      </>
-                                    ) : tournament.total_gross ? (
-                                      <div className="font-medium">{tournament.total_gross}</div>
-                                    ) : null}
+                              <td className="px-4 py-3 text-sm font-bold text-green-600 text-right">
+                                ${formatCurrency(contributions.filter(c => c.currency === 'ARS').reduce((sum, c) => sum + c.amount, 0))}
+                                {contributions.some(c => c.currency === 'USD') && (
+                                  <div className="text-xs">
+                                    US${formatCurrency(contributions.filter(c => c.currency === 'USD').reduce((sum, c) => sum + c.amount, 0))}
                                   </div>
-                                ) : (
-                                  <span className="text-gray-400">-</span>
                                 )}
                               </td>
-                              <td className="px-4 py-3 text-sm font-medium text-blue-600">
-                                {tournament.position ? (
-                                  <div>
-                                    <div>{tournament.position}°</div>
-                                    {tournament.category && (
-                                      <div className="text-xs text-gray-500 font-normal">{tournament.category}</div>
-                                    )}
-                                  </div>
-                                ) : '-'}
-                              </td>
-                              <td className="px-4 py-3 text-sm font-medium text-green-600">
-                                {tournament.paid_amount ? `$${formatCurrency(tournament.paid_amount)}` : '-'}
-                              </td>
-                              <td className="px-4 py-3 text-sm">
-                                {getPaymentStatusBadge(tournament.payment_status)}
-                              </td>
+                              <td></td>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <div className="text-center py-8">
-                      <Trophy className="mx-auto h-12 w-12 text-gray-400" />
-                      <h4 className="mt-2 text-sm font-medium text-gray-900">Sin torneos registrados</h4>
-                      <p className="mt-1 text-sm text-gray-500">
-                        Este socio aún no ha participado en torneos.
-                      </p>
-                    </div>
-                  )}
+                          </tfoot>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="text-center py-6 border rounded-lg bg-gray-50">
+                        <DollarSign className="mx-auto h-10 w-10 text-gray-400" />
+                        <p className="mt-2 text-sm text-gray-500">Sin contribuciones registradas</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
