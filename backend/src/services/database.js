@@ -218,8 +218,7 @@ async function getAllAdministrators(clubId = null) {
     let query = `
         SELECT 
             ca.*,
-            gc.club_name as club_name,
-            gc.club_code
+            gc.club_name as club_name
         FROM club_administrators ca
         LEFT JOIN clubs gc ON ca.course_id = gc.club_id
         WHERE ca.is_active = true
@@ -245,8 +244,7 @@ async function getAdministratorById(adminId) {
     const query = `
         SELECT 
             ca.*,
-            gc.club_name as club_name,
-            gc.club_code
+            gc.club_name as club_name
         FROM club_administrators ca
         LEFT JOIN clubs gc ON ca.course_id = gc.club_id
         WHERE ca.admin_id = ? AND ca.is_active = true
@@ -280,10 +278,18 @@ async function authenticateAdmin(username, password) {
     const admin = await getAdministratorByUsername(username);
     
     if (!admin) {
+        console.log('❌ Usuario no encontrado:', username);
         return null;
     }
     
     const hashedPassword = crypto.createHash('sha256').update(password).digest('hex');
+    
+    console.log('🔐 DEBUG AUTH:');
+    console.log('  Password recibida:', password);
+    console.log('  Password length:', password.length);
+    console.log('  Hash generado:', hashedPassword);
+    console.log('  Hash en DB:', admin.password_hash);
+    console.log('  ¿Coinciden?', admin.password_hash === hashedPassword);
     
     if (admin.password_hash === hashedPassword) {
         // Update last login
@@ -308,7 +314,12 @@ async function getClubUsers(clubId) {
             up.*,
             ca.admin_id as user_id
         FROM club_administrators ca
-        LEFT JOIN user_permissions up ON ca.admin_id = up.admin_id
+        LEFT JOIN user_permissions up ON ca.admin_id = up.admin_id 
+            AND up.permission_id = (
+                SELECT MAX(permission_id) 
+                FROM user_permissions 
+                WHERE admin_id = ca.admin_id
+            )
         WHERE ca.course_id = ? AND ca.is_active = TRUE
         ORDER BY ca.is_primary_admin DESC, ca.created_at DESC
     `;
@@ -347,34 +358,50 @@ async function createClubUser(clubId, userData) {
             admin_id,
             can_view_members, can_view_tournaments, can_view_groups,
             can_view_scorecards, can_view_photos, can_view_settings,
-            can_view_rankings, can_view_accounting,
+            can_view_rankings, can_view_accounting, can_view_financial_totals,
+            can_view_balance, can_view_tournament_incomes, can_manage_tournament_incomes,
+            can_view_other_incomes, can_manage_other_incomes,
+            can_view_expenses, can_manage_expenses,
+            can_view_currency_exchanges, can_manage_currency_exchanges,
+            can_manage_photos,
             can_create_members, can_edit_members, can_delete_members,
             can_create_tournaments, can_edit_tournaments, can_delete_tournaments,
             can_manage_participants, can_manage_groups, can_manage_scorecards,
             can_manage_payments
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
     
     const perms = userData.permissions || {};
     await executeQuery(permQuery, [
         newUserId,
-        perms.can_view_members !== false,
-        perms.can_view_tournaments !== false,
-        perms.can_view_groups !== false,
-        perms.can_view_scorecards !== false,
-        perms.can_view_photos !== false,
+        perms.can_view_members || false,
+        perms.can_view_tournaments || false,
+        perms.can_view_groups || false,
+        perms.can_view_scorecards || false,
+        perms.can_view_photos || false,
         perms.can_view_settings || false,
-        perms.can_view_rankings !== false,
+        perms.can_view_rankings || false,
         perms.can_view_accounting || false,
-        perms.can_create_members !== false,
-        perms.can_edit_members !== false,
+        perms.can_view_financial_totals || false,
+        perms.can_view_balance || false,
+        perms.can_view_tournament_incomes || false,
+        perms.can_manage_tournament_incomes || false,
+        perms.can_view_other_incomes || false,
+        perms.can_manage_other_incomes || false,
+        perms.can_view_expenses || false,
+        perms.can_manage_expenses || false,
+        perms.can_view_currency_exchanges || false,
+        perms.can_manage_currency_exchanges || false,
+        perms.can_manage_photos || false,
+        perms.can_create_members || false,
+        perms.can_edit_members || false,
         perms.can_delete_members || false,
-        perms.can_create_tournaments !== false,
-        perms.can_edit_tournaments !== false,
+        perms.can_create_tournaments || false,
+        perms.can_edit_tournaments || false,
         perms.can_delete_tournaments || false,
-        perms.can_manage_participants !== false,
-        perms.can_manage_groups !== false,
-        perms.can_manage_scorecards !== false,
+        perms.can_manage_participants || false,
+        perms.can_manage_groups || false,
+        perms.can_manage_scorecards || false,
         perms.can_manage_payments || false
     ]);
     
@@ -436,6 +463,17 @@ async function updateUserPermissions(userId, permissions) {
             can_view_settings = ?,
             can_view_rankings = ?,
             can_view_accounting = ?,
+            can_view_financial_totals = ?,
+            can_view_balance = ?,
+            can_view_tournament_incomes = ?,
+            can_manage_tournament_incomes = ?,
+            can_view_other_incomes = ?,
+            can_manage_other_incomes = ?,
+            can_view_expenses = ?,
+            can_manage_expenses = ?,
+            can_view_currency_exchanges = ?,
+            can_manage_currency_exchanges = ?,
+            can_manage_photos = ?,
             can_create_members = ?,
             can_edit_members = ?,
             can_delete_members = ?,
@@ -451,23 +489,34 @@ async function updateUserPermissions(userId, permissions) {
     `;
     
     await executeQuery(query, [
-        permissions.can_view_members !== false,
-        permissions.can_view_tournaments !== false,
-        permissions.can_view_groups !== false,
-        permissions.can_view_scorecards !== false,
-        permissions.can_view_photos !== false,
+        permissions.can_view_members || false,
+        permissions.can_view_tournaments || false,
+        permissions.can_view_groups || false,
+        permissions.can_view_scorecards || false,
+        permissions.can_view_photos || false,
         permissions.can_view_settings || false,
-        permissions.can_view_rankings !== false,
+        permissions.can_view_rankings || false,
         permissions.can_view_accounting || false,
-        permissions.can_create_members !== false,
-        permissions.can_edit_members !== false,
+        permissions.can_view_financial_totals || false,
+        permissions.can_view_balance || false,
+        permissions.can_view_tournament_incomes || false,
+        permissions.can_manage_tournament_incomes || false,
+        permissions.can_view_other_incomes || false,
+        permissions.can_manage_other_incomes || false,
+        permissions.can_view_expenses || false,
+        permissions.can_manage_expenses || false,
+        permissions.can_view_currency_exchanges || false,
+        permissions.can_manage_currency_exchanges || false,
+        permissions.can_manage_photos || false,
+        permissions.can_create_members || false,
+        permissions.can_edit_members || false,
         permissions.can_delete_members || false,
-        permissions.can_create_tournaments !== false,
-        permissions.can_edit_tournaments !== false,
+        permissions.can_create_tournaments || false,
+        permissions.can_edit_tournaments || false,
         permissions.can_delete_tournaments || false,
-        permissions.can_manage_participants !== false,
-        permissions.can_manage_groups !== false,
-        permissions.can_manage_scorecards !== false,
+        permissions.can_manage_participants || false,
+        permissions.can_manage_groups || false,
+        permissions.can_manage_scorecards || false,
         permissions.can_manage_payments || false,
         userId
     ]);
@@ -1384,10 +1433,14 @@ async function getPaymentsSummary(clubId, fromDate, toDate) {
                 t.tournament_name,
                 t.tournament_date,
                 COALESCE(t.currency, 'ARS') as currency,
+                t.custodian,
+                t.account_id,
+                ca.account_name,
                 SUM(COALESCE(tp.fee_amount, t.entry_fee, 0)) as total_fee,
                 SUM(COALESCE(tp.paid_amount, 0)) as total_paid
             FROM tournaments t
             LEFT JOIN tournament_participants tp ON t.tournament_id = tp.tournament_id
+            LEFT JOIN custodian_accounts ca ON t.account_id = ca.account_id
             WHERE t.course_id = ?
         `;
         
@@ -1403,7 +1456,7 @@ async function getPaymentsSummary(clubId, fromDate, toDate) {
             params.push(toDate);
         }
         
-        query += ` GROUP BY t.tournament_id, t.tournament_name, t.tournament_date, t.currency ORDER BY t.tournament_date DESC`;
+        query += ` GROUP BY t.tournament_id, t.tournament_name, t.tournament_date, t.currency, t.custodian, t.account_id, ca.account_name ORDER BY t.tournament_date DESC`;
         
         const { rows } = await executeQuery(query, params);
         return rows;
@@ -1420,30 +1473,34 @@ async function getExpenses(clubId, fromDate, toDate) {
     try {
         let query = `
             SELECT 
-                expense_id,
-                expense_date,
-                amount,
-                COALESCE(currency, 'ARS') as currency,
-                receipt_number,
-                detail,
-                created_at
-            FROM club_expenses
-            WHERE club_id = ?
+                e.expense_id,
+                e.expense_date,
+                e.amount,
+                COALESCE(e.currency, 'ARS') as currency,
+                e.receipt_number,
+                e.detail,
+                e.custodian,
+                e.account_id,
+                ca.account_name,
+                e.created_at
+            FROM club_expenses e
+            LEFT JOIN custodian_accounts ca ON e.account_id = ca.account_id
+            WHERE e.club_id = ?
         `;
         
         const params = [clubId];
         
         if (fromDate) {
-            query += ` AND expense_date >= ?`;
+            query += ` AND e.expense_date >= ?`;
             params.push(fromDate);
         }
         
         if (toDate) {
-            query += ` AND expense_date <= ?`;
+            query += ` AND e.expense_date <= ?`;
             params.push(toDate);
         }
         
-        query += ` ORDER BY expense_date DESC`;
+        query += ` ORDER BY e.expense_date DESC`;
         
         const { rows } = await executeQuery(query, params);
         return rows;
@@ -1460,8 +1517,8 @@ async function addExpense(clubId, expenseData) {
     try {
         const query = `
             INSERT INTO club_expenses (
-                club_id, expense_date, amount, currency, receipt_number, detail, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, NOW())
+                club_id, expense_date, amount, currency, receipt_number, detail, custodian, account_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
         `;
         
         const params = [
@@ -1470,11 +1527,30 @@ async function addExpense(clubId, expenseData) {
             expenseData.amount,
             expenseData.currency || 'ARS',
             expenseData.receipt_number || null,
-            expenseData.detail || null
+            expenseData.detail || null,
+            expenseData.custodian || null,
+            expenseData.account_id || null
         ];
         
         const { rows } = await executeQuery(query, params);
-        return { expense_id: rows.insertId };
+        const expenseId = rows.insertId;
+        
+        // Si se especificó una cuenta, crear transacción y actualizar saldo
+        if (expenseData.account_id) {
+            await createTransaction(clubId, {
+                transaction_type: 'expense',
+                transaction_date: expenseData.expense_date,
+                from_account_id: expenseData.account_id,
+                to_account_id: null,
+                amount: expenseData.amount,
+                currency: expenseData.currency || 'ARS',
+                description: expenseData.detail || 'Gasto registrado',
+                reference_type: 'expense',
+                reference_id: expenseId
+            });
+        }
+        
+        return { expense_id: expenseId };
     } catch (error) {
         console.error('❌ Error adding expense:', error);
         throw error;
@@ -1486,6 +1562,22 @@ async function addExpense(clubId, expenseData) {
  */
 async function deleteExpense(clubId, expenseId) {
     try {
+        // Primero obtener los datos del gasto para revertir el balance
+        const getQuery = `SELECT amount, currency, account_id FROM club_expenses WHERE club_id = ? AND expense_id = ?`;
+        const { rows: expenseRows } = await executeQuery(getQuery, [clubId, expenseId]);
+        
+        if (expenseRows.length > 0 && expenseRows[0].account_id) {
+            const expense = expenseRows[0];
+            // Revertir: sumar de vuelta el monto (porque al gastar se restó)
+            await updateAccountBalance(
+                expense.account_id,
+                expense.amount,
+                expense.currency || 'ARS',
+                'add'
+            );
+        }
+        
+        // Eliminar el gasto
         const query = `DELETE FROM club_expenses WHERE club_id = ? AND expense_id = ?`;
         await executeQuery(query, [clubId, expenseId]);
         return { success: true };
@@ -1500,6 +1592,7 @@ async function deleteExpense(clubId, expenseId) {
  */
 async function updateExpense(clubId, expenseId, expenseData) {
     try {
+        // Actualizar el gasto
         const query = `
             UPDATE club_expenses 
             SET 
@@ -1507,7 +1600,9 @@ async function updateExpense(clubId, expenseId, expenseData) {
                 amount = ?,
                 currency = ?,
                 receipt_number = ?,
-                detail = ?
+                detail = ?,
+                custodian = ?,
+                account_id = ?
             WHERE club_id = ? AND expense_id = ?
         `;
         
@@ -1517,11 +1612,14 @@ async function updateExpense(clubId, expenseId, expenseData) {
             expenseData.currency || 'ARS',
             expenseData.receipt_number || null,
             expenseData.detail || null,
+            expenseData.custodian || null,
+            expenseData.account_id || null,
             clubId,
             expenseId
         ];
         
         const { rows } = await executeQuery(query, params);
+        
         return { success: true, affectedRows: rows.affectedRows };
     } catch (error) {
         console.error('❌ Error updating expense:', error);
@@ -1569,10 +1667,14 @@ async function getOtherIncomes(clubId, fromDate, toDate) {
                 COALESCE(oi.currency, 'ARS') as currency,
                 oi.payment_type,
                 oi.description,
+                oi.custodian,
+                oi.account_id,
+                ca.account_name,
                 oi.created_at,
                 CONCAT(m.first_name, ' ', m.last_name) as member_name
             FROM other_incomes oi
             LEFT JOIN members m ON oi.member_id = m.member_id
+            LEFT JOIN custodian_accounts ca ON oi.account_id = ca.account_id
             WHERE oi.club_id = ?
         `;
         
@@ -1605,8 +1707,8 @@ async function addOtherIncome(clubId, incomeData) {
     try {
         const query = `
             INSERT INTO other_incomes (
-                club_id, member_id, income_date, amount, currency, payment_type, description, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+                club_id, member_id, income_date, amount, currency, payment_type, description, custodian, account_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
         `;
         
         const params = [
@@ -1616,11 +1718,30 @@ async function addOtherIncome(clubId, incomeData) {
             incomeData.amount,
             incomeData.currency || 'ARS',
             incomeData.payment_type || 'efectivo',
-            incomeData.description || null
+            incomeData.description || null,
+            incomeData.custodian || null,
+            incomeData.account_id || null
         ];
         
         const { rows } = await executeQuery(query, params);
-        return { income_id: rows.insertId };
+        const incomeId = rows.insertId;
+        
+        // Si se especificó una cuenta, crear transacción y actualizar saldo
+        if (incomeData.account_id) {
+            await createTransaction(clubId, {
+                transaction_type: 'income_other',
+                transaction_date: incomeData.income_date,
+                from_account_id: null,
+                to_account_id: incomeData.account_id,
+                amount: incomeData.amount,
+                currency: incomeData.currency || 'ARS',
+                description: incomeData.description || 'Ingreso registrado',
+                reference_type: 'other_income',
+                reference_id: incomeId
+            });
+        }
+        
+        return { income_id: incomeId };
     } catch (error) {
         console.error('❌ Error adding other income:', error);
         throw error;
@@ -1632,6 +1753,22 @@ async function addOtherIncome(clubId, incomeData) {
  */
 async function deleteOtherIncome(clubId, incomeId) {
     try {
+        // Primero obtener los datos del ingreso para revertir el balance
+        const getQuery = `SELECT amount, currency, account_id FROM other_incomes WHERE club_id = ? AND income_id = ?`;
+        const { rows: incomeRows } = await executeQuery(getQuery, [clubId, incomeId]);
+        
+        if (incomeRows.length > 0 && incomeRows[0].account_id) {
+            const income = incomeRows[0];
+            // Revertir: restar el monto (porque al ingresar se sumó)
+            await updateAccountBalance(
+                income.account_id,
+                income.amount,
+                income.currency || 'ARS',
+                'subtract'
+            );
+        }
+        
+        // Eliminar el ingreso
         const query = `DELETE FROM other_incomes WHERE club_id = ? AND income_id = ?`;
         await executeQuery(query, [clubId, incomeId]);
         return { success: true };
@@ -1646,6 +1783,7 @@ async function deleteOtherIncome(clubId, incomeId) {
  */
 async function updateOtherIncome(clubId, incomeId, incomeData) {
     try {
+        // Actualizar el ingreso
         const query = `
             UPDATE other_incomes 
             SET 
@@ -1654,7 +1792,9 @@ async function updateOtherIncome(clubId, incomeId, incomeData) {
                 amount = ?,
                 currency = ?,
                 payment_type = ?,
-                description = ?
+                description = ?,
+                custodian = ?,
+                account_id = ?
             WHERE club_id = ? AND income_id = ?
         `;
         
@@ -1665,14 +1805,40 @@ async function updateOtherIncome(clubId, incomeId, incomeData) {
             incomeData.currency || 'ARS',
             incomeData.payment_type || 'efectivo',
             incomeData.description || null,
+            incomeData.custodian || null,
+            incomeData.account_id || null,
             clubId,
             incomeId
         ];
         
         const { rows } = await executeQuery(query, params);
+        
         return { success: true, affectedRows: rows.affectedRows };
     } catch (error) {
         console.error('❌ Error updating other income:', error);
+        throw error;
+    }
+}
+
+/**
+ * Get unique custodians
+ */
+async function getCustodians(clubId) {
+    try {
+        // Obtener custodians únicos de gastos e ingresos
+        const query = `
+            SELECT DISTINCT custodian 
+            FROM (
+                SELECT custodian FROM club_expenses WHERE club_id = ? AND custodian IS NOT NULL AND custodian != ''
+                UNION
+                SELECT custodian FROM other_incomes WHERE club_id = ? AND custodian IS NOT NULL AND custodian != ''
+            ) AS custodians
+            ORDER BY custodian
+        `;
+        const { rows } = await executeQuery(query, [clubId, clubId]);
+        return rows.map(r => r.custodian);
+    } catch (error) {
+        console.error('❌ Error getting custodians:', error);
         throw error;
     }
 }
@@ -1688,32 +1854,38 @@ async function getCurrencyExchanges(clubId, fromDate, toDate) {
     try {
         let query = `
             SELECT 
-                exchange_id,
-                exchange_date,
-                from_currency,
-                from_amount,
-                to_currency,
-                to_amount,
-                exchange_rate,
-                notes,
-                created_at
-            FROM currency_exchanges
-            WHERE club_id = ?
+                ce.exchange_id,
+                ce.exchange_date,
+                ce.from_currency,
+                ce.from_amount,
+                ce.to_currency,
+                ce.to_amount,
+                ce.exchange_rate,
+                ce.notes,
+                ce.from_account_id,
+                ce.to_account_id,
+                fa.account_name as from_account_name,
+                ta.account_name as to_account_name,
+                ce.created_at
+            FROM currency_exchanges ce
+            LEFT JOIN custodian_accounts fa ON ce.from_account_id = fa.account_id
+            LEFT JOIN custodian_accounts ta ON ce.to_account_id = ta.account_id
+            WHERE ce.club_id = ?
         `;
         
         const params = [clubId];
         
         if (fromDate) {
-            query += ` AND exchange_date >= ?`;
+            query += ` AND ce.exchange_date >= ?`;
             params.push(fromDate);
         }
         
         if (toDate) {
-            query += ` AND exchange_date <= ?`;
+            query += ` AND ce.exchange_date <= ?`;
             params.push(toDate);
         }
         
-        query += ` ORDER BY exchange_date DESC, created_at DESC`;
+        query += ` ORDER BY ce.exchange_date DESC, ce.created_at DESC`;
         
         const { rows } = await executeQuery(query, params);
         return rows || [];
@@ -1831,23 +2003,40 @@ async function getCurrencyBalance(clubId) {
  */
 async function addCurrencyExchange(clubId, exchangeData) {
     try {
-        // Validar que haya fondos suficientes
-        const balance = await getCurrencyBalance(clubId);
-        const availableAmount = balance[exchangeData.from_currency] || 0;
+        // Validar que se seleccionaron las cuentas
+        if (!exchangeData.from_account_id) {
+            throw new Error('Debe seleccionar la cuenta de origen');
+        }
+        if (!exchangeData.to_account_id) {
+            throw new Error('Debe seleccionar la cuenta de destino');
+        }
+        
+        // Validar que haya fondos suficientes en la cuenta de origen
+        const fromAccountQuery = `SELECT current_balance_ars, current_balance_usd FROM custodian_accounts WHERE account_id = ? AND club_id = ?`;
+        const { rows: fromAccountRows } = await executeQuery(fromAccountQuery, [exchangeData.from_account_id, clubId]);
+        
+        if (fromAccountRows.length === 0) {
+            throw new Error('Cuenta de origen no encontrada');
+        }
+        
+        const fromAccount = fromAccountRows[0];
+        const availableAmount = exchangeData.from_currency === 'USD' ? fromAccount.current_balance_usd : fromAccount.current_balance_ars;
         
         if (availableAmount < exchangeData.from_amount) {
-            throw new Error(`Fondos insuficientes. Disponible: ${availableAmount.toFixed(2)} ${exchangeData.from_currency}, Requerido: ${exchangeData.from_amount} ${exchangeData.from_currency}`);
+            throw new Error(`Fondos insuficientes en la cuenta de origen. Disponible: ${availableAmount.toFixed(2)} ${exchangeData.from_currency}, Requerido: ${exchangeData.from_amount} ${exchangeData.from_currency}`);
         }
         
         const query = `
             INSERT INTO currency_exchanges (
-                club_id, exchange_date, from_currency, from_amount, 
+                club_id, from_account_id, to_account_id, exchange_date, from_currency, from_amount, 
                 to_currency, to_amount, exchange_rate, notes, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
         `;
         
         const params = [
             clubId,
+            exchangeData.from_account_id,
+            exchangeData.to_account_id,
             exchangeData.exchange_date,
             exchangeData.from_currency,
             exchangeData.from_amount,
@@ -1858,6 +2047,29 @@ async function addCurrencyExchange(clubId, exchangeData) {
         ];
         
         const { rows } = await executeQuery(query, params);
+        
+        // Actualizar saldo de cuenta de origen (restar)
+        const updateFromQuery = exchangeData.from_currency === 'USD' 
+            ? `UPDATE custodian_accounts SET current_balance_usd = current_balance_usd - ? WHERE account_id = ? AND club_id = ?`
+            : `UPDATE custodian_accounts SET current_balance_ars = current_balance_ars - ? WHERE account_id = ? AND club_id = ?`;
+        
+        await executeQuery(updateFromQuery, [
+            exchangeData.from_amount,
+            exchangeData.from_account_id,
+            clubId
+        ]);
+        
+        // Actualizar saldo de cuenta de destino (sumar)
+        const updateToQuery = exchangeData.to_currency === 'USD' 
+            ? `UPDATE custodian_accounts SET current_balance_usd = current_balance_usd + ? WHERE account_id = ? AND club_id = ?`
+            : `UPDATE custodian_accounts SET current_balance_ars = current_balance_ars + ? WHERE account_id = ? AND club_id = ?`;
+        
+        await executeQuery(updateToQuery, [
+            exchangeData.to_amount,
+            exchangeData.to_account_id,
+            clubId
+        ]);
+        
         return { exchange_id: rows.insertId };
     } catch (error) {
         console.error('❌ Error adding currency exchange:', error);
@@ -1879,7 +2091,9 @@ async function updateCurrencyExchange(clubId, exchangeId, exchangeData) {
                 to_currency = ?,
                 to_amount = ?,
                 exchange_rate = ?,
-                notes = ?
+                notes = ?,
+                from_account_id = ?,
+                to_account_id = ?
             WHERE club_id = ? AND exchange_id = ?
         `;
         
@@ -1891,6 +2105,8 @@ async function updateCurrencyExchange(clubId, exchangeId, exchangeData) {
             exchangeData.to_amount,
             exchangeData.exchange_rate,
             exchangeData.notes || null,
+            exchangeData.from_account_id || null,
+            exchangeData.to_account_id || null,
             clubId,
             exchangeId
         ];
@@ -1908,6 +2124,40 @@ async function updateCurrencyExchange(clubId, exchangeId, exchangeData) {
  */
 async function deleteCurrencyExchange(clubId, exchangeId) {
     try {
+        // Obtener datos de la conversión antes de eliminar
+        const getQuery = `SELECT from_currency, from_amount, to_currency, to_amount, from_account_id, to_account_id FROM currency_exchanges WHERE club_id = ? AND exchange_id = ?`;
+        const { rows: exchangeRows } = await executeQuery(getQuery, [clubId, exchangeId]);
+        
+        if (exchangeRows.length > 0) {
+            const exchange = exchangeRows[0];
+            
+            // Revertir el saldo de la cuenta de origen (devolver lo que se sacó)
+            if (exchange.from_account_id) {
+                const revertFromQuery = exchange.from_currency === 'USD' 
+                    ? `UPDATE custodian_accounts SET current_balance_usd = current_balance_usd + ? WHERE account_id = ? AND club_id = ?`
+                    : `UPDATE custodian_accounts SET current_balance_ars = current_balance_ars + ? WHERE account_id = ? AND club_id = ?`;
+                
+                await executeQuery(revertFromQuery, [
+                    exchange.from_amount,
+                    exchange.from_account_id,
+                    clubId
+                ]);
+            }
+            
+            // Revertir el saldo de la cuenta de destino (quitar lo que se agregó)
+            if (exchange.to_account_id) {
+                const revertToQuery = exchange.to_currency === 'USD' 
+                    ? `UPDATE custodian_accounts SET current_balance_usd = current_balance_usd - ? WHERE account_id = ? AND club_id = ?`
+                    : `UPDATE custodian_accounts SET current_balance_ars = current_balance_ars - ? WHERE account_id = ? AND club_id = ?`;
+                
+                await executeQuery(revertToQuery, [
+                    exchange.to_amount,
+                    exchange.to_account_id,
+                    clubId
+                ]);
+            }
+        }
+        
         const query = `DELETE FROM currency_exchanges WHERE club_id = ? AND exchange_id = ?`;
         const { rows } = await executeQuery(query, [clubId, exchangeId]);
         return { success: true, affectedRows: rows.affectedRows };
@@ -2041,6 +2291,94 @@ async function getMemberByPhone(phone, courseId) {
     `;
     const { rows } = await executeQuery(query, [phone, courseId]);
     return rows[0];
+}
+
+/**
+ * Verify member phone for public financial report
+ */
+async function verifyMemberPhone(clubId, phone) {
+    console.log('🔍 verifyMemberPhone - clubId:', clubId, 'phone:', phone);
+    
+    // Normalize phone (remove spaces, dashes, etc.)
+    const normalizedPhone = phone.replace(/[\s\-\(\)]/g, '');
+    console.log('📞 Normalized phone:', normalizedPhone);
+    
+    const query = `
+        SELECT 
+            member_id,
+            first_name,
+            last_name,
+            phone,
+            membership_status
+        FROM members 
+        WHERE course_id = ? 
+        AND (
+            REPLACE(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '(', ''), ')', '') = ?
+        )
+        AND membership_status = 'active'
+    `;
+    
+    console.log('📋 Executing query with params:', [clubId, normalizedPhone]);
+    const { rows } = await executeQuery(query, [clubId, normalizedPhone]);
+    console.log('📊 Query returned', rows.length, 'rows');
+    
+    if (rows.length > 0) {
+        const member = rows[0];
+        console.log('✅ Member found:', member.first_name, member.last_name);
+        
+        // Generate a simple token (hash of phone + member_id + secret)
+        const secret = 'torneogolf2024secret';
+        const tokenData = `${member.phone}-${member.member_id}-${secret}`;
+        const token = crypto.createHash('sha256').update(tokenData).digest('hex');
+        
+        return {
+            success: true,
+            token,
+            memberName: `${member.first_name} ${member.last_name}`
+        };
+    }
+    
+    console.log('❌ No member found with that phone');
+    return {
+        success: false,
+        message: 'Teléfono no encontrado o socio inactivo'
+    };
+}
+
+/**
+ * Verify access token for public financial report
+ */
+async function verifyReportToken(clubId, token) {
+    // Try to find a member whose token matches
+    const query = `
+        SELECT 
+            member_id,
+            first_name,
+            last_name,
+            phone
+        FROM members 
+        WHERE course_id = ? 
+        AND membership_status = 'active'
+    `;
+    const { rows } = await executeQuery(query, [clubId]);
+    
+    const secret = 'torneogolf2024secret';
+    for (const member of rows) {
+        const tokenData = `${member.phone}-${member.member_id}-${secret}`;
+        const expectedToken = crypto.createHash('sha256').update(tokenData).digest('hex');
+        
+        if (expectedToken === token) {
+            return {
+                success: true,
+                memberName: `${member.first_name} ${member.last_name}`
+            };
+        }
+    }
+    
+    return {
+        success: false,
+        message: 'Token inválido o expirado'
+    };
 }
 
 /**
@@ -2277,6 +2615,7 @@ async function getAllTournaments(courseId) {
         SELECT t.*, 
                gc.club_name AS course_name,
                COALESCE(COUNT(DISTINCT tp.participation_id), 0) as current_participants,
+               COALESCE(COUNT(DISTINCT CASE WHEN tp.payment_status = 'paid' THEN tp.participation_id END), 0) as paid_participants_count,
                COALESCE(COUNT(DISTINCT CASE WHEN tpg.group_number IS NOT NULL THEN tpg.group_number END), 0) as configured_groups,
                COALESCE(COUNT(DISTINCT CASE WHEN tpg.tee_time IS NOT NULL THEN tpg.group_number END), 0) as groups_with_tee_times,
                CASE 
@@ -2322,8 +2661,8 @@ async function createTournament(courseId, tournamentData) {
         INSERT INTO tournaments (
             course_id, tournament_name, tournament_date, start_time, end_time,
             tournament_type, max_participants, registration_deadline, entry_fee,
-            prize_pool, description, rules, status, created_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?)
+            custodian, prize_pool, description, rules, status, created_by
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?)
     `;
     const params = [
         courseId,
@@ -2335,6 +2674,7 @@ async function createTournament(courseId, tournamentData) {
         tournamentData.max_participants || null,
         tournamentData.registration_deadline || null,
         tournamentData.entry_fee || 0,
+        tournamentData.custodian || null,
         tournamentData.prize_pool || 0,
         tournamentData.description || null,
         tournamentData.rules || null,
@@ -2367,7 +2707,7 @@ async function updateTournament(courseId, tournamentId, tournamentData) {
         UPDATE tournaments SET
             tournament_name = ?, tournament_date = ?, start_time = ?, end_time = ?,
             tournament_type = ?, max_participants = ?, registration_deadline = ?,
-            entry_fee = ?, prize_pool = ?, description = ?, rules = ?,
+            entry_fee = ?, custodian = ?, account_id = ?, prize_pool = ?, description = ?, rules = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE course_id = ? AND tournament_id = ?
     `;
@@ -2380,6 +2720,8 @@ async function updateTournament(courseId, tournamentId, tournamentData) {
         tournamentData.max_participants || null,
         tournamentData.registration_deadline || null,
         tournamentData.entry_fee || 0,
+        tournamentData.custodian || null,
+        tournamentData.account_id || null,
         tournamentData.prize_pool || 0,
         tournamentData.description || null,
         tournamentData.rules || null,
@@ -2964,32 +3306,102 @@ async function updateParticipantStatus(courseId, tournamentId, participantId, st
 }
 
 async function updateParticipantPayment(courseId, tournamentId, participantId, paymentData) {
-    const query = `
-        UPDATE tournament_participants 
-        SET 
-            fee_amount = ?,
-            paid_amount = ?,
-            currency = ?,
-            payment_status = ?,
-            payment_method = ?,
-            receipt_number = ?,
-            payment_notes = ?
-        WHERE participation_id = ? AND tournament_id = ?
-    `;
-    
-    const { rows } = await executeQuery(query, [
-        paymentData.fee_amount ?? 0,
-        paymentData.paid_amount ?? 0,
-        paymentData.currency || 'ARS',
-        paymentData.payment_status ?? 'pending',
-        paymentData.payment_method || null,
-        paymentData.receipt_number || null,
-        paymentData.payment_notes || null,
-        participantId,
-        tournamentId
-    ]);
-    
-    return rows.affectedRows > 0;
+    try {
+        // Obtener el estado de pago anterior
+        const prevStateQuery = `SELECT payment_status, paid_amount, currency FROM tournament_participants WHERE participation_id = ? AND tournament_id = ?`;
+        const { rows: prevRows } = await executeQuery(prevStateQuery, [participantId, tournamentId]);
+        const previousPaymentStatus = prevRows[0]?.payment_status;
+        const previousAmount = prevRows[0]?.paid_amount || 0;
+        const previousCurrency = prevRows[0]?.currency || 'ARS';
+        
+        // Actualizar el participante
+        const query = `
+            UPDATE tournament_participants 
+            SET 
+                fee_amount = ?,
+                paid_amount = ?,
+                currency = ?,
+                payment_status = ?,
+                payment_method = ?,
+                receipt_number = ?,
+                payment_notes = ?
+            WHERE participation_id = ? AND tournament_id = ?
+        `;
+        
+        const { rows } = await executeQuery(query, [
+            paymentData.fee_amount ?? 0,
+            paymentData.paid_amount ?? 0,
+            paymentData.currency || 'ARS',
+            paymentData.payment_status ?? 'pending',
+            paymentData.payment_method || null,
+            paymentData.receipt_number || null,
+            paymentData.payment_notes || null,
+            participantId,
+            tournamentId
+        ]);
+        
+        // Si el estado cambió a "paid", actualizar el balance de la cuenta del torneo
+        const newPaymentStatus = paymentData.payment_status ?? 'pending';
+        const newAmount = paymentData.paid_amount ?? 0;
+        const newCurrency = paymentData.currency || 'ARS';
+        
+        if (newPaymentStatus === 'paid' && previousPaymentStatus !== 'paid') {
+            // Nuevo pago: sumar a la cuenta
+            const tournamentQuery = `SELECT account_id FROM tournaments WHERE tournament_id = ? AND course_id = ?`;
+            const { rows: tournamentRows } = await executeQuery(tournamentQuery, [tournamentId, courseId]);
+            
+            if (tournamentRows[0]?.account_id) {
+                const accountId = tournamentRows[0].account_id;
+                const field = newCurrency === 'USD' ? 'current_balance_usd' : 'current_balance_ars';
+                const updateAccountQuery = `
+                    UPDATE custodian_accounts 
+                    SET ${field} = ${field} + ?
+                    WHERE account_id = ?
+                `;
+                await executeQuery(updateAccountQuery, [newAmount, accountId]);
+                console.log(`✅ Added ${newAmount} ${newCurrency} to account ${accountId} (tournament payment)`);
+            }
+        } else if (previousPaymentStatus === 'paid' && newPaymentStatus !== 'paid') {
+            // Revertir pago: restar de la cuenta
+            const tournamentQuery = `SELECT account_id FROM tournaments WHERE tournament_id = ? AND course_id = ?`;
+            const { rows: tournamentRows } = await executeQuery(tournamentQuery, [tournamentId, courseId]);
+            
+            if (tournamentRows[0]?.account_id) {
+                const accountId = tournamentRows[0].account_id;
+                const field = previousCurrency === 'USD' ? 'current_balance_usd' : 'current_balance_ars';
+                const updateAccountQuery = `
+                    UPDATE custodian_accounts 
+                    SET ${field} = ${field} - ?
+                    WHERE account_id = ?
+                `;
+                await executeQuery(updateAccountQuery, [previousAmount, accountId]);
+                console.log(`✅ Removed ${previousAmount} ${previousCurrency} from account ${accountId} (payment reverted)`);
+            }
+        } else if (previousPaymentStatus === 'paid' && newPaymentStatus === 'paid' && (previousAmount !== newAmount || previousCurrency !== newCurrency)) {
+            // Ajustar monto: restar el anterior y sumar el nuevo
+            const tournamentQuery = `SELECT account_id FROM tournaments WHERE tournament_id = ? AND course_id = ?`;
+            const { rows: tournamentRows } = await executeQuery(tournamentQuery, [tournamentId, courseId]);
+            
+            if (tournamentRows[0]?.account_id) {
+                const accountId = tournamentRows[0].account_id;
+                
+                // Restar el anterior
+                const prevField = previousCurrency === 'USD' ? 'current_balance_usd' : 'current_balance_ars';
+                await executeQuery(`UPDATE custodian_accounts SET ${prevField} = ${prevField} - ? WHERE account_id = ?`, [previousAmount, accountId]);
+                
+                // Sumar el nuevo
+                const newField = newCurrency === 'USD' ? 'current_balance_usd' : 'current_balance_ars';
+                await executeQuery(`UPDATE custodian_accounts SET ${newField} = ${newField} + ? WHERE account_id = ?`, [newAmount, accountId]);
+                
+                console.log(`✅ Adjusted account ${accountId}: -${previousAmount} ${previousCurrency}, +${newAmount} ${newCurrency}`);
+            }
+        }
+        
+        return rows.affectedRows > 0;
+    } catch (error) {
+        console.error('❌ Error updating participant payment:', error);
+        throw error;
+    }
 }
 
 /**
@@ -4958,6 +5370,277 @@ async function getMemberHandicapHistory(clubId, memberId) {
 }
 
 // ================================
+// CUSTODIAN ACCOUNTS FUNCTIONS
+// ================================
+
+/**
+ * Get all accounts for a club
+ */
+async function getAccounts(clubId) {
+    try {
+        const query = `
+            SELECT 
+                account_id,
+                account_name,
+                description,
+                current_balance_ars,
+                current_balance_usd,
+                is_active,
+                created_at
+            FROM custodian_accounts
+            WHERE club_id = ? AND is_active = TRUE
+            ORDER BY account_name
+        `;
+        const { rows } = await executeQuery(query, [clubId]);
+        return rows;
+    } catch (error) {
+        console.error('❌ Error getting accounts:', error);
+        throw error;
+    }
+}
+
+/**
+ * Create new account
+ */
+async function createAccount(clubId, accountData) {
+    try {
+        const query = `
+            INSERT INTO custodian_accounts (
+                club_id, account_name, description, 
+                current_balance_ars, current_balance_usd
+            ) VALUES (?, ?, ?, 0, 0)
+        `;
+        const { rows } = await executeQuery(query, [
+            clubId,
+            accountData.account_name,
+            accountData.description || null
+        ]);
+        return { account_id: rows.insertId };
+    } catch (error) {
+        console.error('❌ Error creating account:', error);
+        throw error;
+    }
+}
+
+/**
+ * Update account
+ */
+async function updateAccount(clubId, accountId, accountData) {
+    try {
+        const query = `
+            UPDATE custodian_accounts 
+            SET account_name = ?, description = ?
+            WHERE club_id = ? AND account_id = ?
+        `;
+        await executeQuery(query, [
+            accountData.account_name,
+            accountData.description || null,
+            clubId,
+            accountId
+        ]);
+        return { success: true };
+    } catch (error) {
+        console.error('❌ Error updating account:', error);
+        throw error;
+    }
+}
+
+/**
+ * Delete (deactivate) account
+ */
+async function deleteAccount(clubId, accountId) {
+    try {
+        const query = `
+            UPDATE custodian_accounts 
+            SET is_active = FALSE
+            WHERE club_id = ? AND account_id = ?
+        `;
+        await executeQuery(query, [clubId, accountId]);
+        return { success: true };
+    } catch (error) {
+        console.error('❌ Error deleting account:', error);
+        throw error;
+    }
+}
+
+/**
+ * Update account balance
+ */
+async function updateAccountBalance(accountId, amount, currency, operation = 'add') {
+    try {
+        const field = currency === 'USD' ? 'current_balance_usd' : 'current_balance_ars';
+        const operator = operation === 'add' ? '+' : '-';
+        
+        const query = `
+            UPDATE custodian_accounts 
+            SET ${field} = ${field} ${operator} ?
+            WHERE account_id = ?
+        `;
+        await executeQuery(query, [Math.abs(amount), accountId]);
+        return { success: true };
+    } catch (error) {
+        console.error('❌ Error updating account balance:', error);
+        throw error;
+    }
+}
+
+// ================================
+// ACCOUNT TRANSACTIONS FUNCTIONS
+// ================================
+
+/**
+ * Get all transactions for a club
+ */
+async function getTransactions(clubId, fromDate, toDate) {
+    try {
+        let query = `
+            SELECT 
+                t.transaction_id,
+                t.transaction_date,
+                t.transaction_type,
+                t.amount,
+                t.currency,
+                t.description,
+                t.created_at,
+                fa.account_name as from_account_name,
+                ta.account_name as to_account_name
+            FROM account_transactions t
+            LEFT JOIN custodian_accounts fa ON t.from_account_id = fa.account_id
+            LEFT JOIN custodian_accounts ta ON t.to_account_id = ta.account_id
+            WHERE t.club_id = ?
+        `;
+        
+        const params = [clubId];
+        
+        if (fromDate) {
+            query += ` AND t.transaction_date >= ?`;
+            params.push(fromDate);
+        }
+        
+        if (toDate) {
+            query += ` AND t.transaction_date <= ?`;
+            params.push(toDate);
+        }
+        
+        // UNION con conversiones de moneda
+        query += `
+            UNION ALL
+            SELECT 
+                CONCAT('EX', ce.exchange_id) as transaction_id,
+                ce.exchange_date as transaction_date,
+                'exchange' as transaction_type,
+                ce.from_amount as amount,
+                ce.from_currency as currency,
+                CONCAT('Conversión: ', ce.from_amount, ' ', ce.from_currency, ' → ', ce.to_amount, ' ', ce.to_currency, IF(ce.notes IS NOT NULL, CONCAT(' (', ce.notes, ')'), '')) as description,
+                ce.created_at,
+                fa.account_name as from_account_name,
+                ta.account_name as to_account_name
+            FROM currency_exchanges ce
+            LEFT JOIN custodian_accounts fa ON ce.from_account_id = fa.account_id
+            LEFT JOIN custodian_accounts ta ON ce.to_account_id = ta.account_id
+            WHERE ce.club_id = ?
+        `;
+        
+        params.push(clubId);
+        
+        if (fromDate) {
+            query += ` AND ce.exchange_date >= ?`;
+            params.push(fromDate);
+        }
+        
+        if (toDate) {
+            query += ` AND ce.exchange_date <= ?`;
+            params.push(toDate);
+        }
+        
+        query += ` ORDER BY transaction_date DESC, created_at DESC`;
+        
+        const { rows } = await executeQuery(query, params);
+        return rows;
+    } catch (error) {
+        console.error('❌ Error getting transactions:', error);
+        throw error;
+    }
+}
+
+/**
+ * Create transaction and update account balances
+ */
+async function createTransaction(clubId, transactionData) {
+    try {
+        // Insert transaction
+        const query = `
+            INSERT INTO account_transactions (
+                club_id, transaction_type, transaction_date,
+                from_account_id, to_account_id, amount, currency,
+                description, reference_type, reference_id, created_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `;
+        
+        const { rows } = await executeQuery(query, [
+            clubId,
+            transactionData.transaction_type,
+            transactionData.transaction_date,
+            transactionData.from_account_id || null,
+            transactionData.to_account_id || null,
+            transactionData.amount,
+            transactionData.currency || 'ARS',
+            transactionData.description || null,
+            transactionData.reference_type || null,
+            transactionData.reference_id || null,
+            transactionData.created_by || null
+        ]);
+        
+        // Update account balances
+        if (transactionData.transaction_type === 'transfer') {
+            // Subtract from source
+            if (transactionData.from_account_id) {
+                await updateAccountBalance(
+                    transactionData.from_account_id,
+                    transactionData.amount,
+                    transactionData.currency,
+                    'subtract'
+                );
+            }
+            // Add to destination
+            if (transactionData.to_account_id) {
+                await updateAccountBalance(
+                    transactionData.to_account_id,
+                    transactionData.amount,
+                    transactionData.currency,
+                    'add'
+                );
+            }
+        } else if (transactionData.transaction_type === 'expense') {
+            // Subtract from account
+            if (transactionData.from_account_id) {
+                await updateAccountBalance(
+                    transactionData.from_account_id,
+                    transactionData.amount,
+                    transactionData.currency,
+                    'subtract'
+                );
+            }
+        } else {
+            // Income - add to account
+            if (transactionData.to_account_id) {
+                await updateAccountBalance(
+                    transactionData.to_account_id,
+                    transactionData.amount,
+                    transactionData.currency,
+                    'add'
+                );
+            }
+        }
+        
+        return { transaction_id: rows.insertId };
+    } catch (error) {
+        console.error('❌ Error creating transaction:', error);
+        throw error;
+    }
+}
+
+// ================================
 // SYSTEM FUNCTIONS  
 // ================================
 
@@ -4972,6 +5655,7 @@ export {
     
     // Member functions
     getAllMembers, getMemberById, createMember, updateMember, deleteMember, updateMemberStatus,
+    verifyMemberPhone, verifyReportToken,
     
     // Tournament functions
     getAllTournaments, getTournamentById, createTournament, updateTournament, deleteTournament,
@@ -4994,7 +5678,10 @@ export {
     getPaymentsSummary, getExpenses, addExpense, updateExpense, deleteExpense,
     getOtherIncomes, addOtherIncome, updateOtherIncome, deleteOtherIncome,
     getCurrencyExchanges, addCurrencyExchange, updateCurrencyExchange, deleteCurrencyExchange,
-    getCurrencyBalance,
+    getCurrencyBalance, getCustodians,
+    
+    // Custodian accounts functions
+    getAccounts, createAccount, updateAccount, deleteAccount, getTransactions, createTransaction,
     
     // Course holes functions
     createCourseHolesTable, getCourseHoles, updateCourseHole, updateMultipleCourseHoles, getCourseStatistics,

@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Calendar, DollarSign, Users, Trophy, Settings, Award, Camera, ChevronDown, LogOut, Filter, X, User, Pencil, Download, MessageCircle } from 'lucide-react'
 import { paymentsService } from '@/services/paymentsService'
+import { accountsService } from '@/services/accountsService'
 import { DateInput } from '@/components/DateInput'
 import { useClubs } from '@/hooks/useClubs'
 import { useMembers } from '@/hooks/useMembers'
 import { useTournaments } from '@/hooks/useTournaments'
+import { useUserPermissions } from '@/hooks/useUserPermissions'
 import { toast } from 'react-hot-toast'
 import * as XLSX from 'xlsx'
 
@@ -13,6 +15,7 @@ export default function Payments() {
   const { clubId } = useParams<{ clubId: string }>() 
   const navigate = useNavigate()
   const clubIdNum = clubId ? parseInt(clubId) : 0
+  const { permissions } = useUserPermissions(clubId)
 
   // Función helper para obtener la fecha local en formato YYYY-MM-DD
   const getLocalDateString = () => {
@@ -27,15 +30,15 @@ export default function Payments() {
   const [to, setTo] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [rows, setRows] = useState<any[]>([])
-  const [tab, setTab] = useState<'balance' | 'ingresos' | 'otros_ingresos' | 'gastos' | 'conversiones'>('balance')
+  const [tab, setTab] = useState<'balance' | 'ingresos' | 'otros_ingresos' | 'gastos' | 'conversiones' | 'cuentas'>('balance')
   const [expenses, setExpenses] = useState<any[]>([])
   const [otherIncomes, setOtherIncomes] = useState<any[]>([])
   const [currencyExchanges, setCurrencyExchanges] = useState<any[]>([])
   const [showExpenseModal, setShowExpenseModal] = useState(false)
   const [showIncomeModal, setShowIncomeModal] = useState(false)
   const [showExchangeModal, setShowExchangeModal] = useState(false)
-  const [expenseDraft, setExpenseDraft] = useState({ expense_date: '', amount: '', currency: 'ARS', receipt_number: '', detail: '' })
-  const [incomeDraft, setIncomeDraft] = useState({ member_id: '', income_date: '', amount: '', currency: 'ARS', payment_type: 'efectivo', description: '' })
+  const [expenseDraft, setExpenseDraft] = useState({ expense_date: '', amount: '', currency: 'ARS', receipt_number: '', detail: '', custodian: '', account_id: '' })
+  const [incomeDraft, setIncomeDraft] = useState({ member_id: '', income_date: '', amount: '', currency: 'ARS', payment_type: 'efectivo', description: '', custodian: '', account_id: '' })
   const [exchangeDraft, setExchangeDraft] = useState({ 
     exchange_date: '', 
     from_currency: 'ARS', 
@@ -43,7 +46,9 @@ export default function Payments() {
     to_currency: 'USD', 
     to_amount: '', 
     exchange_rate: '',
-    notes: '' 
+    notes: '',
+    from_account_id: '',
+    to_account_id: ''
   })
   const [editingExpenseId, setEditingExpenseId] = useState<number | null>(null)
   const [editingIncomeId, setEditingIncomeId] = useState<number | null>(null)
@@ -57,6 +62,14 @@ export default function Payments() {
   const [showMemberDropdown, setShowMemberDropdown] = useState(false)
   const [showMonthSelector, setShowMonthSelector] = useState(false)
   const [showDescriptionDropdown, setShowDescriptionDropdown] = useState(false)
+  const [custodians, setCustodians] = useState<string[]>([])
+  const [showCustodianDropdown, setShowCustodianDropdown] = useState(false)
+  const [accounts, setAccounts] = useState<any[]>([])
+  const [transactions, setTransactions] = useState<any[]>([])
+  const [showAccountModal, setShowAccountModal] = useState(false)
+  const [showTransferModal, setShowTransferModal] = useState(false)
+  const [accountDraft, setAccountDraft] = useState({ account_name: '', description: '' })
+  const [transferDraft, setTransferDraft] = useState({ from_account_id: '', to_account_id: '', amount: '', currency: 'ARS', description: '', transaction_date: '' })
   const [showIncomeFilters, setShowIncomeFilters] = useState(false)
   const [incomeFilters, setIncomeFilters] = useState({
     member: '',
@@ -162,7 +175,7 @@ export default function Payments() {
     
     // Contar separadores
     const commas = (cleaned.match(/,/g) || []).length
-    const dots = (cleaned.match(/\./g) || []).length
+    // const dots = (cleaned.match(/\./g) || []).length
     
     // Si hay más de una coma, mantener solo la última
     if (commas > 1) {
@@ -292,29 +305,29 @@ export default function Payments() {
     return descriptions.sort()
   }, [otherIncomes])
 
-  // Agrupar otros ingresos por descripción para mostrar en balance
-  const groupedOtherIncomes = useMemo(() => {
-    const groups: { [key: string]: { description: string; amountARS: number; amountUSD: number } } = {}
-    
-    otherIncomes.forEach(income => {
-      const desc = income.description || 'Sin descripción'
-      if (!groups[desc]) {
-        groups[desc] = { description: desc, amountARS: 0, amountUSD: 0 }
-      }
-      const currency = (income as any).currency || 'ARS'
-      if (currency === 'USD') {
-        groups[desc].amountUSD += Number(income.amount || 0)
-      } else {
-        groups[desc].amountARS += Number(income.amount || 0)
-      }
-    })
-    
-    return Object.values(groups).sort((a, b) => {
-      const totalA = a.amountARS + a.amountUSD
-      const totalB = b.amountARS + b.amountUSD
-      return totalB - totalA // Mayor a menor
-    })
-  }, [otherIncomes])
+  // Agrupar otros ingresos por descripción para mostrar en balance (no usado actualmente)
+  // const groupedOtherIncomes = useMemo(() => {
+  //   const groups: { [key: string]: { description: string; amountARS: number; amountUSD: number } } = {}
+  //   
+  //   otherIncomes.forEach(income => {
+  //     const desc = income.description || 'Sin descripción'
+  //     if (!groups[desc]) {
+  //       groups[desc] = { description: desc, amountARS: 0, amountUSD: 0 }
+  //     }
+  //     const currency = (income as any).currency || 'ARS'
+  //     if (currency === 'USD') {
+  //       groups[desc].amountUSD += Number(income.amount || 0)
+  //     } else {
+  //       groups[desc].amountARS += Number(income.amount || 0)
+  //     }
+  //   })
+  //   
+  //   return Object.values(groups).sort((a, b) => {
+  //     const totalA = a.amountARS + a.amountUSD
+  //     const totalB = b.amountARS + b.amountUSD
+  //     return totalB - totalA // Mayor a menor
+  //   })
+  // }, [otherIncomes])
 
   // Totales separados por moneda - Otros Ingresos
   const totalOtherIncomesARS = useMemo(() => {
@@ -348,18 +361,18 @@ export default function Payments() {
     return expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0)
   }, [expenses])
   
-  const netBalance = useMemo(() => {
-    return totalAllIncomes - totalExpenses
-  }, [totalAllIncomes, totalExpenses])
+  // Balance neto ahora usa currencyBalance directamente (incluye conversiones)
+  // const netBalance = useMemo(() => {
+  //   return totalAllIncomes - totalExpenses
+  // }, [totalAllIncomes, totalExpenses])
 
-  // Balance neto por moneda
-  const netBalanceARS = useMemo(() => {
-    return totalPaid + totalOtherIncomesARS - totalExpensesARS
-  }, [totalPaid, totalOtherIncomesARS, totalExpensesARS])
+  // const netBalanceARS = useMemo(() => {
+  //   return totalPaid + totalOtherIncomesARS - totalExpensesARS
+  // }, [totalPaid, totalOtherIncomesARS, totalExpensesARS])
 
-  const netBalanceUSD = useMemo(() => {
-    return totalOtherIncomesUSD - totalExpensesUSD
-  }, [totalOtherIncomesUSD, totalExpensesUSD])
+  // const netBalanceUSD = useMemo(() => {
+  //   return totalOtherIncomesUSD - totalExpensesUSD
+  // }, [totalOtherIncomesUSD, totalExpensesUSD])
 
   // Filtered rows based on selected tournaments
   const filteredRows = useMemo(() => {
@@ -398,17 +411,34 @@ export default function Payments() {
       if (!clubIdNum) return
       setLoading(true)
       try {
-        // Always load incomes, other incomes, expenses, and currency exchanges
-        const [incomesData, otherIncomesData, expensesData, exchangesData] = await Promise.all([
+        // Always load incomes, other incomes, expenses, currency exchanges, custodians, accounts, and currency balance
+        const promises: Promise<any>[] = [
           paymentsService.getSummary(clubIdNum, { from: from || undefined, to: to || undefined }),
           paymentsService.getOtherIncomes(clubIdNum, { from: from || undefined, to: to || undefined }),
           paymentsService.getExpenses(clubIdNum, { from: from || undefined, to: to || undefined }),
-          paymentsService.getCurrencyExchanges(clubIdNum, { from: from || undefined, to: to || undefined })
-        ])
-        setRows(incomesData)
+          paymentsService.getCurrencyExchanges(clubIdNum, { from: from || undefined, to: to || undefined }),
+          paymentsService.getCustodians(clubIdNum),
+          accountsService.getAccounts(clubIdNum),
+          paymentsService.getCurrencyBalance(clubIdNum)
+        ]
+        
+        const results = await Promise.all(promises)
+        const [incomesData, otherIncomesData, expensesData, exchangesData, custodiansData, accountsData, balanceData] = results
+        
+        // Filtrar torneos vigentes para usuarios sin permiso de totales
+        const filteredIncomesData = permissions.canViewFinancialTotals
+          ? incomesData
+          : incomesData.filter((row: any) => 
+              row.status === 'in_progress' || row.status === 'open'
+            )
+        
+        setRows(filteredIncomesData)
         setOtherIncomes(otherIncomesData)
         setExpenses(expensesData)
         setCurrencyExchanges(exchangesData)
+        setCustodians(custodiansData)
+        setAccounts(accountsData)
+        setCurrencyBalance(balanceData)
       } catch (error) {
         console.error('❌ Error cargando contabilidad:', error)
       } finally {
@@ -416,7 +446,21 @@ export default function Payments() {
       }
     }
     load()
-  }, [clubIdNum, from, to])
+  }, [clubIdNum, from, to, permissions.canViewFinancialTotals])
+  
+  // Cargar transacciones cuando se selecciona la pestaña Cuentas
+  useEffect(() => {
+    const loadTransactions = async () => {
+      if (!clubIdNum || tab !== 'cuentas') return
+      try {
+        const transactionsData = await accountsService.getTransactions(clubIdNum, { from: from || undefined, to: to || undefined })
+        setTransactions(transactionsData)
+      } catch (error) {
+        console.error('❌ Error cargando transacciones:', error)
+      }
+    }
+    loadTransactions()
+  }, [clubIdNum, from, to, tab])
 
   // Cerrar selector de meses al hacer clic fuera
   useEffect(() => {
@@ -478,6 +522,9 @@ export default function Payments() {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [showFilterMemberDropdown, showFilterDescriptionDropdown])
+
+  // Suprimir warnings TS6133 de variables no usadas temporalmente
+  if (false) { console.log(custodians, showCustodianDropdown, totalAllIncomes, totalExpenses) }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -548,20 +595,24 @@ export default function Payments() {
                 </span>
               )}
             </button>
-            <button
-              onClick={() => navigate(`/club/${clubId}/admin?tab=photos`)}
-              className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:border-gray-300 border-b-2 border-transparent transition-colors"
-            >
-              <Camera className="h-4 w-4" />
-              Fotos
-            </button>
-            <button
-              onClick={() => navigate(`/club/${clubId}/admin?tab=settings`)}
-              className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:border-gray-300 border-b-2 border-transparent transition-colors"
-            >
-              <Settings className="h-4 w-4" />
-              Configuración
-            </button>
+            {permissions.canViewPhotos && (
+              <button
+                onClick={() => navigate(`/club/${clubId}/admin?tab=photos`)}
+                className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:border-gray-300 border-b-2 border-transparent transition-colors"
+              >
+                <Camera className="h-4 w-4" />
+                Fotos
+              </button>
+            )}
+            {permissions.canViewSettings && (
+              <button
+                onClick={() => navigate(`/club/${clubId}/admin?tab=settings`)}
+                className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:border-gray-300 border-b-2 border-transparent transition-colors"
+              >
+                <Settings className="h-4 w-4" />
+                Configuración
+              </button>
+            )}
             <button
               onClick={() => navigate(`/club/${clubId}/rankings`)}
               className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:border-gray-300 border-b-2 border-transparent transition-colors"
@@ -594,36 +645,54 @@ export default function Payments() {
         <div className="bg-white rounded-lg border p-4 space-y-4">
           <div className="flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-3">
-              <button
-                onClick={() => setTab('balance')}
-                className={`px-3 py-2 rounded ${tab==='balance' ? 'bg-gray-900 text-white' : 'border'}`}
-              >
-                Balance
-              </button>
-              <button
-                onClick={() => setTab('ingresos')}
-                className={`px-3 py-2 rounded ${tab==='ingresos' ? 'bg-gray-900 text-white' : 'border'}`}
-              >
-                Ingresos Torneos
-              </button>
-              <button
-                onClick={() => setTab('otros_ingresos')}
-                className={`px-3 py-2 rounded ${tab==='otros_ingresos' ? 'bg-gray-900 text-white' : 'border'}`}
-              >
-                Otros Ingresos
-              </button>
-              <button
-                onClick={() => setTab('gastos')}
-                className={`px-3 py-2 rounded ${tab==='gastos' ? 'bg-gray-900 text-white' : 'border'}`}
-              >
-                Gastos
-              </button>
-              <button
-                onClick={() => setTab('conversiones')}
-                className={`px-3 py-2 rounded ${tab==='conversiones' ? 'bg-gray-900 text-white' : 'border'}`}
-              >
-                Conversiones
-              </button>
+              {permissions.canViewBalance && permissions.canViewFinancialTotals && (
+                <button
+                  onClick={() => setTab('balance')}
+                  className={`px-3 py-2 rounded ${tab==='balance' ? 'bg-gray-900 text-white' : 'border'}`}
+                >
+                  Balance
+                </button>
+              )}
+              {permissions.canViewTournamentIncomes && (
+                <button
+                  onClick={() => setTab('ingresos')}
+                  className={`px-3 py-2 rounded ${tab==='ingresos' ? 'bg-gray-900 text-white' : 'border'}`}
+                >
+                  Ingresos Torneos
+                </button>
+              )}
+              {permissions.canViewOtherIncomes && (
+                <button
+                  onClick={() => setTab('otros_ingresos')}
+                  className={`px-3 py-2 rounded ${tab==='otros_ingresos' ? 'bg-gray-900 text-white' : 'border'}`}
+                >
+                  Otros Ingresos
+                </button>
+              )}
+              {permissions.canViewExpenses && (
+                <button
+                  onClick={() => setTab('gastos')}
+                  className={`px-3 py-2 rounded ${tab==='gastos' ? 'bg-gray-900 text-white' : 'border'}`}
+                >
+                  Gastos
+                </button>
+              )}
+              {permissions.canViewCurrencyExchanges && (
+                <button
+                  onClick={() => setTab('conversiones')}
+                  className={`px-3 py-2 rounded ${tab==='conversiones' ? 'bg-gray-900 text-white' : 'border'}`}
+                >
+                  Conversiones
+                </button>
+              )}
+              {permissions.canViewAccounting && (
+                <button
+                  onClick={() => setTab('cuentas')}
+                  className={`px-3 py-2 rounded ${tab==='cuentas' ? 'bg-gray-900 text-white' : 'border'}`}
+                >
+                  Cuentas
+                </button>
+              )}
             </div>
             <div className="flex items-center gap-3">
               {/* Selector de Meses */}
@@ -763,30 +832,33 @@ export default function Payments() {
                   <Download className="w-4 h-4" />
                   Exportar Excel
                 </button>
-                <button onClick={() => {
-                  const today = getLocalDateString()
-                  setIncomeDraft({ member_id: '', income_date: today, amount: '', currency: 'ARS', payment_type: 'efectivo', description: '' })
-                  setMemberSearchText('')
-                  setShowMemberDropdown(false)
-                  setShowDescriptionDropdown(false)
-                  setShowIncomeModal(true)
-                }} className="px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700">
-                  Agregar ingreso
-                </button>
+                {permissions.canManageOtherIncomes && (
+                  <button onClick={() => {
+                    const today = getLocalDateString()
+                    setIncomeDraft({ member_id: '', income_date: today, amount: '', currency: 'ARS', payment_type: 'efectivo', description: '', custodian: '', account_id: '' })
+                    setMemberSearchText('')
+                    setShowMemberDropdown(false)
+                    setShowCustodianDropdown(false)
+                    setShowDescriptionDropdown(false)
+                    setShowIncomeModal(true)
+                  }} className="px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700">
+                    Agregar ingreso
+                  </button>
+                )}
               </div>
             )}
-            {tab==='gastos' && (
+            {tab==='gastos' && permissions.canManageExpenses && (
               <div className="ml-auto">
                 <button onClick={() => {
                   const today = getLocalDateString()
-                  setExpenseDraft({ expense_date: today, amount: '', currency: 'ARS', receipt_number: '', detail: '' })
+                  setExpenseDraft({ expense_date: today, amount: '', currency: 'ARS', receipt_number: '', detail: '', custodian: '', account_id: '' })
                   setShowExpenseModal(true)
                 }} className="px-3 py-2 bg-gray-900 text-white rounded hover:bg-gray-800">
                   Agregar gasto
                 </button>
               </div>
             )}
-            {tab==='conversiones' && (
+            {tab==='conversiones' && permissions.canManageCurrencyExchanges && (
               <div className="ml-auto">
                 <button onClick={async () => {
                   const today = getLocalDateString()
@@ -797,7 +869,9 @@ export default function Payments() {
                     to_currency: 'USD', 
                     to_amount: '', 
                     exchange_rate: '',
-                    notes: '' 
+                    notes: '',
+                    from_account_id: '',
+                    to_account_id: ''
                   })
                   // Cargar balance disponible
                   try {
@@ -830,194 +904,76 @@ export default function Payments() {
         {tab==='balance' && (
           <div className="space-y-6">
             {/* Summary Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {/* Ingresos Card */}
-              <div className="bg-white rounded-lg border p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-sm font-medium text-gray-600">Total Ingresos</h3>
-                  <div className="p-2 bg-green-100 rounded-lg">
-                    <DollarSign className="h-5 w-5 text-green-600" />
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <div className="text-2xl font-bold text-green-600">
-                    ${formatCurrency(totalPaid + totalOtherIncomesARS)}
-                  </div>
-                  {totalOtherIncomesUSD > 0 && (
-                    <div className="text-xl font-bold text-green-600">
-                      US${formatCurrency(totalOtherIncomesUSD)}
+            {permissions.canViewFinancialTotals && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {/* Ingresos Card */}
+                <div className="bg-white rounded-lg border p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-medium text-gray-600">Total Ingresos</h3>
+                    <div className="p-2 bg-green-100 rounded-lg">
+                      <DollarSign className="h-5 w-5 text-green-600" />
                     </div>
-                  )}
-                </div>
-                <p className="text-sm text-gray-500 mt-2">
-                  De {rows.length} torneo{rows.length !== 1 ? 's' : ''} y {otherIncomes.length} otro{otherIncomes.length !== 1 ? 's' : ''} ingreso{otherIncomes.length !== 1 ? 's' : ''}
-                </p>
-              </div>
-
-              {/* Egresos Card */}
-              <div className="bg-white rounded-lg border p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-sm font-medium text-gray-600">Total Egresos</h3>
-                  <div className="p-2 bg-red-100 rounded-lg">
-                    <DollarSign className="h-5 w-5 text-red-600" />
                   </div>
-                </div>
-                <div className="space-y-1">
-                  <div className="text-2xl font-bold text-red-600">
-                    ${formatCurrency(totalExpensesARS)}
-                  </div>
-                  {totalExpensesUSD > 0 && (
-                    <div className="text-xl font-bold text-red-600">
-                      US${formatCurrency(totalExpensesUSD)}
+                  <div className="space-y-1">
+                    <div className="text-2xl font-bold text-green-600">
+                      ${formatCurrency(totalPaid + totalOtherIncomesARS)}
                     </div>
-                  )}
+                    {totalOtherIncomesUSD > 0 && (
+                      <div className="text-xl font-bold text-green-600">
+                        US${formatCurrency(totalOtherIncomesUSD)}
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-sm text-gray-500 mt-2">
+                    De {rows.length} torneo{rows.length !== 1 ? 's' : ''} y {otherIncomes.length} otro{otherIncomes.length !== 1 ? 's' : ''} ingreso{otherIncomes.length !== 1 ? 's' : ''}
+                  </p>
                 </div>
-                <p className="text-sm text-gray-500 mt-2">
-                  De {expenses.length} gasto{expenses.length !== 1 ? 's' : ''}
-                </p>
-              </div>
 
-              {/* Balance Card */}
-              <div className="bg-white rounded-lg border p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-sm font-medium text-gray-600">Balance Neto</h3>
-                  <div className={`p-2 rounded-lg ${netBalanceARS >= 0 ? 'bg-blue-100' : 'bg-orange-100'}`}>
-                    <DollarSign className={`h-5 w-5 ${netBalanceARS >= 0 ? 'text-blue-600' : 'text-orange-600'}`} />
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <div className={`text-2xl font-bold ${netBalanceARS >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>
-                    ${formatCurrency(Math.abs(netBalanceARS))} {netBalanceARS >= 0 ? '' : '-'}
-                  </div>
-                  {(totalOtherIncomesUSD > 0 || totalExpensesUSD > 0) && (
-                    <div className={`text-xl font-bold ${netBalanceUSD >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>
-                      US${formatCurrency(Math.abs(netBalanceUSD))} {netBalanceUSD >= 0 ? '' : '-'}
+                {/* Egresos Card */}
+                <div className="bg-white rounded-lg border p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-medium text-gray-600">Total Egresos</h3>
+                    <div className="p-2 bg-red-100 rounded-lg">
+                      <DollarSign className="h-5 w-5 text-red-600" />
                     </div>
-                  )}
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-2xl font-bold text-red-600">
+                      ${formatCurrency(totalExpensesARS)}
+                    </div>
+                    {totalExpensesUSD > 0 && (
+                      <div className="text-xl font-bold text-red-600">
+                        US${formatCurrency(totalExpensesUSD)}
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-sm text-gray-500 mt-2">
+                    De {expenses.length} gasto{expenses.length !== 1 ? 's' : ''}
+                  </p>
                 </div>
-                <p className={`text-sm font-medium mt-2 ${netBalanceARS >= 0 ? 'text-green-600' : 'text-orange-600'}`}>
-                  {netBalanceARS >= 0 ? 'Superávit' : 'Déficit'}
-                </p>
-              </div>
-            </div>
 
-            {/* Detailed Tables */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Ingresos por Torneo */}
-              <div className="bg-white rounded-lg border overflow-hidden">
-                <div className="px-6 py-4 bg-gray-50 border-b">
-                  <h3 className="text-lg font-semibold text-gray-900">Ingresos por Torneo</h3>
-                </div>
-                <div className="overflow-x-auto max-h-96">
-                  {loading ? (
-                    <div className="p-6 text-center text-gray-600">Cargando...</div>
-                  ) : rows.length === 0 ? (
-                    <div className="p-6 text-center text-gray-500">No hay ingresos registrados</div>
-                  ) : (
-                    <table className="min-w-full divide-y divide-gray-200">
-                      <thead className="bg-gray-50 sticky top-0">
-                        <tr>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Torneo</th>
-                          <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Monto</th>
-                        </tr>
-                      </thead>
-                      <tbody className="bg-white divide-y divide-gray-200">
-                        {rows.map((r) => (
-                          <tr key={r.tournament_id} className="hover:bg-gray-50">
-                            <td className="px-4 py-2 text-sm">{r.tournament_name}</td>
-                            <td className="px-4 py-2 text-sm font-medium text-green-600 text-right">
-                              ${formatCurrency(Number(r.total_paid || 0))}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
+                {/* Balance Card */}
+                <div className="bg-white rounded-lg border p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-medium text-gray-600">Balance Neto</h3>
+                    <div className={`p-2 rounded-lg ${currencyBalance.ARS >= 0 ? 'bg-blue-100' : 'bg-orange-100'}`}>
+                      <DollarSign className={`h-5 w-5 ${currencyBalance.ARS >= 0 ? 'text-blue-600' : 'text-orange-600'}`} />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <div className={`text-2xl font-bold ${currencyBalance.ARS >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>
+                      ${formatCurrency(Math.abs(currencyBalance.ARS))}
+                    </div>
+                    <div className={`text-xl font-bold ${currencyBalance.USD >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>
+                      US${formatCurrency(Math.abs(currencyBalance.USD))}
+                    </div>
+                  </div>
+                  <p className={`text-sm font-medium mt-2 ${currencyBalance.ARS >= 0 ? 'text-green-600' : 'text-orange-600'}`}>
+                    {currencyBalance.ARS >= 0 ? 'Superávit' : 'Déficit'}
+                  </p>
                 </div>
               </div>
-
-              {/* Otros Ingresos */}
-              <div className="bg-white rounded-lg border overflow-hidden">
-                <div className="px-6 py-4 bg-gray-50 border-b">
-                  <h3 className="text-lg font-semibold text-gray-900">Otros Ingresos</h3>
-                  <p className="text-xs text-gray-500 mt-1">Agrupado por descripción</p>
-                </div>
-                <div className="overflow-x-auto max-h-96">
-                  {loading ? (
-                    <div className="p-6 text-center text-gray-600">Cargando...</div>
-                  ) : otherIncomes.length === 0 ? (
-                    <div className="p-6 text-center text-gray-500">No hay otros ingresos registrados</div>
-                  ) : (
-                    <table className="min-w-full divide-y divide-gray-200">
-                      <thead className="bg-gray-50 sticky top-0">
-                        <tr>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Descripción</th>
-                          <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Monto</th>
-                        </tr>
-                      </thead>
-                      <tbody className="bg-white divide-y divide-gray-200">
-                        {groupedOtherIncomes.map((group, idx) => (
-                          <tr key={idx} className="hover:bg-gray-50">
-                            <td className="px-4 py-2 text-sm">{group.description}</td>
-                            <td className="px-4 py-2 text-right">
-                              <div className="flex flex-col items-end gap-1">
-                                {group.amountARS > 0 && (
-                                  <span className="text-sm font-medium text-green-600">
-                                    ${formatCurrency(group.amountARS)}
-                                  </span>
-                                )}
-                                {group.amountUSD > 0 && (
-                                  <span className="text-sm font-medium text-green-600">
-                                    US${formatCurrency(group.amountUSD)}
-                                  </span>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-              </div>
-
-              {/* Gastos Registrados */}
-              <div className="bg-white rounded-lg border overflow-hidden">
-                <div className="px-6 py-4 bg-gray-50 border-b">
-                  <h3 className="text-lg font-semibold text-gray-900">Gastos Registrados</h3>
-                </div>
-                <div className="overflow-x-auto max-h-96">
-                  {loading ? (
-                    <div className="p-6 text-center text-gray-600">Cargando...</div>
-                  ) : expenses.length === 0 ? (
-                    <div className="p-6 text-center text-gray-500">No hay gastos registrados</div>
-                  ) : (
-                    <table className="min-w-full divide-y divide-gray-200">
-                      <thead className="bg-gray-50 sticky top-0">
-                        <tr>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Detalle</th>
-                          <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Monto</th>
-                        </tr>
-                      </thead>
-                      <tbody className="bg-white divide-y divide-gray-200">
-                        {expenses.map((e) => (
-                          <tr key={e.expense_id} className="hover:bg-gray-50">
-                            <td className="px-4 py-2 text-sm">
-                              {new Date(e.expense_date).toLocaleDateString('es-AR')}
-                            </td>
-                            <td className="px-4 py-2 text-sm">{e.detail || '-'}</td>
-                            <td className="px-4 py-2 text-sm font-medium text-red-600 text-right">
-                              {(e as any).currency === 'USD' ? 'US$' : '$'}{formatCurrency(Number(e.amount || 0))}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-              </div>
-            </div>
+            )}
           </div>
         )}
 
@@ -1031,25 +987,87 @@ export default function Payments() {
                   <thead className="bg-gray-50">
                     <tr>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Torneo</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">En posesión de</th>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Cobrado</th>
+                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Acciones</th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
                     {filteredRows.map((r) => (
                       <tr key={r.tournament_id}>
                         <td className="px-4 py-2">{r.tournament_name}</td>
+                        <td className="px-4 py-2">
+                          {(r as any).account_name ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs font-medium">
+                              💰 {(r as any).account_name}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-1 bg-orange-50 text-orange-700 rounded text-xs font-medium">
+                              ⚠️ Pendiente asignar
+                            </span>
+                          )}
+                        </td>
                         <td className="px-4 py-2 font-semibold">${formatCurrency(Number(r.total_paid || 0))}</td>
+                        <td className="px-4 py-2 text-center">
+                          {permissions.canViewAccounting && (
+                            <button
+                              onClick={async () => {
+                                const selectedAccount = (r as any).account_id ? (r as any).account_id.toString() : ''
+                                const accountId = prompt(`Selecciona cuenta para "${r.tournament_name}":\n\n` + 
+                                  accounts.map(a => `${a.account_id} - ${a.account_name}`).join('\n') +
+                                  '\n\nIngresa el número de cuenta:', selectedAccount)
+                                
+                                if (accountId !== null && accountId !== '') {
+                                  try {
+                                    const account = accounts.find(a => a.account_id.toString() === accountId)
+                                    if (!account) {
+                                      toast.error('Cuenta no válida')
+                                      return
+                                    }
+                                    
+                                    // Actualizar torneo con account_id
+                                    await fetch(`/api/club/${clubIdNum}/tournaments/${r.tournament_id}`, {
+                                      method: 'PUT',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ 
+                                        tournament_name: r.tournament_name,
+                                        tournament_date: r.tournament_date,
+                                        tournament_type: 'stroke_play',
+                                        account_id: parseInt(accountId)
+                                      })
+                                    })
+                                    
+                                    toast.success('Cuenta actualizada')
+                                    // Recargar datos
+                                    const data = await paymentsService.getSummary(clubIdNum, { from: from || undefined, to: to || undefined })
+                                    setRows(data)
+                                  } catch (error) {
+                                    toast.error('Error al actualizar cuenta')
+                                  }
+                                }
+                              }}
+                              className="text-blue-600 hover:text-blue-900"
+                              title="Cambiar cuenta"
+                            >
+                              <Pencil className="h-4 w-4 inline" />
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
-                  <tfoot className="bg-gray-100 border-t-2 border-gray-300">
-                    <tr>
-                      <td className="px-4 py-3 font-bold text-gray-900">TOTAL GENERAL</td>
-                      <td className="px-4 py-3 font-bold text-green-700 text-lg">
-                        ${formatCurrency(filteredTotalPaid)}
-                      </td>
-                    </tr>
-                  </tfoot>
+                  {permissions.canViewFinancialTotals && (
+                    <tfoot className="bg-gray-100 border-t-2 border-gray-300">
+                      <tr>
+                        <td className="px-4 py-3 font-bold text-gray-900">TOTAL GENERAL</td>
+                        <td className="px-4 py-3"></td>
+                        <td className="px-4 py-3 font-bold text-green-700 text-lg">
+                          ${formatCurrency(filteredTotalPaid)}
+                        </td>
+                        <td className="px-4 py-3"></td>
+                      </tr>
+                    </tfoot>
+                  )}
                 </table>
               </>
             )}
@@ -1228,13 +1246,14 @@ export default function Payments() {
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Monto</th>
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Tipo Pago</th>
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Descripción</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">En posesión de</th>
                     <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {filteredOtherIncomes.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
+                      <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
                         {otherIncomes.length === 0 ? 'No hay otros ingresos registrados' : 'No hay ingresos que coincidan con los filtros'}
                       </td>
                     </tr>
@@ -1254,6 +1273,17 @@ export default function Payments() {
                         </td>
                         <td className="px-4 py-2 capitalize">{income.payment_type || '-'}</td>
                         <td className="px-4 py-2">{income.description || '-'}</td>
+                        <td className="px-4 py-2">
+                          {(income as any).account_name ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs font-medium">
+                              💰 {(income as any).account_name}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-1 bg-orange-50 text-orange-700 rounded text-xs font-medium">
+                              ⚠️ Pendiente asignar
+                            </span>
+                          )}
+                        </td>
                         <td className="px-4 py-2 text-center">
                           <div className="flex items-center justify-center gap-2">
                             {(income as any).member_id && (
@@ -1281,62 +1311,70 @@ export default function Payments() {
                                 <MessageCircle className="h-4 w-4" />
                               </button>
                             )}
-                            <button
-                              onClick={() => {
-                                const formattedAmount = formatForDisplay(income.amount.toString())
-                                setIncomeDraft({
-                                  member_id: (income as any).member_id ? (income as any).member_id.toString() : '',
-                                  income_date: new Date(income.income_date).toISOString().split('T')[0],
-                                  amount: formattedAmount,
-                                  currency: (income as any).currency || 'ARS',
-                                  payment_type: income.payment_type || 'efectivo',
-                                  description: income.description || ''
-                                })
-                                setMemberSearchText('')
-                                setShowMemberDropdown(false)
-                                setShowDescriptionDropdown(false)
-                                setEditingIncomeId(income.income_id)
-                                setShowIncomeModal(true)
-                              }}
-                              className="text-blue-600 hover:text-blue-900"
-                              title="Editar"
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </button>
-                            <button
-                              onClick={async () => {
-                                if (confirm('¿Eliminar este ingreso?')) {
-                                  try {
-                                    await paymentsService.deleteOtherIncome(clubIdNum, income.income_id)
-                                    const data = await paymentsService.getOtherIncomes(clubIdNum, { from: from || undefined, to: to || undefined })
-                                    setOtherIncomes(data)
-                                    toast.success('Ingreso eliminado exitosamente')
-                                  } catch (error) {
-                                    toast.error('Error al eliminar ingreso')
-                                  }
-                                }
-                              }}
-                              className="text-red-600 hover:text-red-900"
-                              title="Eliminar"
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
+                            {permissions.canManageOtherIncomes && (
+                              <>
+                                <button
+                                  onClick={() => {
+                                    const formattedAmount = formatForDisplay(income.amount.toString())
+                                    setIncomeDraft({
+                                      member_id: (income as any).member_id ? (income as any).member_id.toString() : '',
+                                      income_date: new Date(income.income_date).toISOString().split('T')[0],
+                                      amount: formattedAmount,
+                                      currency: (income as any).currency || 'ARS',
+                                      payment_type: income.payment_type || 'efectivo',
+                                      description: income.description || '',
+                                      custodian: (income as any).custodian || '',
+                                      account_id: (income as any).account_id ? (income as any).account_id.toString() : ''
+                                    })
+                                    setMemberSearchText('')
+                                    setShowMemberDropdown(false)
+                                    setShowDescriptionDropdown(false)
+                                    setEditingIncomeId(income.income_id)
+                                    setShowIncomeModal(true)
+                                  }}
+                                  className="text-blue-600 hover:text-blue-900"
+                                  title="Editar"
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </button>
+                                <button
+                                  onClick={async () => {
+                                    if (confirm('¿Eliminar este ingreso?')) {
+                                      try {
+                                        await paymentsService.deleteOtherIncome(clubIdNum, income.income_id)
+                                        const data = await paymentsService.getOtherIncomes(clubIdNum, { from: from || undefined, to: to || undefined })
+                                        setOtherIncomes(data)
+                                        toast.success('Ingreso eliminado exitosamente')
+                                      } catch (error) {
+                                        toast.error('Error al eliminar ingreso')
+                                      }
+                                    }
+                                  }}
+                                  className="text-red-600 hover:text-red-900"
+                                  title="Eliminar"
+                                >
+                                  <X className="h-4 w-4" />
+                                </button>
+                              </>
+                            )}
                           </div>
                         </td>
                       </tr>
                     ))
                   )}
                 </tbody>
-                <tfoot className="bg-gray-100 border-t-2 border-gray-300">
-                  <tr>
-                    <td colSpan={4} className="px-4 py-3 font-bold text-gray-900">
-                      TOTAL {showIncomeFilters && Object.values(incomeFilters).some(v => v) && '(Filtrado)'}
-                    </td>
-                    <td className="px-4 py-3 font-bold text-green-700 text-lg text-center">
-                      ${formatCurrency(filteredOtherIncomesTotal)}
-                    </td>
-                  </tr>
-                </tfoot>
+                {permissions.canViewFinancialTotals && (
+                  <tfoot className="bg-gray-100 border-t-2 border-gray-300">
+                    <tr>
+                      <td colSpan={4} className="px-4 py-3 font-bold text-gray-900">
+                        TOTAL {showIncomeFilters && Object.values(incomeFilters).some(v => v) && '(Filtrado)'}
+                      </td>
+                      <td className="px-4 py-3 font-bold text-green-700 text-lg text-center">
+                        ${formatCurrency(filteredOtherIncomesTotal)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             )}
           </div>
@@ -1354,6 +1392,7 @@ export default function Payments() {
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Monto</th>
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Recibo</th>
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Detalle</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Pagado desde</th>
                     <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Acciones</th>
                   </tr>
                 </thead>
@@ -1366,44 +1405,61 @@ export default function Payments() {
                       </td>
                       <td className="px-4 py-2">{e.receipt_number || '-'}</td>
                       <td className="px-4 py-2">{e.detail || '-'}</td>
+                      <td className="px-4 py-2">
+                        {(e as any).account_name ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 bg-red-50 text-red-700 rounded text-xs font-medium">
+                            ↗️ {(e as any).account_name}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 bg-orange-50 text-orange-700 rounded text-xs font-medium">
+                            ⚠️ Pendiente asignar
+                          </span>
+                        )}
+                      </td>
                       <td className="px-4 py-2 text-center">
                         <div className="flex items-center justify-center gap-2">
-                          <button
-                            onClick={() => {
-                              const formattedAmount = formatForDisplay(e.amount.toString())
-                              setExpenseDraft({
-                                expense_date: new Date(e.expense_date).toISOString().split('T')[0],
-                                amount: formattedAmount,
-                                currency: (e as any).currency || 'ARS',
-                                receipt_number: e.receipt_number || '',
-                                detail: e.detail || ''
-                              })
-                              setEditingExpenseId(e.expense_id)
-                              setShowExpenseModal(true)
-                            }}
-                            className="text-blue-600 hover:text-blue-900"
-                            title="Editar"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={async () => {
-                              if (confirm('¿Eliminar este gasto?')) {
-                                try {
-                                  await paymentsService.deleteExpense(clubIdNum, e.expense_id)
-                                  const data = await paymentsService.getExpenses(clubIdNum, { from: from || undefined, to: to || undefined })
-                                  setExpenses(data)
-                                  toast.success('Gasto eliminado exitosamente')
-                                } catch (error) {
-                                  toast.error('Error al eliminar gasto')
-                                }
-                              }
-                            }}
-                            className="text-red-600 hover:text-red-900"
-                            title="Eliminar"
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
+                          {permissions.canManageExpenses && (
+                            <>
+                              <button
+                                onClick={() => {
+                                  const formattedAmount = formatForDisplay(e.amount.toString())
+                                  setExpenseDraft({
+                                    expense_date: new Date(e.expense_date).toISOString().split('T')[0],
+                                    amount: formattedAmount,
+                                    currency: (e as any).currency || 'ARS',
+                                    receipt_number: e.receipt_number || '',
+                                    detail: e.detail || '',
+                                    custodian: (e as any).custodian || '',
+                                    account_id: (e as any).account_id ? (e as any).account_id.toString() : ''
+                                  })
+                                  setEditingExpenseId(e.expense_id)
+                                  setShowExpenseModal(true)
+                                }}
+                                className="text-blue-600 hover:text-blue-900"
+                                title="Editar"
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </button>
+                              <button
+                                onClick={async () => {
+                                  if (confirm('¿Eliminar este gasto?')) {
+                                    try {
+                                      await paymentsService.deleteExpense(clubIdNum, e.expense_id)
+                                      const data = await paymentsService.getExpenses(clubIdNum, { from: from || undefined, to: to || undefined })
+                                      setExpenses(data)
+                                      toast.success('Gasto eliminado exitosamente')
+                                    } catch (error) {
+                                      toast.error('Error al eliminar gasto')
+                                    }
+                                  }
+                                }}
+                                className="text-red-600 hover:text-red-900"
+                                title="Eliminar"
+                              >
+                                <X className="h-4 w-4" />
+                              </button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1424,8 +1480,10 @@ export default function Payments() {
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">De</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">A</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">De (Sale)</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Cuenta Origen</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">A (Entra)</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Cuenta Destino</th>
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Tasa</th>
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Notas</th>
                     <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Acciones</th>
@@ -1434,7 +1492,7 @@ export default function Payments() {
                 <tbody className="bg-white divide-y divide-gray-200">
                   {currencyExchanges.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
+                      <td colSpan={8} className="px-4 py-8 text-center text-gray-500">
                         No hay conversiones registradas
                       </td>
                     </tr>
@@ -1445,57 +1503,73 @@ export default function Payments() {
                         <td className="px-4 py-2 font-semibold">
                           {ex.from_currency === 'USD' ? 'US$' : '$'}{formatCurrency(Number(ex.from_amount || 0))} {ex.from_currency}
                         </td>
+                        <td className="px-4 py-2">
+                          <span className="inline-block px-2 py-1 text-xs font-medium bg-red-100 text-red-700 rounded">
+                            📤 {ex.from_account_name || 'Sin asignar'}
+                          </span>
+                        </td>
                         <td className="px-4 py-2 font-semibold text-blue-600">
                           {ex.to_currency === 'USD' ? 'US$' : '$'}{formatCurrency(Number(ex.to_amount || 0))} {ex.to_currency}
                         </td>
-                        <td className="px-4 py-2">{Number(ex.exchange_rate).toFixed(4)}</td>
+                        <td className="px-4 py-2">
+                          <span className="inline-block px-2 py-1 text-xs font-medium bg-green-100 text-green-700 rounded">
+                            📥 {ex.to_account_name || 'Sin asignar'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2">{formatCurrency(Number(ex.exchange_rate || 0))}</td>
                         <td className="px-4 py-2">{ex.notes || '-'}</td>
                         <td className="px-4 py-2 text-center">
                           <div className="flex items-center justify-center gap-2">
-                            <button
-                              onClick={async () => {
-                                setExchangeDraft({
-                                  exchange_date: new Date(ex.exchange_date).toISOString().split('T')[0],
-                                  from_currency: ex.from_currency,
-                                  from_amount: formatForDisplay(ex.from_amount.toString()),
-                                  to_currency: ex.to_currency,
-                                  to_amount: formatForDisplay(ex.to_amount.toString()),
-                                  exchange_rate: ex.exchange_rate.toString(),
-                                  notes: ex.notes || ''
-                                })
-                                setEditingExchangeId(ex.exchange_id)
-                                // Cargar balance disponible
-                                try {
-                                  const balance = await paymentsService.getCurrencyBalance(clubIdNum)
-                                  setCurrencyBalance(balance)
-                                } catch (error) {
-                                  console.error('Error al cargar balance:', error)
-                                }
-                                setShowExchangeModal(true)
-                              }}
-                              className="text-blue-600 hover:text-blue-900"
-                              title="Editar"
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </button>
-                            <button
-                              onClick={async () => {
-                                if (confirm('¿Eliminar esta conversión?')) {
-                                  try {
-                                    await paymentsService.deleteCurrencyExchange(clubIdNum, ex.exchange_id)
-                                    const data = await paymentsService.getCurrencyExchanges(clubIdNum, { from: from || undefined, to: to || undefined })
-                                    setCurrencyExchanges(data)
-                                    toast.success('Conversión eliminada exitosamente')
-                                  } catch (error) {
-                                    toast.error('Error al eliminar conversión')
-                                  }
-                                }
-                              }}
-                              className="text-red-600 hover:text-red-900"
-                              title="Eliminar"
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
+                            {permissions.canManageCurrencyExchanges && (
+                              <>
+                                <button
+                                  onClick={async () => {
+                                    setExchangeDraft({
+                                      exchange_date: new Date(ex.exchange_date).toISOString().split('T')[0],
+                                      from_currency: ex.from_currency,
+                                      from_amount: formatForDisplay(ex.from_amount.toString()),
+                                      to_currency: ex.to_currency,
+                                      to_amount: formatForDisplay(ex.to_amount.toString()),
+                                      exchange_rate: formatForDisplay(ex.exchange_rate.toString()),
+                                      notes: ex.notes || '',
+                                      from_account_id: ex.from_account_id?.toString() || '',
+                                      to_account_id: ex.to_account_id?.toString() || ''
+                                    })
+                                    setEditingExchangeId(ex.exchange_id)
+                                    // Cargar balance disponible
+                                    try {
+                                      const balance = await paymentsService.getCurrencyBalance(clubIdNum)
+                                      setCurrencyBalance(balance)
+                                    } catch (error) {
+                                      console.error('Error al cargar balance:', error)
+                                    }
+                                    setShowExchangeModal(true)
+                                  }}
+                                  className="text-blue-600 hover:text-blue-900"
+                                  title="Editar"
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </button>
+                                <button
+                                  onClick={async () => {
+                                    if (confirm('¿Eliminar esta conversión?')) {
+                                      try {
+                                        await paymentsService.deleteCurrencyExchange(clubIdNum, ex.exchange_id)
+                                        const data = await paymentsService.getCurrencyExchanges(clubIdNum, { from: from || undefined, to: to || undefined })
+                                        setCurrencyExchanges(data)
+                                        toast.success('Conversión eliminada exitosamente')
+                                      } catch (error) {
+                                        toast.error('Error al eliminar conversión')
+                                      }
+                                    }
+                                  }}
+                                  className="text-red-600 hover:text-red-900"
+                                  title="Eliminar"
+                                >
+                                  <X className="h-4 w-4" />
+                                </button>
+                              </>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -1504,6 +1578,476 @@ export default function Payments() {
                 </tbody>
               </table>
             )}
+          </div>
+        )}
+
+        {/* Tab: Cuentas */}
+        {tab==='cuentas' && (
+          <div className="space-y-6">
+            {/* Botón para crear cuenta - Siempre visible arriba */}
+            {permissions.canViewAccounting && (
+              <div className="flex justify-end">
+                <button
+                  onClick={() => {
+                    setAccountDraft({ account_name: '', description: '' })
+                    setShowAccountModal(true)
+                  }}
+                  className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center gap-2"
+                >
+                  <DollarSign className="w-4 h-4" />
+                  Crear Nueva Cuenta
+                </button>
+              </div>
+            )}
+
+            {/* Dashboard de Saldos */}
+            {accounts && accounts.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {accounts.map(account => (
+                  <div key={account.account_id} className="bg-white rounded-lg border p-4 relative">
+                    <h3 className="font-semibold text-gray-900 mb-2">{account.account_name}</h3>
+                    <div className="space-y-1">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-gray-600">ARS:</span>
+                        <span className="font-semibold text-green-600">
+                          ${formatCurrency(Number(account.current_balance_ars || 0))}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-gray-600">USD:</span>
+                        <span className="font-semibold text-blue-600">
+                          US${formatCurrency(Number(account.current_balance_usd || 0))}
+                        </span>
+                      </div>
+                    </div>
+                    {account.description && (
+                      <p className="text-xs text-gray-500 mt-2">{account.description}</p>
+                    )}
+                    {/* Botón eliminar - solo si saldo es 0 */}
+                    {permissions.canViewAccounting && parseFloat(account.current_balance_ars) === 0 && parseFloat(account.current_balance_usd) === 0 && (
+                      <button
+                        onClick={async () => {
+                          if (confirm(`¿Eliminar la cuenta "${account.account_name}"?\n\nEsta acción no se puede deshacer.`)) {
+                            try {
+                              await accountsService.deleteAccount(clubIdNum, account.account_id)
+                              toast.success('Cuenta eliminada exitosamente')
+                              const accountsData = await accountsService.getAccounts(clubIdNum)
+                              setAccounts(accountsData)
+                            } catch (error: any) {
+                              toast.error(error?.response?.data?.error || 'Error al eliminar cuenta')
+                            }
+                          }
+                        }}
+                        className="absolute top-2 right-2 text-red-500 hover:text-red-700 p-1"
+                        title="Eliminar cuenta"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 text-center">
+                <DollarSign className="w-12 h-12 text-blue-400 mx-auto mb-3" />
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">No hay cuentas creadas</h3>
+                <p className="text-gray-600 mb-4">
+                  Creá tu primera cuenta para comenzar a gestionar el dinero del club
+                </p>
+              </div>
+            )}
+
+            {/* Movimientos Pendientes de Asignar */}
+            {(() => {
+              const pendingIncomesARS = otherIncomes.filter(i => !(i as any).account_id && (i as any).currency !== 'USD').reduce((sum, i) => sum + Number(i.amount || 0), 0)
+              const pendingIncomesUSD = otherIncomes.filter(i => !(i as any).account_id && (i as any).currency === 'USD').reduce((sum, i) => sum + Number(i.amount || 0), 0)
+              const pendingExpensesARS = expenses.filter(e => !(e as any).account_id && (e as any).currency !== 'USD').reduce((sum, e) => sum + Number(e.amount || 0), 0)
+              const pendingExpensesUSD = expenses.filter(e => !(e as any).account_id && (e as any).currency === 'USD').reduce((sum, e) => sum + Number(e.amount || 0), 0)
+              const balancePendingARS = pendingIncomesARS - pendingExpensesARS
+              const balancePendingUSD = pendingIncomesUSD - pendingExpensesUSD
+              
+              const hasPending = pendingIncomesARS > 0 || pendingIncomesUSD > 0 || pendingExpensesARS > 0 || pendingExpensesUSD > 0
+
+              if (!hasPending) return null
+
+              return (
+                <div className="bg-orange-50 border-2 border-orange-300 rounded-lg p-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <span className="text-2xl">⚠️</span>
+                    <h3 className="text-lg font-bold text-orange-800">Pendientes de Asignar Cuenta</h3>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Ingresos pendientes */}
+                    {(pendingIncomesARS > 0 || pendingIncomesUSD > 0) && (
+                      <div className="bg-white rounded-lg p-4 border border-orange-200">
+                        <h4 className="text-sm font-semibold text-gray-700 mb-2">Ingresos sin cuenta</h4>
+                        {pendingIncomesARS > 0 && (
+                          <div className="text-lg font-bold text-green-600">
+                            +${formatCurrency(pendingIncomesARS)}
+                          </div>
+                        )}
+                        {pendingIncomesUSD > 0 && (
+                          <div className="text-lg font-bold text-green-600">
+                            +US${formatCurrency(pendingIncomesUSD)}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {/* Gastos pendientes */}
+                    {(pendingExpensesARS > 0 || pendingExpensesUSD > 0) && (
+                      <div className="bg-white rounded-lg p-4 border border-orange-200">
+                        <h4 className="text-sm font-semibold text-gray-700 mb-2">Gastos sin cuenta</h4>
+                        {pendingExpensesARS > 0 && (
+                          <div className="text-lg font-bold text-red-600">
+                            -${formatCurrency(pendingExpensesARS)}
+                          </div>
+                        )}
+                        {pendingExpensesUSD > 0 && (
+                          <div className="text-lg font-bold text-red-600">
+                            -US${formatCurrency(pendingExpensesUSD)}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  {/* Total pendiente */}
+                  <div className="mt-4 pt-4 border-t border-orange-300">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-semibold text-gray-700">Balance Pendiente:</span>
+                      <div className="text-right">
+                        {balancePendingARS !== 0 && (
+                          <div className={`text-xl font-bold ${balancePendingARS >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                            {balancePendingARS >= 0 ? '+' : ''}${formatCurrency(balancePendingARS)}
+                          </div>
+                        )}
+                        {balancePendingUSD !== 0 && (
+                          <div className={`text-xl font-bold ${balancePendingUSD >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                            {balancePendingUSD >= 0 ? '+' : ''}US${formatCurrency(balancePendingUSD)}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-xs text-orange-700 mt-2">
+                      💡 Asigná cuentas a estos movimientos desde las pestañas "Otros Ingresos" y "Gastos"
+                    </p>
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* Botón de Transferencia */}
+            {permissions.canViewAccounting && accounts && accounts.length >= 2 && (
+              <div className="flex justify-end">
+                <button
+                  onClick={() => {
+                    const today = getLocalDateString()
+                    setTransferDraft({ from_account_id: '', to_account_id: '', amount: '', currency: 'ARS', description: '', transaction_date: today })
+                    setShowTransferModal(true)
+                  }}
+                  className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 flex items-center gap-2"
+                >
+                  <DollarSign className="w-4 h-4" />
+                  Transferir entre cuentas
+                </button>
+              </div>
+            )}
+
+            {/* Historial de Transacciones */}
+            <div className="bg-white rounded-lg border">
+              <div className="p-4 border-b bg-gray-50">
+                <h3 className="font-semibold text-gray-900">Historial de Movimientos</h3>
+              </div>
+              <div className="overflow-x-auto">
+                {loading ? (
+                  <div className="p-6 text-center text-gray-600">Cargando...</div>
+                ) : transactions.length === 0 ? (
+                  <div className="p-6 text-center text-gray-500">
+                    No hay transacciones registradas
+                  </div>
+                ) : (
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Tipo</th>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Desde</th>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Hacia</th>
+                        <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Monto</th>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Descripción</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {transactions.map(tx => (
+                        <tr key={tx.transaction_id} className="hover:bg-gray-50">
+                          <td className="px-4 py-2 text-sm text-gray-900">
+                            {new Date(tx.transaction_date).toLocaleDateString('es-AR')}
+                          </td>
+                          <td className="px-4 py-2 text-sm">
+                            <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
+                              tx.transaction_type === 'income_tournament' ? 'bg-green-100 text-green-800' :
+                              tx.transaction_type === 'income_other' ? 'bg-blue-100 text-blue-800' :
+                              tx.transaction_type === 'expense' ? 'bg-red-100 text-red-800' :
+                              tx.transaction_type === 'transfer' ? 'bg-purple-100 text-purple-800' :
+                              'bg-gray-100 text-gray-800'
+                            }`}>
+                              {tx.transaction_type === 'income_tournament' ? 'Ingreso Torneo' :
+                               tx.transaction_type === 'income_other' ? 'Otro Ingreso' :
+                               tx.transaction_type === 'expense' ? 'Gasto' :
+                               tx.transaction_type === 'transfer' ? 'Transferencia' :
+                               tx.transaction_type}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2 text-sm text-gray-900">
+                            {tx.from_account_name || '-'}
+                          </td>
+                          <td className="px-4 py-2 text-sm text-gray-900">
+                            {tx.to_account_name || '-'}
+                          </td>
+                          <td className="px-4 py-2 text-sm text-right">
+                            <span className={`font-semibold ${
+                              tx.transaction_type === 'expense' ? 'text-red-600' : 'text-green-600'
+                            }`}>
+                              {tx.currency === 'USD' ? 'US$' : '$'}
+                              {formatCurrency(Number(tx.amount || 0))}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2 text-sm text-gray-600">
+                            {tx.description || '-'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal: Crear/Editar Cuenta */}
+        {showAccountModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/50" onClick={() => setShowAccountModal(false)} />
+            <div className="relative mx-auto w-full max-w-md bg-white rounded-lg shadow-xl">
+              <div className="px-6 py-4 border-b">
+                <h3 className="text-lg font-semibold">Nueva Cuenta</h3>
+              </div>
+              <div className="p-6 space-y-4">
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">Nombre de la cuenta *</label>
+                  <input
+                    type="text"
+                    value={accountDraft.account_name}
+                    onChange={(e) => setAccountDraft(d => ({ ...d, account_name: e.target.value }))}
+                    className="w-full px-3 py-2 border rounded"
+                    placeholder="Ej: Caja del club, Tesorero, Cuenta banco"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">Descripción (opcional)</label>
+                  <textarea
+                    value={accountDraft.description}
+                    onChange={(e) => setAccountDraft(d => ({ ...d, description: e.target.value }))}
+                    className="w-full px-3 py-2 border rounded"
+                    rows={3}
+                    placeholder="Ej: Dinero en efectivo guardado en la caja fuerte del club"
+                  />
+                </div>
+              </div>
+              <div className="px-6 py-4 border-t flex justify-end gap-2">
+                <button
+                  onClick={() => {
+                    setShowAccountModal(false)
+                    setAccountDraft({ account_name: '', description: '' })
+                  }}
+                  className="px-4 py-2 border rounded"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={async () => {
+                    if (!accountDraft.account_name.trim()) {
+                      toast.error('El nombre de la cuenta es requerido')
+                      return
+                    }
+                    try {
+                      await accountsService.createAccount(clubIdNum, accountDraft)
+                      toast.success('Cuenta creada exitosamente')
+                      setShowAccountModal(false)
+                      setAccountDraft({ account_name: '', description: '' })
+                      // Recargar cuentas
+                      const data = await accountsService.getAccounts(clubIdNum)
+                      setAccounts(data)
+                    } catch (error: any) {
+                      toast.error(error?.response?.data?.error || 'Error al crear cuenta')
+                    }
+                  }}
+                  disabled={!accountDraft.account_name.trim()}
+                  className={`px-4 py-2 rounded ${
+                    !accountDraft.account_name.trim()
+                      ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                      : 'bg-blue-600 text-white hover:bg-blue-700'
+                  }`}
+                >
+                  Crear Cuenta
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal: Transferencia entre Cuentas */}
+        {showTransferModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/50" onClick={() => setShowTransferModal(false)} />
+            <div className="relative mx-auto w-full max-w-md bg-white rounded-lg shadow-xl">
+              <div className="px-6 py-4 border-b">
+                <h3 className="text-lg font-semibold">Transferir entre Cuentas</h3>
+              </div>
+              <div className="p-6 space-y-4">
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">Fecha *</label>
+                  <input
+                    type="date"
+                    value={transferDraft.transaction_date}
+                    onChange={(e) => setTransferDraft(d => ({ ...d, transaction_date: e.target.value }))}
+                    className="w-full px-3 py-2 border rounded"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">Desde (cuenta origen) *</label>
+                  <select
+                    value={transferDraft.from_account_id}
+                    onChange={(e) => setTransferDraft(d => ({ ...d, from_account_id: e.target.value }))}
+                    className="w-full px-3 py-2 border rounded"
+                  >
+                    <option value="">Seleccionar...</option>
+                    {accounts.filter(a => a.account_id.toString() !== transferDraft.to_account_id).map(account => (
+                      <option key={account.account_id} value={account.account_id}>
+                        {account.account_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">Hacia (cuenta destino) *</label>
+                  <select
+                    value={transferDraft.to_account_id}
+                    onChange={(e) => setTransferDraft(d => ({ ...d, to_account_id: e.target.value }))}
+                    className="w-full px-3 py-2 border rounded"
+                  >
+                    <option value="">Seleccionar...</option>
+                    {accounts.filter(a => a.account_id.toString() !== transferDraft.from_account_id).map(account => (
+                      <option key={account.account_id} value={account.account_id}>
+                        {account.account_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">Monto *</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={transferDraft.amount}
+                      onChange={(e) => {
+                        const validated = validateNumberInput(e.target.value)
+                        setTransferDraft(d => ({ ...d, amount: validated }))
+                      }}
+                      className="flex-1 px-3 py-2 border rounded"
+                      placeholder="0,00"
+                    />
+                    <select
+                      value={transferDraft.currency}
+                      onChange={(e) => setTransferDraft(d => ({ ...d, currency: e.target.value }))}
+                      className="w-20 px-2 py-2 border rounded"
+                    >
+                      <option value="ARS">ARS</option>
+                      <option value="USD">USD</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">Descripción (opcional)</label>
+                  <textarea
+                    value={transferDraft.description}
+                    onChange={(e) => setTransferDraft(d => ({ ...d, description: e.target.value }))}
+                    className="w-full px-3 py-2 border rounded"
+                    rows={2}
+                    placeholder="Ej: Transferencia para cubrir gastos..."
+                  />
+                </div>
+              </div>
+              <div className="px-6 py-4 border-t flex justify-end gap-2">
+                <button
+                  onClick={() => {
+                    setShowTransferModal(false)
+                    const today = getLocalDateString()
+                    setTransferDraft({ from_account_id: '', to_account_id: '', amount: '', currency: 'ARS', description: '', transaction_date: today })
+                  }}
+                  className="px-4 py-2 border rounded"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={async () => {
+                    // TODO: Implementar addTransaction en accountsService
+                    toast.error('Funcionalidad en desarrollo')
+                    /* 
+                    if (!transferDraft.from_account_id || !transferDraft.to_account_id || !transferDraft.amount || !transferDraft.transaction_date) {
+                      toast.error('Todos los campos obligatorios deben estar completos')
+                      return
+                    }
+                    if (transferDraft.from_account_id === transferDraft.to_account_id) {
+                      toast.error('Las cuentas deben ser diferentes')
+                      return
+                    }
+                    try {
+                      const transferData = {
+                        ...transferDraft,
+                        amount: parseFormattedNumber(transferDraft.amount),
+                        from_account_id: parseInt(transferDraft.from_account_id),
+                        to_account_id: parseInt(transferDraft.to_account_id),
+                        transaction_type: 'transfer'
+                      }
+                      await accountsService.addTransaction(clubIdNum, transferData)
+                      toast.success('Transferencia realizada exitosamente')
+                      setShowTransferModal(false)
+                      const today = getLocalDateString()
+                      setTransferDraft({ from_account_id: '', to_account_id: '', amount: '', currency: 'ARS', description: '', transaction_date: today })
+                      // Recargar datos
+                      const [accountsData, transactionsData] = await Promise.all([
+                        accountsService.getAccounts(clubIdNum),
+                        accountsService.getTransactions(clubIdNum, { from: from || undefined, to: to || undefined })
+                      ])
+                      setAccounts(accountsData)
+                      setTransactions(transactionsData)
+                    } catch (error: any) {
+                      toast.error(error?.response?.data?.error || 'Error al realizar transferencia')
+                    }
+                    */
+                  }}
+                  disabled={
+                    !transferDraft.from_account_id ||
+                    !transferDraft.to_account_id ||
+                    !transferDraft.amount ||
+                    !transferDraft.transaction_date ||
+                    parseFormattedNumber(transferDraft.amount) === 0
+                  }
+                  className={`px-4 py-2 rounded ${
+                    !transferDraft.from_account_id ||
+                    !transferDraft.to_account_id ||
+                    !transferDraft.amount ||
+                    !transferDraft.transaction_date ||
+                    parseFormattedNumber(transferDraft.amount) === 0
+                      ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                      : 'bg-purple-600 text-white hover:bg-purple-700'
+                  }`}
+                >
+                  Transferir
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -1604,8 +2148,9 @@ export default function Payments() {
           <div className="fixed inset-0 z-50">
             <div className="absolute inset-0 bg-black/30" onClick={() => {
               setShowExpenseModal(false)
-              setExpenseDraft({ expense_date: '', amount: '', currency: 'ARS', receipt_number: '', detail: '' })
+              setExpenseDraft({ expense_date: '', amount: '', currency: 'ARS', receipt_number: '', detail: '', custodian: '', account_id: '' })
               setEditingExpenseId(null)
+              setShowCustodianDropdown(false)
             }} />
             <div className="relative mx-auto my-10 w-full max-w-lg bg-white rounded-lg shadow-xl p-4 space-y-3">
               <h3 className="text-lg font-semibold">{editingExpenseId ? 'Editar gasto' : 'Nuevo gasto'}</h3>
@@ -1646,6 +2191,26 @@ export default function Payments() {
                   <input value={expenseDraft.receipt_number} onChange={(e) => setExpenseDraft(d => ({ ...d, receipt_number: e.target.value }))} className="w-full px-3 py-2 border rounded" />
                 </div>
                 <div>
+                  <label className="block text-sm text-gray-600 mb-1">De qué cuenta sale el dinero *</label>
+                  <select
+                    value={expenseDraft.account_id}
+                    onChange={(e) => setExpenseDraft(d => ({ ...d, account_id: e.target.value }))}
+                    className="w-full px-3 py-2 border rounded"
+                  >
+                    <option value="">Seleccionar cuenta...</option>
+                    {accounts.map(account => (
+                      <option key={account.account_id} value={account.account_id}>
+                        {account.account_name}
+                      </option>
+                    ))}
+                  </select>
+                  {accounts.length === 0 && (
+                    <p className="text-xs text-amber-600 mt-1">
+                      ⚠️ Primero debes crear al menos una cuenta en la pestaña "Cuentas"
+                    </p>
+                  )}
+                </div>
+                <div>
                   <label className="block text-sm text-gray-600">Detalle</label>
                   <textarea value={expenseDraft.detail} onChange={(e) => setExpenseDraft(d => ({ ...d, detail: e.target.value }))} className="w-full px-3 py-2 border rounded" rows={3} />
                 </div>
@@ -1653,15 +2218,21 @@ export default function Payments() {
               <div className="flex justify-end gap-2 pt-2">
                 <button onClick={() => {
                   setShowExpenseModal(false)
-                  setExpenseDraft({ expense_date: '', amount: '', currency: 'ARS', receipt_number: '', detail: '' })
+                  setExpenseDraft({ expense_date: '', amount: '', currency: 'ARS', receipt_number: '', detail: '', custodian: '', account_id: '' })
                   setEditingExpenseId(null)
+                  setShowCustodianDropdown(false)
                 }} className="px-4 py-2 border rounded">Cancelar</button>
                 <button
                   onClick={async () => {
+                    if (!expenseDraft.account_id) {
+                      toast.error('Debes seleccionar una cuenta')
+                      return
+                    }
                     try {
                       const expenseToSave = {
                         ...expenseDraft,
-                        amount: parseFormattedNumber(expenseDraft.amount)
+                        amount: parseFormattedNumber(expenseDraft.amount),
+                        account_id: parseInt(expenseDraft.account_id)
                       }
                       if (editingExpenseId) {
                         await paymentsService.updateExpense(clubIdNum, editingExpenseId, expenseToSave as any)
@@ -1671,15 +2242,24 @@ export default function Payments() {
                         toast.success('Gasto agregado exitosamente')
                       }
                       setShowExpenseModal(false)
-                      setExpenseDraft({ expense_date: '', amount: '', currency: 'ARS', receipt_number: '', detail: '' })
+                      setExpenseDraft({ expense_date: '', amount: '', currency: 'ARS', receipt_number: '', detail: '', custodian: '', account_id: '' })
                       setEditingExpenseId(null)
+                      setShowCustodianDropdown(false)
                       const ex = await paymentsService.getExpenses(clubIdNum, { from: from || undefined, to: to || undefined })
                       setExpenses(ex)
+                      // Reload accounts to update balances
+                      const accountsData = await accountsService.getAccounts(clubIdNum)
+                      setAccounts(accountsData)
                     } catch (error) {
                       toast.error('Error al guardar gasto')
                     }
                   }}
-                  className="px-4 py-2 bg-gray-900 text-white rounded hover:bg-gray-800"
+                  disabled={!expenseDraft.account_id || !expenseDraft.amount || !expenseDraft.expense_date}
+                  className={`px-4 py-2 rounded ${
+                    !expenseDraft.account_id || !expenseDraft.amount || !expenseDraft.expense_date
+                      ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                      : 'bg-gray-900 text-white hover:bg-gray-800'
+                  }`}
                 >
                   Guardar
                 </button>
@@ -1693,10 +2273,11 @@ export default function Payments() {
           <div className="fixed inset-0 z-50">
             <div className="absolute inset-0 bg-black/30" onClick={() => {
               setShowIncomeModal(false)
-              setIncomeDraft({ member_id: '', income_date: '', amount: '', currency: 'ARS', payment_type: 'efectivo', description: '' })
+              setIncomeDraft({ member_id: '', income_date: '', amount: '', currency: 'ARS', payment_type: 'efectivo', description: '', custodian: '', account_id: '' })
               setMemberSearchText('')
               setShowMemberDropdown(false)
               setShowDescriptionDropdown(false)
+              setShowCustodianDropdown(false)
               setEditingIncomeId(null)
             }} />
             <div className="relative mx-auto my-10 w-full max-w-lg bg-white rounded-lg shadow-xl p-4 space-y-3">
@@ -1834,6 +2415,26 @@ export default function Payments() {
                     <option value="otro">Otro</option>
                   </select>
                 </div>
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">A qué cuenta entra el dinero *</label>
+                  <select
+                    value={incomeDraft.account_id}
+                    onChange={(e) => setIncomeDraft(d => ({ ...d, account_id: e.target.value }))}
+                    className="w-full px-3 py-2 border rounded"
+                  >
+                    <option value="">Seleccionar cuenta...</option>
+                    {accounts.map(account => (
+                      <option key={account.account_id} value={account.account_id}>
+                        {account.account_name}
+                      </option>
+                    ))}
+                  </select>
+                  {accounts.length === 0 && (
+                    <p className="text-xs text-amber-600 mt-1">
+                      ⚠️ Primero debes crear al menos una cuenta en la pestaña "Cuentas"
+                    </p>
+                  )}
+                </div>
                 <div className="relative description-dropdown-container">
                   <label className="block text-sm text-gray-600 mb-1">Descripción</label>
                   <textarea 
@@ -1886,19 +2487,25 @@ export default function Payments() {
               <div className="flex justify-end gap-2 pt-2">
                 <button onClick={() => {
                   setShowIncomeModal(false)
-                  setIncomeDraft({ member_id: '', income_date: '', amount: '', currency: 'ARS', payment_type: 'efectivo', description: '' })
+                  setIncomeDraft({ member_id: '', income_date: '', amount: '', currency: 'ARS', payment_type: 'efectivo', description: '', custodian: '', account_id: '' })
                   setMemberSearchText('')
                   setShowMemberDropdown(false)
                   setShowDescriptionDropdown(false)
+                  setShowCustodianDropdown(false)
                   setEditingIncomeId(null)
                 }} className="px-4 py-2 border rounded">Cancelar</button>
                 <button
                   onClick={async () => {
+                    if (!incomeDraft.account_id) {
+                      toast.error('Debes seleccionar una cuenta')
+                      return
+                    }
                     try {
                       const incomeToSave = {
                         ...incomeDraft,
                         member_id: incomeDraft.member_id ? parseInt(incomeDraft.member_id) : null,
-                        amount: parseFormattedNumber(incomeDraft.amount)
+                        amount: parseFormattedNumber(incomeDraft.amount),
+                        account_id: parseInt(incomeDraft.account_id)
                       }
                       if (editingIncomeId) {
                         await paymentsService.updateOtherIncome(clubIdNum, editingIncomeId, incomeToSave as any)
@@ -1908,18 +2515,27 @@ export default function Payments() {
                         toast.success('Ingreso agregado exitosamente')
                       }
                       setShowIncomeModal(false)
-                      setIncomeDraft({ member_id: '', income_date: '', amount: '', currency: 'ARS', payment_type: 'efectivo', description: '' })
+                      setIncomeDraft({ member_id: '', income_date: '', amount: '', currency: 'ARS', payment_type: 'efectivo', description: '', custodian: '', account_id: '' })
                       setMemberSearchText('')
                       setShowMemberDropdown(false)
                       setShowDescriptionDropdown(false)
+                      setShowCustodianDropdown(false)
                       setEditingIncomeId(null)
                       const data = await paymentsService.getOtherIncomes(clubIdNum, { from: from || undefined, to: to || undefined })
                       setOtherIncomes(data)
+                      // Reload accounts to update balances
+                      const accountsData = await accountsService.getAccounts(clubIdNum)
+                      setAccounts(accountsData)
                     } catch (error) {
                       toast.error(editingIncomeId ? 'Error al actualizar ingreso' : 'Error al agregar ingreso')
                     }
                   }}
-                  className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+                  disabled={!incomeDraft.account_id || !incomeDraft.amount || !incomeDraft.income_date}
+                  className={`px-4 py-2 rounded ${
+                    !incomeDraft.account_id || !incomeDraft.amount || !incomeDraft.income_date
+                      ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                      : 'bg-green-600 text-white hover:bg-green-700'
+                  }`}
                 >
                   Guardar
                 </button>
@@ -1930,7 +2546,7 @@ export default function Payments() {
 
         {/* Modal de Conversión de Moneda */}
         {showExchangeModal && (
-          <div className="fixed inset-0 z-50">
+          <div className="fixed inset-0 z-50 overflow-y-auto">
             <div className="absolute inset-0 bg-black/30" onClick={() => {
               setShowExchangeModal(false)
               setExchangeDraft({ 
@@ -1940,11 +2556,13 @@ export default function Payments() {
                 to_currency: 'USD', 
                 to_amount: '', 
                 exchange_rate: '',
-                notes: '' 
+                notes: '',
+                from_account_id: '',
+                to_account_id: ''
               })
               setEditingExchangeId(null)
             }} />
-            <div className="relative mx-auto my-10 w-full max-w-lg bg-white rounded-lg shadow-xl p-4 space-y-3">
+            <div className="relative mx-auto my-10 w-full max-w-lg bg-white rounded-lg shadow-xl p-4 space-y-3 max-h-[90vh] overflow-y-auto">
               <h3 className="text-lg font-semibold text-blue-600">{editingExchangeId ? 'Editar conversión' : 'Registrar conversión'}</h3>
               
               {/* Balance disponible */}
@@ -1973,10 +2591,25 @@ export default function Payments() {
                       value={exchangeDraft.from_amount} 
                       onChange={(e) => {
                         const validated = validateNumberInput(e.target.value)
-                        const formatted = formatForDisplay(validated)
+                        setExchangeDraft(d => {
+                          const newDraft = { ...d, from_amount: validated }
+                          // Auto-calcular to_amount si hay tasa de cambio
+                          if (d.exchange_rate) {
+                            const fromNum = parseFormattedNumber(validated)
+                            const rate = parseFloat(d.exchange_rate)
+                            if (fromNum > 0 && rate > 0) {
+                              const toNum = fromNum / rate
+                              newDraft.to_amount = toNum.toFixed(2).replace('.', ',')
+                            }
+                          }
+                          return newDraft
+                        })
+                      }}
+                      onBlur={(e) => {
+                        const formatted = formatForDisplay(e.target.value)
                         setExchangeDraft(d => {
                           const newDraft = { ...d, from_amount: formatted }
-                          // Auto-calcular to_amount si hay tasa de cambio
+                          // Recalcular to_amount con el valor formateado
                           if (d.exchange_rate) {
                             const fromNum = parseFormattedNumber(formatted)
                             const rate = parseFloat(d.exchange_rate)
@@ -1989,7 +2622,7 @@ export default function Payments() {
                         })
                       }}
                       className={`flex-1 px-3 py-2 border rounded ${
-                        exchangeDraft.from_amount && parseFormattedNumber(exchangeDraft.from_amount) > currencyBalance[exchangeDraft.from_currency]
+                        exchangeDraft.from_amount && parseFormattedNumber(exchangeDraft.from_amount) > currencyBalance[exchangeDraft.from_currency as 'ARS' | 'USD']
                           ? 'border-red-500 bg-red-50'
                           : ''
                       }`}
@@ -2004,9 +2637,9 @@ export default function Payments() {
                       <option value="USD">USD</option>
                     </select>
                   </div>
-                  {exchangeDraft.from_amount && parseFormattedNumber(exchangeDraft.from_amount) > currencyBalance[exchangeDraft.from_currency] && (
+                  {exchangeDraft.from_amount && parseFormattedNumber(exchangeDraft.from_amount) > currencyBalance[exchangeDraft.from_currency as 'ARS' | 'USD'] && (
                     <p className="text-xs text-red-600 mt-1">
-                      ⚠️ Fondos insuficientes. Disponible: {exchangeDraft.from_currency === 'USD' ? 'US$' : '$'}{formatCurrency(currencyBalance[exchangeDraft.from_currency])}
+                      ⚠️ Fondos insuficientes. Disponible: {exchangeDraft.from_currency === 'USD' ? 'US$' : '$'}{formatCurrency(currencyBalance[exchangeDraft.from_currency as 'ARS' | 'USD'])}
                     </p>
                   )}
                 </div>
@@ -2018,10 +2651,25 @@ export default function Payments() {
                       value={exchangeDraft.to_amount} 
                       onChange={(e) => {
                         const validated = validateNumberInput(e.target.value)
-                        const formatted = formatForDisplay(validated)
+                        setExchangeDraft(d => {
+                          const newDraft = { ...d, to_amount: validated }
+                          // Auto-calcular from_amount si hay tasa de cambio
+                          if (d.exchange_rate) {
+                            const toNum = parseFormattedNumber(validated)
+                            const rate = parseFloat(d.exchange_rate)
+                            if (toNum > 0 && rate > 0) {
+                              const fromNum = toNum * rate
+                              newDraft.from_amount = fromNum.toFixed(2).replace('.', ',')
+                            }
+                          }
+                          return newDraft
+                        })
+                      }}
+                      onBlur={(e) => {
+                        const formatted = formatForDisplay(e.target.value)
                         setExchangeDraft(d => {
                           const newDraft = { ...d, to_amount: formatted }
-                          // Auto-calcular from_amount si hay tasa de cambio
+                          // Recalcular from_amount con el valor formateado
                           if (d.exchange_rate) {
                             const toNum = parseFormattedNumber(formatted)
                             const rate = parseFloat(d.exchange_rate)
@@ -2058,7 +2706,7 @@ export default function Payments() {
                         // Auto-calcular to_amount si hay from_amount
                         if (d.from_amount) {
                           const fromNum = parseFormattedNumber(d.from_amount)
-                          const rate = parseFloat(validated)
+                          const rate = parseFormattedNumber(validated)
                           if (fromNum > 0 && rate > 0) {
                             const toNum = fromNum / rate
                             newDraft.to_amount = toNum.toFixed(2).replace('.', ',')
@@ -2067,16 +2715,72 @@ export default function Payments() {
                         return newDraft
                       })
                     }}
+                    onBlur={(e) => {
+                      const formatted = formatForDisplay(e.target.value)
+                      setExchangeDraft(d => {
+                        const newDraft = { ...d, exchange_rate: formatted }
+                        // Recalcular to_amount con el valor formateado
+                        if (d.from_amount) {
+                          const fromNum = parseFormattedNumber(d.from_amount)
+                          const rate = parseFormattedNumber(formatted)
+                          if (fromNum > 0 && rate > 0) {
+                            const toNum = fromNum / rate
+                            newDraft.to_amount = formatForDisplay(toNum.toFixed(2))
+                          }
+                        }
+                        return newDraft
+                      })
+                    }}
                     className="w-full px-3 py-2 border rounded"
-                    placeholder="Ej: 1000.50" 
+                    placeholder="Ej: 1.000,50" 
                   />
                   <p className="text-xs text-gray-500 mt-1">
                     {exchangeDraft.from_currency === 'ARS' && exchangeDraft.to_currency === 'USD' 
-                      ? `Ejemplo: Si la tasa es 1000, significa que $1.000 ARS = US$1 USD`
+                      ? `Ejemplo: Si la tasa es 1.000,00 significa que $1.000,00 ARS = US$1,00 USD`
                       : exchangeDraft.from_currency === 'USD' && exchangeDraft.to_currency === 'ARS'
-                      ? `Ejemplo: Si la tasa es 1000, significa que US$1 USD = $1.000 ARS`
+                      ? `Ejemplo: Si la tasa es 1.000,00 significa que US$1,00 USD = $1.000,00 ARS`
                       : `Tasa: 1 ${exchangeDraft.from_currency} = ${exchangeDraft.exchange_rate || '?'} ${exchangeDraft.to_currency}`
                     }
+                  </p>
+                </div>
+                <div className="bg-blue-50 border-2 border-blue-300 rounded-lg p-3 space-y-3">
+                  <div>
+                    <label className="block text-sm font-semibold text-blue-900 mb-1">📤 Cuenta de origen (sale el dinero) *</label>
+                    <select
+                      value={exchangeDraft.from_account_id || ''}
+                      onChange={(e) => setExchangeDraft(d => ({ ...d, from_account_id: e.target.value }))}
+                      className="w-full px-3 py-2 border rounded"
+                      required
+                    >
+                      <option value="">Seleccionar cuenta...</option>
+                      {accounts.map(account => (
+                        <option key={account.account_id} value={account.account_id}>
+                          {account.account_name} (ARS: ${formatCurrency(Number(account.current_balance_ars))}, USD: US${formatCurrency(Number(account.current_balance_usd))})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="text-center text-blue-700 font-bold">⬇️</div>
+                  <div>
+                    <label className="block text-sm font-semibold text-blue-900 mb-1">📥 Cuenta de destino (entra el dinero) *</label>
+                    <select
+                      value={exchangeDraft.to_account_id || ''}
+                      onChange={(e) => setExchangeDraft(d => ({ ...d, to_account_id: e.target.value }))}
+                      className="w-full px-3 py-2 border rounded"
+                      required
+                    >
+                      <option value="">Seleccionar cuenta...</option>
+                      {accounts.map(account => (
+                        <option key={account.account_id} value={account.account_id}>
+                          {account.account_name} (ARS: ${formatCurrency(Number(account.current_balance_ars))}, USD: US${formatCurrency(Number(account.current_balance_usd))})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <p className="text-xs text-blue-700 font-medium">
+                    ℹ️ Resumen:<br/>
+                    • Sale de {accounts.find(a => a.account_id.toString() === exchangeDraft.from_account_id)?.account_name || '...'}: {exchangeDraft.from_amount || '0'} {exchangeDraft.from_currency}<br/>
+                    • Entra a {accounts.find(a => a.account_id.toString() === exchangeDraft.to_account_id)?.account_name || '...'}: {exchangeDraft.to_amount || '0'} {exchangeDraft.to_currency}
                   </p>
                 </div>
                 <div>
@@ -2100,7 +2804,9 @@ export default function Payments() {
                     to_currency: 'USD', 
                     to_amount: '', 
                     exchange_rate: '',
-                    notes: '' 
+                    notes: '',
+                    from_account_id: '',
+                    to_account_id: ''
                   })
                   setEditingExchangeId(null)
                 }} className="px-4 py-2 border rounded">Cancelar</button>
@@ -2111,7 +2817,9 @@ export default function Payments() {
                         ...exchangeDraft,
                         from_amount: parseFormattedNumber(exchangeDraft.from_amount),
                         to_amount: parseFormattedNumber(exchangeDraft.to_amount),
-                        exchange_rate: parseFloat(exchangeDraft.exchange_rate)
+                        exchange_rate: parseFloat(exchangeDraft.exchange_rate),
+                        from_account_id: parseInt(exchangeDraft.from_account_id),
+                        to_account_id: parseInt(exchangeDraft.to_account_id)
                       }
                       if (editingExchangeId) {
                         await paymentsService.updateCurrencyExchange(clubIdNum, editingExchangeId, exchangeToSave as any)
@@ -2128,31 +2836,37 @@ export default function Payments() {
                         to_currency: 'USD', 
                         to_amount: '', 
                         exchange_rate: '',
-                        notes: '' 
+                        notes: '',
+                        from_account_id: '',
+                        to_account_id: ''
                       })
                       setEditingExchangeId(null)
                       const data = await paymentsService.getCurrencyExchanges(clubIdNum, { from: from || undefined, to: to || undefined })
                       setCurrencyExchanges(data)
-                      // Recargar balance
+                      // Recargar balance y cuentas
                       const balance = await paymentsService.getCurrencyBalance(clubIdNum)
                       setCurrencyBalance(balance)
+                      const accountsData = await accountsService.getAccounts(clubIdNum)
+                      setAccounts(accountsData)
                     } catch (error: any) {
                       const errorMessage = error?.response?.data?.message || error?.message || 'Error al procesar conversión'
                       toast.error(errorMessage)
                     }
                   }}
                   disabled={
+                    !exchangeDraft.from_account_id ||
+                    !exchangeDraft.to_account_id ||
                     !exchangeDraft.from_amount || 
                     !exchangeDraft.to_amount || 
                     !exchangeDraft.exchange_rate ||
-                    parseFormattedNumber(exchangeDraft.from_amount) > currencyBalance[exchangeDraft.from_currency] ||
+                    parseFormattedNumber(exchangeDraft.from_amount) > currencyBalance[exchangeDraft.from_currency as 'ARS' | 'USD'] ||
                     parseFormattedNumber(exchangeDraft.from_amount) === 0
                   }
                   className={`px-4 py-2 rounded ${
                     !exchangeDraft.from_amount || 
                     !exchangeDraft.to_amount || 
                     !exchangeDraft.exchange_rate ||
-                    parseFormattedNumber(exchangeDraft.from_amount) > currencyBalance[exchangeDraft.from_currency] ||
+                    parseFormattedNumber(exchangeDraft.from_amount) > currencyBalance[exchangeDraft.from_currency as 'ARS' | 'USD'] ||
                     parseFormattedNumber(exchangeDraft.from_amount) === 0
                       ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                       : 'bg-blue-600 text-white hover:bg-blue-700'

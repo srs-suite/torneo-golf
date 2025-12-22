@@ -5,10 +5,11 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 
-// Load environment variables from root directory
-dotenv.config({ path: '../../../.env' });
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// Load environment variables from backend directory
+dotenv.config({ path: path.join(__dirname, '../../.env') });
 
 // Database configuration
 const DB_CONFIG = {
