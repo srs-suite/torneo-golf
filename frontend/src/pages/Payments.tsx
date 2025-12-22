@@ -1344,6 +1344,9 @@ export default function Payments() {
                                         await paymentsService.deleteOtherIncome(clubIdNum, income.income_id)
                                         const data = await paymentsService.getOtherIncomes(clubIdNum, { from: from || undefined, to: to || undefined })
                                         setOtherIncomes(data)
+                                        // Reload currency balance
+                                        const balance = await paymentsService.getCurrencyBalance(clubIdNum)
+                                        setCurrencyBalance(balance)
                                         toast.success('Ingreso eliminado exitosamente')
                                       } catch (error) {
                                         toast.error('Error al eliminar ingreso')
@@ -1447,6 +1450,9 @@ export default function Payments() {
                                       await paymentsService.deleteExpense(clubIdNum, e.expense_id)
                                       const data = await paymentsService.getExpenses(clubIdNum, { from: from || undefined, to: to || undefined })
                                       setExpenses(data)
+                                      // Reload currency balance
+                                      const balance = await paymentsService.getCurrencyBalance(clubIdNum)
+                                      setCurrencyBalance(balance)
                                       toast.success('Gasto eliminado exitosamente')
                                     } catch (error) {
                                       toast.error('Error al eliminar gasto')
@@ -2250,6 +2256,9 @@ export default function Payments() {
                       // Reload accounts to update balances
                       const accountsData = await accountsService.getAccounts(clubIdNum)
                       setAccounts(accountsData)
+                      // Reload currency balance
+                      const balance = await paymentsService.getCurrencyBalance(clubIdNum)
+                      setCurrencyBalance(balance)
                     } catch (error) {
                       toast.error('Error al guardar gasto')
                     }
@@ -2526,6 +2535,9 @@ export default function Payments() {
                       // Reload accounts to update balances
                       const accountsData = await accountsService.getAccounts(clubIdNum)
                       setAccounts(accountsData)
+                      // Reload currency balance
+                      const balance = await paymentsService.getCurrencyBalance(clubIdNum)
+                      setCurrencyBalance(balance)
                     } catch (error) {
                       toast.error(editingIncomeId ? 'Error al actualizar ingreso' : 'Error al agregar ingreso')
                     }
