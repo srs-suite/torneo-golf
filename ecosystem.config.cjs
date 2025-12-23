@@ -3,8 +3,8 @@ module.exports = {
     name: 'teetracker-backend',
     script: './backend/src/server.js',
     cwd: process.env.PWD || '/home/retailso/torneogolf-source',
-    instances: 2,
-    exec_mode: 'cluster',
+    instances: 1,
+    exec_mode: 'fork',
     env: {
       NODE_ENV: 'production',
       PORT: 8001

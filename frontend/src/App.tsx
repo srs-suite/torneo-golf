@@ -23,10 +23,10 @@ import TeesManagement from '@/pages/TeesManagement'
 import TournamentResults from '@/pages/TournamentResults'
 import Rankings from '@/pages/Rankings'
 import Payments from '@/pages/Payments'
-import PublicFinance from '@/pages/PublicFinance'
-
+import PublicFinancialReport from '@/pages/PublicFinancialReport'
 
 function App() {
+
   return (
     <Routes>
       {/* Sistema de administración principal */}
@@ -85,9 +85,9 @@ function App() {
       <Route path="/club/:clubId/accounting" element={<Payments />} />
       {/* Compatibilidad: ruta anterior de cobros */}
       <Route path="/club/:clubId/payments" element={<Payments />} />
-      
-      {/* Finanzas públicas para socios (transparencia) */}
-      <Route path="/club/:clubId/public-finance" element={<PublicFinance />} />
+
+      {/* Informe Contable Público para Socios (QR - verificación por teléfono) */}
+      <Route path="/club/:clubId/informe-contable" element={<PublicFinancialReport />} />
 
     </Routes>
   )

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { 
   Users, 
@@ -42,6 +42,7 @@ import { ExcelImportModal } from '@/components/ExcelImportModal'
 
 import { LoadingSpinner } from '@/components/LoadingSpinner'
 import { UserManagement } from '@/components/UserManagement'
+import { FinancialReportQR } from '@/components/FinancialReportQR'
 import { Member } from '@/types/member'
 import { Tournament } from '@/types/tournament'
 
@@ -59,7 +60,7 @@ export function ClubAdmin() {
   const { clubId } = useParams<{ clubId: string }>()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const { permissions, isLoading: permissionsLoading, isAdmin } = useUserPermissions(clubId)
+  const { permissions, isLoading: permissionsLoading } = useUserPermissions(clubId)
   
   const [activeTab, setActiveTab] = useState(() => {
     // Check if there's a tab parameter in the URL
@@ -172,17 +173,10 @@ export function ClubAdmin() {
   // Handle tab changes from URL parameters
   useEffect(() => {
     const tabParam = searchParams.get('tab')
-    if (tabParam && ['members', 'tournaments', 'settings', 'payments'].includes(tabParam) && tabParam !== activeTab) {
+    if (tabParam && ['members', 'tournaments', 'settings'].includes(tabParam) && tabParam !== activeTab) {
       setActiveTab(tabParam)
     }
   }, [searchParams, activeTab])
-
-  // Redirect to Payments page when payments tab is selected
-  useEffect(() => {
-    if (activeTab === 'payments' && clubId) {
-      navigate(`/club/${clubId}/payments`)
-    }
-  }, [activeTab, clubId, navigate])
 
   useEffect(() => {
     // Usar el hook useClubs que ya funciona correctamente
@@ -208,9 +202,17 @@ export function ClubAdmin() {
   }, [clubId, clubs])
 
   const handleLogout = () => {
-    localStorage.removeItem('clubToken')
-    localStorage.removeItem('clubId')
-    navigate('/login')
+    const adminRole = localStorage.getItem('adminRole')
+    
+    // Si es administrador de sistema, solo borrar datos del club y volver al dashboard
+    if (adminRole === 'system_admin') {
+      localStorage.removeItem('clubId')
+      navigate('/dashboard')
+    } else {
+      // Si es admin de club, cerrar sesión completamente
+      localStorage.clear()
+      navigate('/login')
+    }
   }
 
   const handleSortToggle = () => {
@@ -305,12 +307,17 @@ export function ClubAdmin() {
   const allTabs = [
     { id: 'members', label: 'Socios', icon: Users, count: members.length, permission: permissions.canViewMembers },
     { id: 'tournaments', label: 'Torneos', icon: Trophy, count: tournaments.length, permission: permissions.canViewTournaments },
-    { id: 'payments', label: 'Pagos', icon: DollarSign, count: 0, permission: permissions.canViewAccounting },
-    { id: 'photos', label: 'Fotos', icon: Camera, count: 0, permission: isAdmin },
+    { id: 'photos', label: 'Fotos', icon: Camera, count: 0, permission: permissions.canViewPhotos },
     { id: 'settings', label: 'Configuración', icon: Settings, count: 0, permission: permissions.canViewSettings }
   ]
   
-  const tabs = allTabs.filter(tab => tab.permission)
+  // Filtro más estricto: solo tabs con permission === true o === 1
+  // Usar useMemo para recalcular cuando cambien los permisos
+  const tabs = useMemo(() => {
+    const filtered = allTabs.filter(tab => tab.permission === true)
+    return filtered
+  }, [permissions.canViewMembers, permissions.canViewTournaments, permissions.canViewAccounting, 
+      permissions.canViewPhotos, permissions.canViewSettings, permissionsLoading])
 
   const getStatusColor = (status: Tournament['status']) => {
     switch (status) {
@@ -454,20 +461,24 @@ export function ClubAdmin() {
               </button>
             ))}
             {/* Enlaces externos en la misma línea */}
-            <button
-              onClick={() => navigate(`/club/${clubId}/rankings`)}
-              className="flex items-center space-x-2 py-4 px-1 border-b-2 font-medium text-sm transition-colors border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-            >
-              <Trophy className="w-4 h-4" />
-              <span>Ranking</span>
-            </button>
-            <button
-              onClick={() => navigate(`/club/${clubId}/accounting`)}
-              className="flex items-center space-x-2 py-4 px-1 border-b-2 font-medium text-sm transition-colors border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-            >
-              <DollarSign className="w-4 h-4" />
-              <span>Contabilidad</span>
-            </button>
+            {permissions.canViewTournaments && (
+              <button
+                onClick={() => navigate(`/club/${clubId}/rankings`)}
+                className="flex items-center space-x-2 py-4 px-1 border-b-2 font-medium text-sm transition-colors border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+              >
+                <Trophy className="w-4 h-4" />
+                <span>Ranking</span>
+              </button>
+            )}
+            {permissions.canViewAccounting && (
+              <button
+                onClick={() => navigate(`/club/${clubId}/accounting`)}
+                className="flex items-center space-x-2 py-4 px-1 border-b-2 font-medium text-sm transition-colors border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+              >
+                <DollarSign className="w-4 h-4" />
+                <span>Contabilidad</span>
+              </button>
+            )}
           </nav>
         </div>
       </div>
@@ -1023,7 +1034,10 @@ export function ClubAdmin() {
         )}
 
         {activeTab === 'settings' && (
-          <UserManagement clubId={parseInt(clubId || '0')} />
+          <div className="space-y-6">
+            <UserManagement clubId={parseInt(clubId || '0')} />
+            <FinancialReportQR />
+          </div>
         )}
       </main>
 

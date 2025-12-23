@@ -13,6 +13,8 @@ const __dirname = path.dirname(__filename);
 // Load environment variables from backend directory
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 
+console.log('🎯 SERVER FILE LOADED - Starting server...');
+
 // Database functions (using real exports)
 import {
     // Club functions
@@ -25,6 +27,7 @@ import {
     // Member functions
     getAllMembers, getMemberById, createMember, updateMember, deleteMember, updateMemberStatus,
     getMemberTournaments, getMemberScorecards, getMemberHandicapHistory, getMemberContributions,
+    verifyMemberPhone, verifyReportToken,
     
     // Tournament functions
     getAllTournaments, getTournamentById, createTournament, updateTournament, deleteTournament,
@@ -47,7 +50,10 @@ import {
     getPaymentsSummary, getExpenses, addExpense, updateExpense, deleteExpense,
     getOtherIncomes, addOtherIncome, updateOtherIncome, deleteOtherIncome,
     getCurrencyExchanges, addCurrencyExchange, updateCurrencyExchange, deleteCurrencyExchange,
-    getCurrencyBalance,
+    getCurrencyBalance, getCustodians,
+    
+    // Custodian accounts functions
+    getAccounts, createAccount, updateAccount, deleteAccount, getTransactions, createTransaction,
     
     // System functions
     getSystemStats, getRecentActivity
@@ -60,7 +66,7 @@ import {
     isValidPhoneNumber
 } from './services/whatsapp.js';
 
-const PORT = 8000;
+const PORT = process.env.PORT || 8000;
 
 // CORS headers
 const corsHeaders = {
@@ -69,6 +75,9 @@ const corsHeaders = {
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Max-Age': 86400
 };
+
+// Serve static files from frontend
+const FRONTEND_PATH = '/var/www/torneogolf/frontend';
 
 function sendJSON(res, data, statusCode = 200) {
     res.writeHead(statusCode, {
@@ -304,6 +313,11 @@ async function handleClubAPI(req, res, pathParts) {
                     // Get member contributions
                     const contributions = await getMemberContributions(parseInt(clubId), parseInt(resourceId));
                     sendJSON(res, { success: true, data: contributions });
+                } else if (subAction === 'status' && method === 'PUT') {
+                    // Update member status
+                    const { status } = await parseBody(req);
+                    await updateMemberStatus(parseInt(resourceId), status);
+                    sendJSON(res, { success: true, message: 'Estado del miembro actualizado exitosamente' });
                 } else {
                     sendError(res, 'Recurso no encontrado', 404);
                 }
@@ -712,6 +726,55 @@ async function handleClubAPI(req, res, pathParts) {
                 } else {
                     sendError(res, 'Método no permitido', 405);
                 }
+            }
+            // Custodians (for autocomplete)
+            else if (action === 'custodians') {
+                if (method === 'GET') {
+                    const custodians = await getCustodians(parseInt(clubId));
+                    sendJSON(res, { success: true, data: custodians });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
+            }
+            // Accounts (fondos/cuentas)
+            else if (action === 'accounts') {
+                if (method === 'GET') {
+                    const accounts = await getAccounts(parseInt(clubId));
+                    sendJSON(res, { success: true, data: accounts });
+                } else if (method === 'POST') {
+                    const accountData = await parseBody(req);
+                    const newAccount = await createAccount(parseInt(clubId), accountData);
+                    sendJSON(res, { success: true, data: newAccount, message: 'Cuenta creada exitosamente' });
+                } else if (method === 'PUT') {
+                    const url = new URL(req.url, `http://${req.headers.host}`);
+                    const accountId = parseInt(url.searchParams.get('id'));
+                    const accountData = await parseBody(req);
+                    await updateAccount(parseInt(clubId), accountId, accountData);
+                    sendJSON(res, { success: true, message: 'Cuenta actualizada exitosamente' });
+                } else if (method === 'DELETE') {
+                    const url = new URL(req.url, `http://${req.headers.host}`);
+                    const accountId = parseInt(url.searchParams.get('id'));
+                    await deleteAccount(parseInt(clubId), accountId);
+                    sendJSON(res, { success: true, message: 'Cuenta desactivada exitosamente' });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
+            }
+            // Transactions (historial de movimientos)
+            else if (action === 'transactions') {
+                if (method === 'GET') {
+                    const url = new URL(req.url, `http://${req.headers.host}`);
+                    const from = url.searchParams.get('from');
+                    const to = url.searchParams.get('to');
+                    const transactions = await getTransactions(parseInt(clubId), from, to);
+                    sendJSON(res, { success: true, data: transactions });
+                } else if (method === 'POST') {
+                    const transactionData = await parseBody(req);
+                    const newTransaction = await createTransaction(parseInt(clubId), transactionData);
+                    sendJSON(res, { success: true, data: newTransaction, message: 'Transacción creada exitosamente' });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
             } else {
                 sendError(res, 'Recurso no encontrado', 404);
             }
@@ -752,10 +815,16 @@ async function handleClubAPI(req, res, pathParts) {
     }
 }
 
-// Public Finance API handler (for members transparency)
-async function handlePublicFinanceAPI(req, res, pathParts) {
+// Public Report API handler (for members - phone verification)
+async function handlePublicReportAPI(req, res, pathParts) {
+    console.log('📱 handlePublicReportAPI called');
+    console.log('📋 pathParts:', pathParts);
+    
     const method = req.method;
-    const clubId = pathParts[3];
+    const clubId = pathParts[3]; // /api/public/report/1/...
+    const action = pathParts[4]; // verify or data
+    
+    console.log('🔑 method:', method, 'clubId:', clubId, 'action:', action);
     
     if (method === 'OPTIONS') {
         res.writeHead(200, corsHeaders);
@@ -764,94 +833,204 @@ async function handlePublicFinanceAPI(req, res, pathParts) {
     }
 
     try {
-        // Simple password authentication
-        const authHeader = req.headers.authorization;
-        const publicPassword = process.env.PUBLIC_FINANCE_PASSWORD || 'socios2024';
-        
-        if (!authHeader || authHeader !== `Bearer ${publicPassword}`) {
-            sendError(res, 'Contraseña incorrecta', 401);
-            return;
+        // Verify phone endpoint
+        if (action === 'verify' && method === 'POST') {
+            console.log('✅ Entering verify endpoint');
+            const body = await parseBody(req);
+            console.log('📦 Body received:', body);
+            const { phone } = body;
+            
+            if (!phone) {
+                console.log('❌ No phone in body');
+                return sendError(res, 'Número de teléfono requerido', 400);
+            }
+            
+            console.log('📞 Calling verifyMemberPhone with:', parseInt(clubId), phone);
+            const result = await verifyMemberPhone(parseInt(clubId), phone);
+            console.log('📊 verifyMemberPhone result:', result);
+            
+            if (result.success) {
+                sendJSON(res, {
+                    success: true,
+                    token: result.token,
+                    memberName: result.memberName
+                });
+            } else {
+                sendError(res, result.message, 404);
+            }
         }
-
-        if (method === 'GET' && clubId) {
-            // Get date filters from query params
+        // Get financial data endpoint
+        else if (action === 'data' && method === 'GET') {
             const url = new URL(req.url, `http://${req.headers.host}`);
+            const token = url.searchParams.get('token');
+            
+            if (!token) {
+                return sendError(res, 'Token requerido', 400);
+            }
+            
+            // Verify token
+            const verification = await verifyReportToken(parseInt(clubId), token);
+            
+            if (!verification.success) {
+                return sendError(res, verification.message, 401);
+            }
+            
+            // Get date filters from query params
             const from = url.searchParams.get('from');
             const to = url.searchParams.get('to');
 
-            // Get all financial data
+            // Get financial data
             const [
-                tournaments,
                 expenses,
                 otherIncomes,
-                balance
+                tournaments,
+                accounts,
+                exchanges
             ] = await Promise.all([
-                getAllTournaments(parseInt(clubId)),
                 getExpenses(parseInt(clubId), from, to),
                 getOtherIncomes(parseInt(clubId), from, to),
-                getCurrencyBalance(parseInt(clubId))
+                getAllTournaments(parseInt(clubId)),
+                getAccounts(parseInt(clubId)),
+                getCurrencyExchanges(parseInt(clubId), from, to)
             ]);
 
-            // Calculate tournament income (paid participants)
-            const tournamentIncome = tournaments.reduce((total, tournament) => {
-                return total + (tournament.paid_participants_count || 0) * (tournament.entry_fee || 0);
-            }, 0);
+            // Calculate incomes and expenses by currency
+            let incomeARS = 0, incomeUSD = 0;
+            let expenseARS = 0, expenseUSD = 0;
+            let tournamentIncomeTotal = 0;
+            let otherIncomeTotal = 0;
+            
+            // Tournament incomes by currency
+            tournaments.forEach(tournament => {
+                const paid = tournament.paid_participants_count || 0;
+                const fee = parseFloat(tournament.entry_fee || 0);
+                const income = paid * fee;
+                tournamentIncomeTotal += income;
+                // Assuming tournaments are in ARS unless specified otherwise
+                incomeARS += income;
+            });
+            
+            // Other incomes by currency
+            console.log('💵 Total other incomes:', otherIncomes.length);
+            otherIncomes.forEach(income => {
+                const amount = parseFloat(income.amount || 0);
+                otherIncomeTotal += amount;
+                if (income.currency === 'USD') {
+                    console.log(`💵 USD Income: ${amount} USD - ${income.description || 'Sin descripción'} - Fecha: ${income.income_date}`);
+                    incomeUSD += amount;
+                } else {
+                    incomeARS += amount;
+                }
+            });
+            
+            // Expenses by currency
+            expenses.forEach(expense => {
+                const amount = parseFloat(expense.amount || 0);
+                if (expense.currency === 'USD') {
+                    expenseUSD += amount;
+                } else {
+                    expenseARS += amount;
+                }
+            });
+            
+            // Process currency exchanges
+            console.log('💱 Total currency exchanges:', exchanges.length);
+            exchanges.forEach(exchange => {
+                const fromAmount = parseFloat(exchange.from_amount || 0);
+                const toAmount = parseFloat(exchange.to_amount || 0);
+                
+                console.log(`💱 Exchange: ${fromAmount} ${exchange.from_currency} → ${toAmount} ${exchange.to_currency} - ${exchange.notes || 'Sin notas'}`);
+                
+                // Subtract from origin currency
+                if (exchange.from_currency === 'USD') {
+                    incomeUSD -= fromAmount;
+                } else {
+                    incomeARS -= fromAmount;
+                }
+                
+                // Add to destination currency
+                if (exchange.to_currency === 'USD') {
+                    incomeUSD += toAmount;
+                } else {
+                    incomeARS += toAmount;
+                }
+            });
+            
+            const balanceARS = incomeARS - expenseARS;
+            const balanceUSD = incomeUSD - expenseUSD;
+            
+            console.log('💰 Tournament Income Total:', tournamentIncomeTotal);
+            console.log('💰 Other Income Total:', otherIncomeTotal);
+            console.log('💰 Income ARS:', incomeARS, 'USD:', incomeUSD);
+            console.log('💰 Expense ARS:', expenseARS, 'USD:', expenseUSD);
+            console.log('💰 Balance ARS:', balanceARS, 'USD:', balanceUSD);
+            console.log('🏆 Tournaments count:', tournaments.length);
+            console.log('🏆 Tournaments data:', JSON.stringify(tournaments.map(t => ({
+                name: t.tournament_name,
+                date: t.tournament_date,
+                paid: t.paid_participants_count,
+                fee: t.entry_fee,
+                income: (t.paid_participants_count || 0) * (t.entry_fee || 0)
+            })), null, 2));
 
-            // Calculate other income total
-            const otherIncomeTotal = otherIncomes.reduce((total, income) => {
-                return total + parseFloat(income.amount || 0);
-            }, 0);
+            // Map other incomes to frontend format
+            const mappedOtherIncomes = otherIncomes.map(income => ({
+                date: income.income_date,
+                concept: income.description || 'Ingreso',
+                amount: parseFloat(income.amount),
+                currency: income.currency,
+                payment_method: income.payment_type,
+                member_name: income.member_name,
+                custodian: income.account_name || income.custodian || 'Sin asignar',
+                created_at: income.created_at
+            }));
 
-            // Calculate expenses total
-            const expensesTotal = expenses.reduce((total, expense) => {
-                return total + parseFloat(expense.amount || 0);
-            }, 0);
+            // Map expenses to frontend format
+            const mappedExpenses = expenses.map(expense => ({
+                date: expense.expense_date,
+                concept: expense.detail || 'Gasto',
+                amount: parseFloat(expense.amount),
+                currency: expense.currency,
+                receipt_number: expense.receipt_number,
+                custodian: expense.account_name || expense.custodian || 'Sin asignar',
+                created_at: expense.created_at
+            }));
 
-            // Prepare response
-            const financialData = {
-                summary: {
-                    tournamentIncome: tournamentIncome,
-                    otherIncome: otherIncomeTotal,
-                    totalIncome: tournamentIncome + otherIncomeTotal,
-                    totalExpenses: expensesTotal,
-                    balance: tournamentIncome + otherIncomeTotal - expensesTotal,
-                    currencyBalance: balance
-                },
-                tournaments: tournaments.map(t => ({
-                    tournament_id: t.tournament_id,
-                    tournament_name: t.tournament_name,
-                    tournament_date: t.tournament_date,
-                    entry_fee: t.entry_fee,
-                    paid_participants: t.paid_participants_count,
-                    income: (t.paid_participants_count || 0) * (t.entry_fee || 0)
-                })),
-                otherIncomes: otherIncomes.map(i => ({
-                    income_id: i.income_id,
-                    date: i.income_date,
-                    concept: i.concept,
-                    amount: parseFloat(i.amount),
-                    currency: i.currency,
-                    member_name: i.member_name || 'N/A'
-                })),
-                expenses: expenses.map(e => ({
-                    expense_id: e.expense_id,
-                    date: e.expense_date,
-                    concept: e.concept,
-                    amount: parseFloat(e.amount),
-                    category: e.category,
-                    payment_method: e.payment_method
-                }))
-            };
-
-            sendJSON(res, { success: true, data: financialData });
+            sendJSON(res, {
+                success: true,
+                data: {
+                    summary: {
+                        incomeARS: incomeARS,
+                        incomeUSD: incomeUSD,
+                        expenseARS: expenseARS,
+                        expenseUSD: expenseUSD,
+                        balanceARS: balanceARS,
+                        balanceUSD: balanceUSD,
+                        // Legacy fields for backwards compatibility
+                        totalTournamentIncomes: tournamentIncomeTotal,
+                        totalOtherIncomes: otherIncomeTotal,
+                        totalIncomes: incomeARS + incomeUSD,
+                        totalExpenses: expenseARS + expenseUSD,
+                        balance: balanceARS
+                    },
+                    tournaments: tournaments,
+                    otherIncomes: mappedOtherIncomes,
+                    expenses: mappedExpenses,
+                    accounts: accounts || [],
+                    memberName: verification.memberName
+                }
+            });
         } else {
-            sendError(res, 'Endpoint no encontrado', 404);
+            sendError(res, 'Recurso no encontrado', 404);
         }
     } catch (error) {
-        console.error('Error en Public Finance API:', error);
+        console.error('Error en Public Report API:', error);
         sendError(res, error.message, 500);
     }
 }
+
+// Member verification API handler
+console.log('🚀 CREATING SERVER...');
 
 // Main server
 const server = http.createServer(async (req, res) => {
@@ -859,7 +1038,61 @@ const server = http.createServer(async (req, res) => {
     const pathname = url.pathname;
     const pathParts = pathname.split('/').filter(part => part);
 
-    console.log(`${req.method} ${pathname}`);
+    console.log(`🚀 REQUEST: ${req.method} ${pathname}`);
+
+    // Serve static files from frontend
+    console.log(`📁 STATIC FILE CHECK: ${req.method} ${pathname}`);
+    if (req.method === 'GET') {
+        console.log(`🔍 Processing static file request for: ${pathname}`);
+        try {
+
+            let filePath = path.join(FRONTEND_PATH, pathname === '/' ? 'index.html' : pathname);
+
+            // If file doesn't exist or is directory, serve index.html (for React routing)
+            if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+                console.log('File not found or is directory, serving index.html');
+                filePath = path.join(FRONTEND_PATH, 'index.html');
+            }
+
+            if (fs.existsSync(filePath)) {
+                console.log(`Serving file: ${filePath}`);
+                const ext = path.extname(filePath);
+                const contentType = {
+                    '.html': 'text/html',
+                    '.css': 'text/css',
+                    '.js': 'application/javascript',
+                    '.json': 'application/json',
+                    '.png': 'image/png',
+                    '.jpg': 'image/jpeg',
+                    '.svg': 'image/svg+xml',
+                    '.ico': 'image/x-icon'
+                }[ext] || 'text/plain';
+
+                res.writeHead(200, {
+                    'Content-Type': contentType,
+                    'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=31536000'
+                });
+
+                fs.createReadStream(filePath).pipe(res);
+                return;
+            } else {
+                console.log(`File not found: ${filePath}`);
+                // Fallback: serve index.html for SPA routing
+                const indexPath = path.join(FRONTEND_PATH, 'index.html');
+                if (fs.existsSync(indexPath)) {
+                    console.log('Serving fallback index.html');
+                    res.writeHead(200, { 'Content-Type': 'text/html' });
+                    fs.createReadStream(indexPath).pipe(res);
+                    return;
+                }
+            }
+        } catch (error) {
+            console.log('Static file error:', error.message);
+        }
+
+        // If we get here, no static file was served
+        console.log('No static file served, continuing to API handling');
+    }
 
     // Handle API routes
     if (pathParts[0] === 'api') {
@@ -872,8 +1105,8 @@ const server = http.createServer(async (req, res) => {
         } else if (pathParts[1] === 'club') {
             await handleClubAPI(req, res, pathParts);
             return;
-        } else if (pathParts[1] === 'public' && pathParts[2] === 'finance') {
-            await handlePublicFinanceAPI(req, res, pathParts);
+        } else if (pathParts[1] === 'public' && pathParts[2] === 'report') {
+            await handlePublicReportAPI(req, res, pathParts);
             return;
         }
     }
