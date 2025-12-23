@@ -1040,6 +1040,23 @@ const server = http.createServer(async (req, res) => {
 
     console.log(`🚀 REQUEST: ${req.method} ${pathname}`);
 
+    // Handle API routes FIRST (before static files)
+    if (pathParts[0] === 'api') {
+        if (pathParts[1] === 'auth') {
+            await handleAuthAPI(req, res, pathParts);
+            return;
+        } else if (pathParts[1] === 'system') {
+            await handleSystemAPI(req, res, pathParts);
+            return;
+        } else if (pathParts[1] === 'club') {
+            await handleClubAPI(req, res, pathParts);
+            return;
+        } else if (pathParts[1] === 'public' && pathParts[2] === 'report') {
+            await handlePublicReportAPI(req, res, pathParts);
+            return;
+        }
+    }
+
     // Serve static files from frontend
     console.log(`📁 STATIC FILE CHECK: ${req.method} ${pathname}`);
     if (req.method === 'GET') {
@@ -1088,26 +1105,6 @@ const server = http.createServer(async (req, res) => {
             }
         } catch (error) {
             console.log('Static file error:', error.message);
-        }
-
-        // If we get here, no static file was served
-        console.log('No static file served, continuing to API handling');
-    }
-
-    // Handle API routes
-    if (pathParts[0] === 'api') {
-        if (pathParts[1] === 'auth') {
-            await handleAuthAPI(req, res, pathParts);
-            return;
-        } else if (pathParts[1] === 'system') {
-            await handleSystemAPI(req, res, pathParts);
-            return;
-        } else if (pathParts[1] === 'club') {
-            await handleClubAPI(req, res, pathParts);
-            return;
-        } else if (pathParts[1] === 'public' && pathParts[2] === 'report') {
-            await handlePublicReportAPI(req, res, pathParts);
-            return;
         }
     }
 
