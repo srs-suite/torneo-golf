@@ -5501,12 +5501,66 @@ async function getTransactions(clubId, fromDate, toDate) {
                 t.amount,
                 t.currency,
                 t.description,
+                t.reference_type,
+                t.reference_id,
                 t.created_at,
                 fa.account_name as from_account_name,
-                ta.account_name as to_account_name
+                ta.account_name as to_account_name,
+                -- Información adicional según el tipo de transacción
+                -- Primero intenta con reference_type y reference_id, luego busca por coincidencia
+                COALESCE(
+                    CASE WHEN t.reference_type = 'other_income' THEN oi1.member_id END,
+                    CASE WHEN t.transaction_type = 'income_other' AND t.to_account_id = oi2.account_id 
+                         AND t.transaction_date = oi2.income_date AND t.amount = oi2.amount 
+                         AND t.currency = oi2.currency THEN oi2.member_id END
+                ) as member_id,
+                COALESCE(
+                    CASE WHEN t.reference_type = 'other_income' THEN CONCAT(m1.first_name, ' ', m1.last_name) END,
+                    CASE WHEN t.transaction_type = 'income_other' AND t.to_account_id = oi2.account_id 
+                         AND t.transaction_date = oi2.income_date AND t.amount = oi2.amount 
+                         AND t.currency = oi2.currency THEN CONCAT(m2.first_name, ' ', m2.last_name) END
+                ) as member_name,
+                COALESCE(
+                    CASE WHEN t.reference_type = 'other_income' THEN oi1.payment_type END,
+                    CASE WHEN t.reference_type = 'expense' THEN e1.receipt_number END,
+                    CASE WHEN t.transaction_type = 'income_other' AND t.to_account_id = oi2.account_id 
+                         AND t.transaction_date = oi2.income_date AND t.amount = oi2.amount 
+                         AND t.currency = oi2.currency THEN oi2.payment_type END,
+                    CASE WHEN t.transaction_type = 'expense' AND t.from_account_id = e2.account_id 
+                         AND t.transaction_date = e2.expense_date AND t.amount = e2.amount 
+                         AND t.currency = e2.currency THEN e2.receipt_number END
+                ) as additional_info,
+                COALESCE(
+                    CASE WHEN t.reference_type = 'other_income' THEN oi1.custodian END,
+                    CASE WHEN t.reference_type = 'expense' THEN e1.custodian END,
+                    CASE WHEN t.transaction_type = 'income_other' AND t.to_account_id = oi2.account_id 
+                         AND t.transaction_date = oi2.income_date AND t.amount = oi2.amount 
+                         AND t.currency = oi2.currency THEN oi2.custodian END,
+                    CASE WHEN t.transaction_type = 'expense' AND t.from_account_id = e2.account_id 
+                         AND t.transaction_date = e2.expense_date AND t.amount = e2.amount 
+                         AND t.currency = e2.currency THEN e2.custodian END
+                ) as custodian
             FROM account_transactions t
             LEFT JOIN custodian_accounts fa ON t.from_account_id = fa.account_id
             LEFT JOIN custodian_accounts ta ON t.to_account_id = ta.account_id
+            -- JOINs con reference_type y reference_id
+            LEFT JOIN other_incomes oi1 ON t.reference_type = 'other_income' AND t.reference_id = oi1.income_id
+            LEFT JOIN members m1 ON oi1.member_id = m1.member_id
+            LEFT JOIN club_expenses e1 ON t.reference_type = 'expense' AND t.reference_id = e1.expense_id
+            -- JOINs por coincidencia (para transacciones antiguas sin reference_type)
+            LEFT JOIN other_incomes oi2 ON t.transaction_type = 'income_other' 
+                AND t.to_account_id = oi2.account_id 
+                AND t.transaction_date = oi2.income_date 
+                AND t.amount = oi2.amount 
+                AND t.currency = oi2.currency
+                AND (t.reference_type IS NULL OR t.reference_type != 'other_income' OR t.reference_id != oi2.income_id)
+            LEFT JOIN members m2 ON oi2.member_id = m2.member_id
+            LEFT JOIN club_expenses e2 ON t.transaction_type = 'expense' 
+                AND t.from_account_id = e2.account_id 
+                AND t.transaction_date = e2.expense_date 
+                AND t.amount = e2.amount 
+                AND t.currency = e2.currency
+                AND (t.reference_type IS NULL OR t.reference_type != 'expense' OR t.reference_id != e2.expense_id)
             WHERE t.club_id = ?
         `;
         
@@ -5532,9 +5586,15 @@ async function getTransactions(clubId, fromDate, toDate) {
                 ce.from_amount as amount,
                 ce.from_currency as currency,
                 CONCAT('Conversión: ', ce.from_amount, ' ', ce.from_currency, ' → ', ce.to_amount, ' ', ce.to_currency, IF(ce.notes IS NOT NULL, CONCAT(' (', ce.notes, ')'), '')) as description,
+                'currency_exchange' as reference_type,
+                ce.exchange_id as reference_id,
                 ce.created_at,
                 fa.account_name as from_account_name,
-                ta.account_name as to_account_name
+                ta.account_name as to_account_name,
+                NULL as member_id,
+                NULL as member_name,
+                CONCAT('Tasa: ', ce.exchange_rate) as additional_info,
+                NULL as custodian
             FROM currency_exchanges ce
             LEFT JOIN custodian_accounts fa ON ce.from_account_id = fa.account_id
             LEFT JOIN custodian_accounts ta ON ce.to_account_id = ta.account_id
@@ -5568,6 +5628,44 @@ async function getTransactions(clubId, fromDate, toDate) {
  */
 async function createTransaction(clubId, transactionData) {
     try {
+        // Validate funds for transfers
+        if (transactionData.transaction_type === 'transfer') {
+            if (!transactionData.from_account_id) {
+                throw new Error('Debe seleccionar la cuenta de origen');
+            }
+            if (!transactionData.to_account_id) {
+                throw new Error('Debe seleccionar la cuenta de destino');
+            }
+            if (transactionData.from_account_id === transactionData.to_account_id) {
+                throw new Error('Las cuentas de origen y destino deben ser diferentes');
+            }
+            
+            // Validate that source account exists
+            const fromAccountQuery = `SELECT current_balance_ars, current_balance_usd FROM custodian_accounts WHERE account_id = ? AND club_id = ?`;
+            const { rows: fromAccountRows } = await executeQuery(fromAccountQuery, [transactionData.from_account_id, clubId]);
+            
+            if (fromAccountRows.length === 0) {
+                throw new Error('Cuenta de origen no encontrada');
+            }
+            
+            // Validate that destination account exists
+            const toAccountQuery = `SELECT account_id FROM custodian_accounts WHERE account_id = ? AND club_id = ?`;
+            const { rows: toAccountRows } = await executeQuery(toAccountQuery, [transactionData.to_account_id, clubId]);
+            
+            if (toAccountRows.length === 0) {
+                throw new Error('Cuenta de destino no encontrada');
+            }
+            
+            // Validate that there are sufficient funds in the source account
+            const fromAccount = fromAccountRows[0];
+            const currency = transactionData.currency || 'ARS';
+            const availableAmount = currency === 'USD' ? fromAccount.current_balance_usd : fromAccount.current_balance_ars;
+            
+            if (availableAmount < transactionData.amount) {
+                throw new Error(`Fondos insuficientes en la cuenta de origen. Disponible: ${availableAmount.toFixed(2)} ${currency}, Requerido: ${transactionData.amount.toFixed(2)} ${currency}`);
+            }
+        }
+        
         // Insert transaction
         const query = `
             INSERT INTO account_transactions (

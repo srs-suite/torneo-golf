@@ -13,8 +13,6 @@ const __dirname = path.dirname(__filename);
 // Load environment variables from backend directory
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 
-console.log('🎯 SERVER FILE LOADED - Starting server...');
-
 // Database functions (using real exports)
 import {
     // Club functions
@@ -66,7 +64,7 @@ import {
     isValidPhoneNumber
 } from './services/whatsapp.js';
 
-const PORT = process.env.PORT || 8000;
+const PORT = 8000;
 
 // CORS headers
 const corsHeaders = {
@@ -75,9 +73,6 @@ const corsHeaders = {
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Max-Age': 86400
 };
-
-// Serve static files from frontend
-const FRONTEND_PATH = '/var/www/torneogolf/frontend';
 
 function sendJSON(res, data, statusCode = 200) {
     res.writeHead(statusCode, {
@@ -884,14 +879,12 @@ async function handlePublicReportAPI(req, res, pathParts) {
                 expenses,
                 otherIncomes,
                 tournaments,
-                accounts,
-                exchanges
+                accounts
             ] = await Promise.all([
                 getExpenses(parseInt(clubId), from, to),
                 getOtherIncomes(parseInt(clubId), from, to),
                 getAllTournaments(parseInt(clubId)),
-                getAccounts(parseInt(clubId)),
-                getCurrencyExchanges(parseInt(clubId), from, to)
+                getAccounts(parseInt(clubId))
             ]);
 
             // Calculate incomes and expenses by currency
@@ -911,12 +904,10 @@ async function handlePublicReportAPI(req, res, pathParts) {
             });
             
             // Other incomes by currency
-            console.log('💵 Total other incomes:', otherIncomes.length);
             otherIncomes.forEach(income => {
                 const amount = parseFloat(income.amount || 0);
                 otherIncomeTotal += amount;
                 if (income.currency === 'USD') {
-                    console.log(`💵 USD Income: ${amount} USD - ${income.description || 'Sin descripción'} - Fecha: ${income.income_date}`);
                     incomeUSD += amount;
                 } else {
                     incomeARS += amount;
@@ -930,29 +921,6 @@ async function handlePublicReportAPI(req, res, pathParts) {
                     expenseUSD += amount;
                 } else {
                     expenseARS += amount;
-                }
-            });
-            
-            // Process currency exchanges
-            console.log('💱 Total currency exchanges:', exchanges.length);
-            exchanges.forEach(exchange => {
-                const fromAmount = parseFloat(exchange.from_amount || 0);
-                const toAmount = parseFloat(exchange.to_amount || 0);
-                
-                console.log(`💱 Exchange: ${fromAmount} ${exchange.from_currency} → ${toAmount} ${exchange.to_currency} - ${exchange.notes || 'Sin notas'}`);
-                
-                // Subtract from origin currency
-                if (exchange.from_currency === 'USD') {
-                    incomeUSD -= fromAmount;
-                } else {
-                    incomeARS -= fromAmount;
-                }
-                
-                // Add to destination currency
-                if (exchange.to_currency === 'USD') {
-                    incomeUSD += toAmount;
-                } else {
-                    incomeARS += toAmount;
                 }
             });
             
@@ -1029,8 +997,106 @@ async function handlePublicReportAPI(req, res, pathParts) {
     }
 }
 
-// Member verification API handler
-console.log('🚀 CREATING SERVER...');
+// Public Finance API handler (for members transparency)
+async function handlePublicFinanceAPI(req, res, pathParts) {
+    const method = req.method;
+    const clubId = pathParts[3];
+    
+    if (method === 'OPTIONS') {
+        res.writeHead(200, corsHeaders);
+        res.end();
+        return;
+    }
+
+    try {
+        // Simple password authentication
+        const authHeader = req.headers.authorization;
+        const publicPassword = process.env.PUBLIC_FINANCE_PASSWORD || 'socios2024';
+        
+        if (!authHeader || authHeader !== `Bearer ${publicPassword}`) {
+            sendError(res, 'Contraseña incorrecta', 401);
+            return;
+        }
+
+        if (method === 'GET' && clubId) {
+            // Get date filters from query params
+            const url = new URL(req.url, `http://${req.headers.host}`);
+            const from = url.searchParams.get('from');
+            const to = url.searchParams.get('to');
+
+            // Get all financial data
+            const [
+                tournaments,
+                expenses,
+                otherIncomes,
+                balance
+            ] = await Promise.all([
+                getAllTournaments(parseInt(clubId)),
+                getExpenses(parseInt(clubId), from, to),
+                getOtherIncomes(parseInt(clubId), from, to),
+                getCurrencyBalance(parseInt(clubId))
+            ]);
+
+            // Calculate tournament income (paid participants)
+            const tournamentIncome = tournaments.reduce((total, tournament) => {
+                return total + (tournament.paid_participants_count || 0) * (tournament.entry_fee || 0);
+            }, 0);
+
+            // Calculate other income total
+            const otherIncomeTotal = otherIncomes.reduce((total, income) => {
+                return total + parseFloat(income.amount || 0);
+            }, 0);
+
+            // Calculate expenses total
+            const expensesTotal = expenses.reduce((total, expense) => {
+                return total + parseFloat(expense.amount || 0);
+            }, 0);
+
+            // Prepare response
+            const financialData = {
+                summary: {
+                    tournamentIncome: tournamentIncome,
+                    otherIncome: otherIncomeTotal,
+                    totalIncome: tournamentIncome + otherIncomeTotal,
+                    totalExpenses: expensesTotal,
+                    balance: tournamentIncome + otherIncomeTotal - expensesTotal,
+                    currencyBalance: balance
+                },
+                tournaments: tournaments.map(t => ({
+                    tournament_id: t.tournament_id,
+                    tournament_name: t.tournament_name,
+                    tournament_date: t.tournament_date,
+                    entry_fee: t.entry_fee,
+                    paid_participants: t.paid_participants_count,
+                    income: (t.paid_participants_count || 0) * (t.entry_fee || 0)
+                })),
+                otherIncomes: otherIncomes.map(i => ({
+                    income_id: i.income_id,
+                    date: i.income_date,
+                    concept: i.concept,
+                    amount: parseFloat(i.amount),
+                    currency: i.currency,
+                    member_name: i.member_name || 'N/A'
+                })),
+                expenses: expenses.map(e => ({
+                    expense_id: e.expense_id,
+                    date: e.expense_date,
+                    concept: e.concept,
+                    amount: parseFloat(e.amount),
+                    category: e.category,
+                    payment_method: e.payment_method
+                }))
+            };
+
+            sendJSON(res, { success: true, data: financialData });
+        } else {
+            sendError(res, 'Endpoint no encontrado', 404);
+        }
+    } catch (error) {
+        console.error('Error en Public Finance API:', error);
+        sendError(res, error.message, 500);
+    }
+}
 
 // Main server
 const server = http.createServer(async (req, res) => {
@@ -1038,9 +1104,9 @@ const server = http.createServer(async (req, res) => {
     const pathname = url.pathname;
     const pathParts = pathname.split('/').filter(part => part);
 
-    console.log(`🚀 REQUEST: ${req.method} ${pathname}`);
+    console.log(`${req.method} ${pathname}`);
 
-    // Handle API routes FIRST (before static files)
+    // Handle API routes
     if (pathParts[0] === 'api') {
         if (pathParts[1] === 'auth') {
             await handleAuthAPI(req, res, pathParts);
@@ -1051,60 +1117,12 @@ const server = http.createServer(async (req, res) => {
         } else if (pathParts[1] === 'club') {
             await handleClubAPI(req, res, pathParts);
             return;
+        } else if (pathParts[1] === 'public' && pathParts[2] === 'finance') {
+            await handlePublicFinanceAPI(req, res, pathParts);
+            return;
         } else if (pathParts[1] === 'public' && pathParts[2] === 'report') {
             await handlePublicReportAPI(req, res, pathParts);
             return;
-        }
-    }
-
-    // Serve static files from frontend
-    console.log(`📁 STATIC FILE CHECK: ${req.method} ${pathname}`);
-    if (req.method === 'GET') {
-        console.log(`🔍 Processing static file request for: ${pathname}`);
-        try {
-
-            let filePath = path.join(FRONTEND_PATH, pathname === '/' ? 'index.html' : pathname);
-
-            // If file doesn't exist or is directory, serve index.html (for React routing)
-            if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
-                console.log('File not found or is directory, serving index.html');
-                filePath = path.join(FRONTEND_PATH, 'index.html');
-            }
-
-            if (fs.existsSync(filePath)) {
-                console.log(`Serving file: ${filePath}`);
-                const ext = path.extname(filePath);
-                const contentType = {
-                    '.html': 'text/html',
-                    '.css': 'text/css',
-                    '.js': 'application/javascript',
-                    '.json': 'application/json',
-                    '.png': 'image/png',
-                    '.jpg': 'image/jpeg',
-                    '.svg': 'image/svg+xml',
-                    '.ico': 'image/x-icon'
-                }[ext] || 'text/plain';
-
-                res.writeHead(200, {
-                    'Content-Type': contentType,
-                    'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=31536000'
-                });
-
-                fs.createReadStream(filePath).pipe(res);
-                return;
-            } else {
-                console.log(`File not found: ${filePath}`);
-                // Fallback: serve index.html for SPA routing
-                const indexPath = path.join(FRONTEND_PATH, 'index.html');
-                if (fs.existsSync(indexPath)) {
-                    console.log('Serving fallback index.html');
-                    res.writeHead(200, { 'Content-Type': 'text/html' });
-                    fs.createReadStream(indexPath).pipe(res);
-                    return;
-                }
-            }
-        } catch (error) {
-            console.log('Static file error:', error.message);
         }
     }
 

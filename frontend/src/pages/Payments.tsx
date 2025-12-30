@@ -76,10 +76,12 @@ export default function Payments() {
     memberId: '',
     description: '',
     paymentType: '',
-    currency: ''
+    currency: '',
+    custodian: ''
   })
   const [showFilterMemberDropdown, setShowFilterMemberDropdown] = useState(false)
   const [showFilterDescriptionDropdown, setShowFilterDescriptionDropdown] = useState(false)
+  const [showFilterCustodianDropdown, setShowFilterCustodianDropdown] = useState(false)
 
   // Lista de meses
   const monthsList = [
@@ -255,14 +257,46 @@ export default function Payments() {
 
   const exportToExcel = () => {
     // Preparar datos para exportación
-    const dataToExport = filteredOtherIncomes.map(income => ({
-      'Fecha': new Date(income.income_date).toLocaleDateString('es-AR'),
-      'Socio': (income as any).member_name || '-',
-      'Descripción': income.description || '-',
-      'Tipo de Pago': income.payment_type || '-',
-      'Moneda': (income as any).currency || 'ARS',
-      'Monto': Number(income.amount || 0)
-    }))
+    const dataToExport = filteredOtherIncomes.map(income => {
+      const currency = (income as any).currency || 'ARS'
+      const amount = Number(income.amount || 0)
+      
+      // Determinar "En posesión de": primero custodian, luego cuenta, luego socio
+      let enPosesionDe = '-'
+      if ((income as any).custodian && (income as any).custodian.trim()) {
+        enPosesionDe = (income as any).custodian
+      } else if ((income as any).account_name && (income as any).account_name.trim()) {
+        enPosesionDe = (income as any).account_name
+      } else if ((income as any).member_name && (income as any).member_name.trim()) {
+        enPosesionDe = `Socio: ${(income as any).member_name}`
+      }
+      
+      return {
+        'Fecha': new Date(income.income_date).toLocaleDateString('es-AR'),
+        'Socio': (income as any).member_name || '-',
+        'Descripción': income.description || '-',
+        'Tipo de Pago': income.payment_type || '-',
+        'Monto ARS': currency === 'ARS' ? amount : 0,
+        'Monto USD': currency === 'USD' ? amount : 0,
+        'En posesión de': enPosesionDe
+      }
+    })
+
+    // Agregar fila de totales
+    const totals = {
+      'Fecha': 'TOTALES',
+      'Socio': '',
+      'Descripción': '',
+      'Tipo de Pago': '',
+      'Monto ARS': filteredOtherIncomes
+        .filter(i => !(i as any).currency || (i as any).currency === 'ARS')
+        .reduce((sum, i) => sum + Number(i.amount || 0), 0),
+      'Monto USD': filteredOtherIncomes
+        .filter(i => (i as any).currency === 'USD')
+        .reduce((sum, i) => sum + Number(i.amount || 0), 0),
+      'En posesión de': ''
+    }
+    dataToExport.push(totals as any)
 
     // Crear workbook y worksheet
     const wb = XLSX.utils.book_new()
@@ -274,15 +308,347 @@ export default function Payments() {
       { wch: 25 },  // Socio
       { wch: 30 },  // Descripción
       { wch: 15 },  // Tipo de Pago
-      { wch: 10 },  // Moneda
-      { wch: 15 }   // Monto
+      { wch: 15 },  // Monto ARS
+      { wch: 15 },  // Monto USD
+      { wch: 20 }   // En posesión de
     ]
+
+    // Formatear la última fila (totales) en negrita
+    const lastRowIndex = dataToExport.length
+    const range = XLSX.utils.decode_range(ws['!ref'] || 'A1')
+    for (let col = range.s.c; col <= range.e.c; col++) {
+      const cellAddress = XLSX.utils.encode_cell({ r: lastRowIndex - 1, c: col })
+      if (!ws[cellAddress]) continue
+      ws[cellAddress].s = {
+        font: { bold: true },
+        fill: { fgColor: { rgb: 'E6E6E6' } }
+      }
+    }
 
     // Agregar hoja al workbook
     XLSX.utils.book_append_sheet(wb, ws, 'Otros Ingresos')
 
     // Generar nombre de archivo con fecha
     const fileName = `otros_ingresos_${new Date().toLocaleDateString('es-AR').replace(/\//g, '-')}.xlsx`
+
+    // Descargar archivo
+    XLSX.writeFile(wb, fileName)
+    toast.success('Archivo Excel descargado exitosamente')
+  }
+
+  const exportExpensesToExcel = () => {
+    // Preparar datos para exportación
+    const dataToExport = expenses.map(expense => {
+      const currency = (expense as any).currency || 'ARS'
+      const amount = Number(expense.amount || 0)
+      
+      // Determinar "En posesión de": primero custodian, luego cuenta
+      let enPosesionDe = '-'
+      if ((expense as any).custodian && (expense as any).custodian.trim()) {
+        enPosesionDe = (expense as any).custodian
+      } else if ((expense as any).account_name && (expense as any).account_name.trim()) {
+        enPosesionDe = (expense as any).account_name
+      }
+      
+      return {
+        'Fecha': new Date(expense.expense_date).toLocaleDateString('es-AR'),
+        'Monto ARS': currency === 'ARS' ? amount : 0,
+        'Monto USD': currency === 'USD' ? amount : 0,
+        'N° Recibo': expense.receipt_number || '-',
+        'Detalle': expense.detail || '-',
+        'En posesión de': enPosesionDe,
+        'Pagado desde': (expense as any).account_name || '-'
+      }
+    })
+
+    // Agregar fila de totales
+    const totals = {
+      'Fecha': 'TOTALES',
+      'Monto ARS': expenses
+        .filter(e => !(e as any).currency || (e as any).currency === 'ARS')
+        .reduce((sum, e) => sum + Number(e.amount || 0), 0),
+      'Monto USD': expenses
+        .filter(e => (e as any).currency === 'USD')
+        .reduce((sum, e) => sum + Number(e.amount || 0), 0),
+      'N° Recibo': '',
+      'Detalle': '',
+      'En posesión de': '',
+      'Pagado desde': ''
+    }
+    dataToExport.push(totals as any)
+
+    // Crear workbook y worksheet
+    const wb = XLSX.utils.book_new()
+    const ws = XLSX.utils.json_to_sheet(dataToExport)
+
+    // Ajustar ancho de columnas
+    ws['!cols'] = [
+      { wch: 12 },  // Fecha
+      { wch: 15 },  // Monto ARS
+      { wch: 15 },  // Monto USD
+      { wch: 12 },  // N° Recibo
+      { wch: 30 },  // Detalle
+      { wch: 20 },  // En posesión de
+      { wch: 20 }   // Pagado desde
+    ]
+
+    // Formatear la última fila (totales) en negrita
+    const lastRowIndex = dataToExport.length
+    const range = XLSX.utils.decode_range(ws['!ref'] || 'A1')
+    for (let col = range.s.c; col <= range.e.c; col++) {
+      const cellAddress = XLSX.utils.encode_cell({ r: lastRowIndex - 1, c: col })
+      if (!ws[cellAddress]) continue
+      ws[cellAddress].s = {
+        font: { bold: true },
+        fill: { fgColor: { rgb: 'E6E6E6' } }
+      }
+    }
+
+    // Agregar hoja al workbook
+    XLSX.utils.book_append_sheet(wb, ws, 'Gastos')
+
+    // Generar nombre de archivo con fecha
+    const fileName = `gastos_${new Date().toLocaleDateString('es-AR').replace(/\//g, '-')}.xlsx`
+
+    // Descargar archivo
+    XLSX.writeFile(wb, fileName)
+    toast.success('Archivo Excel descargado exitosamente')
+  }
+
+  const exportTransactionsToExcel = () => {
+    // Preparar datos para exportación
+    const dataToExport = transactions.map(tx => {
+      const currency = tx.currency || 'ARS'
+      const amount = Number(tx.amount || 0)
+      
+      // Separar montos por moneda
+      const montoARS = currency === 'ARS' ? amount : 0
+      const montoUSD = currency === 'USD' ? amount : 0
+      
+      // Determinar tipo de transacción en texto
+      let tipoTransaccion = ''
+      switch (tx.transaction_type) {
+        case 'income_tournament':
+          tipoTransaccion = 'Ingreso Torneo'
+          break
+        case 'income_other':
+          tipoTransaccion = 'Otro Ingreso'
+          break
+        case 'expense':
+          tipoTransaccion = 'Gasto'
+          break
+        case 'transfer':
+          tipoTransaccion = 'Transferencia'
+          break
+        case 'exchange':
+          tipoTransaccion = 'Conversión'
+          break
+        default:
+          tipoTransaccion = tx.transaction_type || '-'
+      }
+      
+      // Información adicional según el tipo
+      let infoAdicional = ''
+      if (tx.transaction_type === 'income_other') {
+        const parts = []
+        if ((tx as any).member_name) parts.push(`Socio: ${(tx as any).member_name}`)
+        if ((tx as any).additional_info) parts.push(`Tipo: ${(tx as any).additional_info}`)
+        if ((tx as any).custodian) parts.push(`En posesión: ${(tx as any).custodian}`)
+        infoAdicional = parts.join(' | ')
+      } else if (tx.transaction_type === 'expense') {
+        const parts = []
+        if ((tx as any).additional_info) parts.push(`Recibo: ${(tx as any).additional_info}`)
+        if ((tx as any).custodian) parts.push(`En posesión: ${(tx as any).custodian}`)
+        infoAdicional = parts.join(' | ')
+      } else if (tx.transaction_type === 'exchange' && (tx as any).additional_info) {
+        infoAdicional = (tx as any).additional_info
+      }
+      
+      return {
+        'Fecha': new Date(tx.transaction_date).toLocaleDateString('es-AR'),
+        'Tipo': tipoTransaccion,
+        'Desde Cuenta': tx.from_account_name || '-',
+        'Hacia Cuenta': tx.to_account_name || '-',
+        'Monto ARS': montoARS,
+        'Monto USD': montoUSD,
+        'Descripción': tx.description || '-',
+        'Información Adicional': infoAdicional || '-'
+      }
+    })
+    
+    // Crear workbook y worksheet
+    const wb = XLSX.utils.book_new()
+    const ws = XLSX.utils.json_to_sheet(dataToExport)
+    
+    // Ajustar ancho de columnas
+    ws['!cols'] = [
+      { wch: 12 },  // Fecha
+      { wch: 15 },  // Tipo
+      { wch: 20 },  // Desde Cuenta
+      { wch: 20 },  // Hacia Cuenta
+      { wch: 15 },  // Monto ARS
+      { wch: 15 },  // Monto USD
+      { wch: 30 },  // Descripción
+      { wch: 40 }   // Información Adicional
+    ]
+    
+    // Agregar hoja al workbook
+    XLSX.utils.book_append_sheet(wb, ws, 'Historial de Movimientos')
+    
+    // Generar nombre de archivo con fecha
+    const fileName = `historial_movimientos_${new Date().toLocaleDateString('es-AR').replace(/\//g, '-')}.xlsx`
+    
+    // Descargar archivo
+    XLSX.writeFile(wb, fileName)
+    toast.success('Archivo Excel descargado exitosamente')
+  }
+
+  const exportAccountsBalanceToExcel = () => {
+    if (!accounts || accounts.length === 0) {
+      toast.error('No hay cuentas para exportar')
+      return
+    }
+
+    // Preparar datos para exportación
+    const dataToExport = accounts.map(account => ({
+      'Cuenta': account.account_name,
+      'Saldo ARS': Number(account.current_balance_ars || 0),
+      'Saldo USD': Number(account.current_balance_usd || 0),
+      'Descripción': account.description || '-'
+    }))
+    
+    // Agregar fila de totales
+    const totalARS = accounts.reduce((sum, acc) => sum + Number(acc.current_balance_ars || 0), 0)
+    const totalUSD = accounts.reduce((sum, acc) => sum + Number(acc.current_balance_usd || 0), 0)
+    
+    const totals = {
+      'Cuenta': 'TOTALES',
+      'Saldo ARS': totalARS,
+      'Saldo USD': totalUSD,
+      'Descripción': ''
+    }
+    
+    dataToExport.push(totals)
+    
+    // Crear workbook y worksheet
+    const wb = XLSX.utils.book_new()
+    const ws = XLSX.utils.json_to_sheet(dataToExport)
+    
+    // Ajustar ancho de columnas
+    ws['!cols'] = [
+      { wch: 25 },  // Cuenta
+      { wch: 15 },  // Saldo ARS
+      { wch: 15 },  // Saldo USD
+      { wch: 40 }   // Descripción
+    ]
+    
+    // Formatear la última fila (totales) en negrita
+    const lastRowIndex = dataToExport.length
+    const range = XLSX.utils.decode_range(ws['!ref'] || 'A1')
+    for (let col = range.s.c; col <= range.e.c; col++) {
+      const cellAddress = XLSX.utils.encode_cell({ r: lastRowIndex - 1, c: col })
+      if (!ws[cellAddress]) continue
+      ws[cellAddress].s = {
+        font: { bold: true },
+        fill: { fgColor: { rgb: 'E6E6E6' } }
+      }
+    }
+    
+    // Agregar hoja al workbook
+    XLSX.utils.book_append_sheet(wb, ws, 'Estado de Cuentas')
+    
+    // Generar nombre de archivo con fecha
+    const fileName = `estado_cuentas_${new Date().toLocaleDateString('es-AR').replace(/\//g, '-')}.xlsx`
+    
+    // Descargar archivo
+    XLSX.writeFile(wb, fileName)
+    toast.success('Archivo Excel descargado exitosamente')
+  }
+
+  const exportCurrencyExchangesToExcel = () => {
+    // Preparar datos para exportación
+    const dataToExport = currencyExchanges.map(exchange => {
+      // Separar montos por moneda
+      const fromAmountARS = exchange.from_currency === 'ARS' ? Number(exchange.from_amount || 0) : 0
+      const fromAmountUSD = exchange.from_currency === 'USD' ? Number(exchange.from_amount || 0) : 0
+      const toAmountARS = exchange.to_currency === 'ARS' ? Number(exchange.to_amount || 0) : 0
+      const toAmountUSD = exchange.to_currency === 'USD' ? Number(exchange.to_amount || 0) : 0
+      
+      return {
+        'Fecha': new Date(exchange.exchange_date).toLocaleDateString('es-AR'),
+        'Desde Moneda': exchange.from_currency,
+        'Desde Monto ARS': fromAmountARS,
+        'Desde Monto USD': fromAmountUSD,
+        'Desde Cuenta': exchange.from_account_name || '-',
+        'Hacia Moneda': exchange.to_currency,
+        'Hacia Monto ARS': toAmountARS,
+        'Hacia Monto USD': toAmountUSD,
+        'Hacia Cuenta': exchange.to_account_name || '-',
+        'Tasa de Cambio': Number(exchange.exchange_rate || 0),
+        'Notas': exchange.notes || '-'
+      }
+    })
+
+    // Agregar fila de totales
+    const totals = {
+      'Fecha': 'TOTALES',
+      'Desde Moneda': '',
+      'Desde Monto ARS': currencyExchanges
+        .filter(e => e.from_currency === 'ARS')
+        .reduce((sum, e) => sum + Number(e.from_amount || 0), 0),
+      'Desde Monto USD': currencyExchanges
+        .filter(e => e.from_currency === 'USD')
+        .reduce((sum, e) => sum + Number(e.from_amount || 0), 0),
+      'Desde Cuenta': '',
+      'Hacia Moneda': '',
+      'Hacia Monto ARS': currencyExchanges
+        .filter(e => e.to_currency === 'ARS')
+        .reduce((sum, e) => sum + Number(e.to_amount || 0), 0),
+      'Hacia Monto USD': currencyExchanges
+        .filter(e => e.to_currency === 'USD')
+        .reduce((sum, e) => sum + Number(e.to_amount || 0), 0),
+      'Hacia Cuenta': '',
+      'Tasa de Cambio': '',
+      'Notas': ''
+    }
+    dataToExport.push(totals as any)
+
+    // Crear workbook y worksheet
+    const wb = XLSX.utils.book_new()
+    const ws = XLSX.utils.json_to_sheet(dataToExport)
+
+    // Ajustar ancho de columnas
+    ws['!cols'] = [
+      { wch: 12 },  // Fecha
+      { wch: 12 },  // Desde Moneda
+      { wch: 15 },  // Desde Monto ARS
+      { wch: 15 },  // Desde Monto USD
+      { wch: 20 },  // Desde Cuenta
+      { wch: 12 },  // Hacia Moneda
+      { wch: 15 },  // Hacia Monto ARS
+      { wch: 15 },  // Hacia Monto USD
+      { wch: 20 },  // Hacia Cuenta
+      { wch: 15 },  // Tasa de Cambio
+      { wch: 30 }   // Notas
+    ]
+
+    // Formatear la última fila (totales) en negrita
+    const lastRowIndex = dataToExport.length
+    const range = XLSX.utils.decode_range(ws['!ref'] || 'A1')
+    for (let col = range.s.c; col <= range.e.c; col++) {
+      const cellAddress = XLSX.utils.encode_cell({ r: lastRowIndex - 1, c: col })
+      if (!ws[cellAddress]) continue
+      ws[cellAddress].s = {
+        font: { bold: true },
+        fill: { fgColor: { rgb: 'E6E6E6' } }
+      }
+    }
+
+    // Agregar hoja al workbook
+    XLSX.utils.book_append_sheet(wb, ws, 'Conversiones')
+
+    // Generar nombre de archivo con fecha
+    const fileName = `conversiones_${new Date().toLocaleDateString('es-AR').replace(/\//g, '-')}.xlsx`
 
     // Descargar archivo
     XLSX.writeFile(wb, fileName)
@@ -303,6 +669,37 @@ export default function Payments() {
       .map(i => i.description)
       .filter((desc, index, self) => desc && desc.trim() && self.indexOf(desc) === index)
     return descriptions.sort()
+  }, [otherIncomes])
+
+  // Obtener lista única de "En posesión de" (custodian, cuenta o socio)
+  const uniqueCustodians = useMemo(() => {
+    const custodiansList: string[] = []
+    otherIncomes.forEach(income => {
+      // Primero custodian
+      if ((income as any).custodian && (income as any).custodian.trim()) {
+        const custodian = (income as any).custodian.trim()
+        if (!custodiansList.includes(custodian)) {
+          custodiansList.push(custodian)
+        }
+      }
+      // Luego cuenta
+      if ((income as any).account_name && (income as any).account_name.trim()) {
+        const accountName = (income as any).account_name.trim()
+        if (!custodiansList.includes(accountName)) {
+          custodiansList.push(accountName)
+        }
+      }
+      // Finalmente socio (solo si no hay custodian ni cuenta)
+      if (!(income as any).custodian && !(income as any).account_name) {
+        if ((income as any).member_name && (income as any).member_name.trim()) {
+          const memberName = `Socio: ${(income as any).member_name.trim()}`
+          if (!custodiansList.includes(memberName)) {
+            custodiansList.push(memberName)
+          }
+        }
+      }
+    })
+    return custodiansList.sort()
   }, [otherIncomes])
 
   // Agrupar otros ingresos por descripción para mostrar en balance (no usado actualmente)
@@ -393,14 +790,31 @@ export default function Payments() {
         income.payment_type === incomeFilters.paymentType
       const matchesCurrency = !incomeFilters.currency || 
         (income as any).currency === incomeFilters.currency
+      
+      // Filtrar por "En posesión de": custodian, cuenta o socio
+      const matchesCustodian = !incomeFilters.custodian || (() => {
+        const filterLower = incomeFilters.custodian.toLowerCase()
+        const custodian = ((income as any).custodian || '').toLowerCase()
+        const accountName = ((income as any).account_name || '').toLowerCase()
+        const memberName = ((income as any).member_name || '').toLowerCase()
+        return custodian.includes(filterLower) || accountName.includes(filterLower) || memberName.includes(filterLower)
+      })()
 
-      return matchesMember && matchesDescription && matchesPaymentType && matchesCurrency
+      return matchesMember && matchesDescription && matchesPaymentType && matchesCurrency && matchesCustodian
     })
   }, [otherIncomes, incomeFilters])
 
-  // Total of filtered other incomes
-  const filteredOtherIncomesTotal = useMemo(() => {
-    return filteredOtherIncomes.reduce((sum, income) => sum + Number(income.amount || 0), 0)
+  // Total of filtered other incomes por moneda
+  const filteredOtherIncomesTotalARS = useMemo(() => {
+    return filteredOtherIncomes
+      .filter(i => !(i as any).currency || (i as any).currency === 'ARS')
+      .reduce((sum, income) => sum + Number(income.amount || 0), 0)
+  }, [filteredOtherIncomes])
+
+  const filteredOtherIncomesTotalUSD = useMemo(() => {
+    return filteredOtherIncomes
+      .filter(i => (i as any).currency === 'USD')
+      .reduce((sum, income) => sum + Number(income.amount || 0), 0)
   }, [filteredOtherIncomes])
 
   // No set default date - show all tournaments by default
@@ -454,6 +868,13 @@ export default function Payments() {
       if (!clubIdNum || tab !== 'cuentas') return
       try {
         const transactionsData = await accountsService.getTransactions(clubIdNum, { from: from || undefined, to: to || undefined })
+        // Debug: verificar datos adicionales
+        if (transactionsData.length > 0) {
+          const sampleTx = transactionsData.find((t: any) => t.transaction_type === 'income_other')
+          if (sampleTx) {
+            console.log('🔍 Sample transaction with income_other:', sampleTx)
+          }
+        }
         setTransactions(transactionsData)
       } catch (error) {
         console.error('❌ Error cargando transacciones:', error)
@@ -848,7 +1269,14 @@ export default function Payments() {
               </div>
             )}
             {tab==='gastos' && permissions.canManageExpenses && (
-              <div className="ml-auto">
+              <div className="ml-auto flex gap-2">
+                <button
+                  onClick={exportExpensesToExcel}
+                  className="flex items-center gap-2 px-3 py-2 border rounded hover:bg-gray-50"
+                >
+                  <Download className="h-4 w-4" />
+                  Exportar Excel
+                </button>
                 <button onClick={() => {
                   const today = getLocalDateString()
                   setExpenseDraft({ expense_date: today, amount: '', currency: 'ARS', receipt_number: '', detail: '', custodian: '', account_id: '' })
@@ -859,7 +1287,14 @@ export default function Payments() {
               </div>
             )}
             {tab==='conversiones' && permissions.canManageCurrencyExchanges && (
-              <div className="ml-auto">
+              <div className="ml-auto flex gap-2">
+                <button
+                  onClick={exportCurrencyExchangesToExcel}
+                  className="flex items-center gap-2 px-3 py-2 border rounded hover:bg-gray-50"
+                >
+                  <Download className="h-4 w-4" />
+                  Exportar Excel
+                </button>
                 <button onClick={async () => {
                   const today = getLocalDateString()
                   setExchangeDraft({ 
@@ -1218,10 +1653,68 @@ export default function Payments() {
                   <option value="USD">USD</option>
                 </select>
               </div>
+              <div className="relative filter-custodian-dropdown">
+                <label className="block text-sm font-medium text-gray-700 mb-1">En posesión de</label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={incomeFilters.custodian}
+                    onChange={(e) => {
+                      setIncomeFilters(f => ({ ...f, custodian: e.target.value }))
+                      setShowFilterCustodianDropdown(true)
+                    }}
+                    onFocus={() => setShowFilterCustodianDropdown(true)}
+                    placeholder="Buscar por custodian, cuenta o socio..."
+                    className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500"
+                  />
+                  {incomeFilters.custodian && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIncomeFilters(f => ({ ...f, custodian: '' }))
+                        setShowFilterCustodianDropdown(false)
+                      }}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+                {showFilterCustodianDropdown && (() => {
+                  const filteredCustodians = uniqueCustodians.filter(custodian => 
+                    !incomeFilters.custodian || custodian.toLowerCase().includes(incomeFilters.custodian.toLowerCase())
+                  )
+                  
+                  if (filteredCustodians.length === 0) return null
+                  
+                  return (
+                    <div className="absolute z-50 mt-1 w-full bg-white border border-blue-300 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                      <div className="px-3 py-2 bg-blue-50 border-b">
+                        <p className="text-xs text-blue-700 font-medium">💡 En posesión de:</p>
+                      </div>
+                      {filteredCustodians.map((custodian, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            setIncomeFilters(f => ({ ...f, custodian: custodian }))
+                            setShowFilterCustodianDropdown(false)
+                          }}
+                          className="w-full text-left px-3 py-2 hover:bg-blue-50 hover:text-blue-700 transition-colors border-b last:border-b-0 text-sm"
+                        >
+                          {custodian}
+                        </button>
+                      ))}
+                    </div>
+                  )
+                })()}
+              </div>
             </div>
             <div className="mt-3 flex justify-end gap-2">
               <button
-                onClick={() => setIncomeFilters({ member: '', memberId: '', description: '', paymentType: '', currency: '' })}
+                onClick={() => setIncomeFilters({ member: '', memberId: '', description: '', paymentType: '', currency: '', custodian: '' })}
                 className="px-4 py-2 text-sm border rounded hover:bg-gray-50"
               >
                 Limpiar filtros
@@ -1373,7 +1866,19 @@ export default function Payments() {
                         TOTAL {showIncomeFilters && Object.values(incomeFilters).some(v => v) && '(Filtrado)'}
                       </td>
                       <td className="px-4 py-3 font-bold text-green-700 text-lg text-center">
-                        ${formatCurrency(filteredOtherIncomesTotal)}
+                        {filteredOtherIncomesTotalARS > 0 && (
+                          <div>
+                            ${formatCurrency(filteredOtherIncomesTotalARS)}
+                          </div>
+                        )}
+                        {filteredOtherIncomesTotalUSD > 0 && (
+                          <div className="mt-1">
+                            US${formatCurrency(filteredOtherIncomesTotalUSD)}
+                          </div>
+                        )}
+                        {filteredOtherIncomesTotalARS === 0 && filteredOtherIncomesTotalUSD === 0 && (
+                          <div>$0,00</div>
+                        )}
                       </td>
                     </tr>
                   </tfoot>
@@ -1590,9 +2095,9 @@ export default function Payments() {
         {/* Tab: Cuentas */}
         {tab==='cuentas' && (
           <div className="space-y-6">
-            {/* Botón para crear cuenta - Siempre visible arriba */}
+            {/* Botones de acción - Todos juntos en una línea */}
             {permissions.canViewAccounting && (
-              <div className="flex justify-end">
+              <div className="flex flex-wrap gap-2 justify-end">
                 <button
                   onClick={() => {
                     setAccountDraft({ account_name: '', description: '' })
@@ -1603,12 +2108,45 @@ export default function Payments() {
                   <DollarSign className="w-4 h-4" />
                   Crear Nueva Cuenta
                 </button>
+                {accounts && accounts.length > 0 && (
+                  <button
+                    onClick={exportAccountsBalanceToExcel}
+                    className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 flex items-center gap-2"
+                  >
+                    <Download className="w-4 h-4" />
+                    Exportar Estado de Cuentas
+                  </button>
+                )}
+                {accounts && accounts.length >= 2 && (
+                  <button
+                    onClick={() => {
+                      const today = getLocalDateString()
+                      setTransferDraft({ from_account_id: '', to_account_id: '', amount: '', currency: 'ARS', description: '', transaction_date: today })
+                      setShowTransferModal(true)
+                    }}
+                    className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 flex items-center gap-2"
+                  >
+                    <DollarSign className="w-4 h-4" />
+                    Transferir entre cuentas
+                  </button>
+                )}
+                {transactions.length > 0 && (
+                  <button
+                    onClick={exportTransactionsToExcel}
+                    className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center gap-2"
+                  >
+                    <Download className="w-4 h-4" />
+                    Exportar Historial
+                  </button>
+                )}
               </div>
             )}
 
             {/* Dashboard de Saldos */}
             {accounts && accounts.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Estado de Cuentas</h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {accounts.map(account => (
                   <div key={account.account_id} className="bg-white rounded-lg border p-4 relative">
                     <h3 className="font-semibold text-gray-900 mb-2">{account.account_name}</h3>
@@ -1652,6 +2190,7 @@ export default function Payments() {
                     )}
                   </div>
                 ))}
+                </div>
               </div>
             ) : (
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 text-center">
@@ -1741,23 +2280,6 @@ export default function Payments() {
               )
             })()}
 
-            {/* Botón de Transferencia */}
-            {permissions.canViewAccounting && accounts && accounts.length >= 2 && (
-              <div className="flex justify-end">
-                <button
-                  onClick={() => {
-                    const today = getLocalDateString()
-                    setTransferDraft({ from_account_id: '', to_account_id: '', amount: '', currency: 'ARS', description: '', transaction_date: today })
-                    setShowTransferModal(true)
-                  }}
-                  className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 flex items-center gap-2"
-                >
-                  <DollarSign className="w-4 h-4" />
-                  Transferir entre cuentas
-                </button>
-              </div>
-            )}
-
             {/* Historial de Transacciones */}
             <div className="bg-white rounded-lg border">
               <div className="p-4 border-b bg-gray-50">
@@ -1789,19 +2311,54 @@ export default function Payments() {
                             {new Date(tx.transaction_date).toLocaleDateString('es-AR')}
                           </td>
                           <td className="px-4 py-2 text-sm">
-                            <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
-                              tx.transaction_type === 'income_tournament' ? 'bg-green-100 text-green-800' :
-                              tx.transaction_type === 'income_other' ? 'bg-blue-100 text-blue-800' :
-                              tx.transaction_type === 'expense' ? 'bg-red-100 text-red-800' :
-                              tx.transaction_type === 'transfer' ? 'bg-purple-100 text-purple-800' :
-                              'bg-gray-100 text-gray-800'
-                            }`}>
-                              {tx.transaction_type === 'income_tournament' ? 'Ingreso Torneo' :
-                               tx.transaction_type === 'income_other' ? 'Otro Ingreso' :
-                               tx.transaction_type === 'expense' ? 'Gasto' :
-                               tx.transaction_type === 'transfer' ? 'Transferencia' :
-                               tx.transaction_type}
-                            </span>
+                            <div className="space-y-1">
+                              <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
+                                tx.transaction_type === 'income_tournament' ? 'bg-green-100 text-green-800' :
+                                tx.transaction_type === 'income_other' ? 'bg-blue-100 text-blue-800' :
+                                tx.transaction_type === 'expense' ? 'bg-red-100 text-red-800' :
+                                tx.transaction_type === 'transfer' ? 'bg-purple-100 text-purple-800' :
+                                tx.transaction_type === 'exchange' ? 'bg-yellow-100 text-yellow-800' :
+                                'bg-gray-100 text-gray-800'
+                              }`}>
+                                {tx.transaction_type === 'income_tournament' ? 'Ingreso Torneo' :
+                                 tx.transaction_type === 'income_other' ? 'Otro Ingreso' :
+                                 tx.transaction_type === 'expense' ? 'Gasto' :
+                                 tx.transaction_type === 'transfer' ? 'Transferencia' :
+                                 tx.transaction_type === 'exchange' ? 'Conversión' :
+                                 tx.transaction_type}
+                              </span>
+                              {/* Información adicional según el tipo */}
+                              {tx.transaction_type === 'income_other' && (tx as any).member_name && (
+                                <div className="text-xs text-gray-600">
+                                  👤 {(tx as any).member_name}
+                                </div>
+                              )}
+                              {tx.transaction_type === 'income_other' && (tx as any).additional_info && (
+                                <div className="text-xs text-gray-500 capitalize">
+                                  💳 {(tx as any).additional_info}
+                                </div>
+                              )}
+                              {tx.transaction_type === 'income_other' && (tx as any).custodian && (
+                                <div className="text-xs text-gray-500">
+                                  👤 En posesión: {(tx as any).custodian}
+                                </div>
+                              )}
+                              {tx.transaction_type === 'expense' && (tx as any).additional_info && (
+                                <div className="text-xs text-gray-500">
+                                  🧾 Recibo: {(tx as any).additional_info}
+                                </div>
+                              )}
+                              {tx.transaction_type === 'expense' && (tx as any).custodian && (
+                                <div className="text-xs text-gray-500">
+                                  👤 En posesión: {(tx as any).custodian}
+                                </div>
+                              )}
+                              {tx.transaction_type === 'exchange' && (tx as any).additional_info && (
+                                <div className="text-xs text-gray-500">
+                                  {(tx as any).additional_info}
+                                </div>
+                              )}
+                            </div>
                           </td>
                           <td className="px-4 py-2 text-sm text-gray-900">
                             {tx.from_account_name || '-'}
@@ -1818,7 +2375,15 @@ export default function Payments() {
                             </span>
                           </td>
                           <td className="px-4 py-2 text-sm text-gray-600">
-                            {tx.description || '-'}
+                            <div className="space-y-1">
+                              <div>{tx.description || '-'}</div>
+                              {/* Mostrar información adicional en la descripción si no hay en el tipo */}
+                              {tx.transaction_type === 'income_other' && !(tx as any).member_name && tx.description && (
+                                <div className="text-xs text-gray-400 italic">
+                                  {tx.description}
+                                </div>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -1997,9 +2562,6 @@ export default function Payments() {
                 </button>
                 <button
                   onClick={async () => {
-                    // TODO: Implementar addTransaction en accountsService
-                    toast.error('Funcionalidad en desarrollo')
-                    /* 
                     if (!transferDraft.from_account_id || !transferDraft.to_account_id || !transferDraft.amount || !transferDraft.transaction_date) {
                       toast.error('Todos los campos obligatorios deben estar completos')
                       return
@@ -2016,7 +2578,7 @@ export default function Payments() {
                         to_account_id: parseInt(transferDraft.to_account_id),
                         transaction_type: 'transfer'
                       }
-                      await accountsService.addTransaction(clubIdNum, transferData)
+                      await accountsService.createTransaction(clubIdNum, transferData)
                       toast.success('Transferencia realizada exitosamente')
                       setShowTransferModal(false)
                       const today = getLocalDateString()
@@ -2029,9 +2591,8 @@ export default function Payments() {
                       setAccounts(accountsData)
                       setTransactions(transactionsData)
                     } catch (error: any) {
-                      toast.error(error?.response?.data?.error || 'Error al realizar transferencia')
+                      toast.error(error?.response?.data?.error || error?.response?.data?.message || 'Error al realizar transferencia')
                     }
-                    */
                   }}
                   disabled={
                     !transferDraft.from_account_id ||
@@ -2608,7 +3169,7 @@ export default function Payments() {
                           // Auto-calcular to_amount si hay tasa de cambio
                           if (d.exchange_rate) {
                             const fromNum = parseFormattedNumber(validated)
-                            const rate = parseFloat(d.exchange_rate)
+                            const rate = parseFormattedNumber(d.exchange_rate)
                             if (fromNum > 0 && rate > 0) {
                               const toNum = fromNum / rate
                               newDraft.to_amount = toNum.toFixed(2).replace('.', ',')
@@ -2624,7 +3185,7 @@ export default function Payments() {
                           // Recalcular to_amount con el valor formateado
                           if (d.exchange_rate) {
                             const fromNum = parseFormattedNumber(formatted)
-                            const rate = parseFloat(d.exchange_rate)
+                            const rate = parseFormattedNumber(d.exchange_rate)
                             if (fromNum > 0 && rate > 0) {
                               const toNum = fromNum / rate
                               newDraft.to_amount = formatForDisplay(toNum.toFixed(2))
@@ -2668,7 +3229,7 @@ export default function Payments() {
                           // Auto-calcular from_amount si hay tasa de cambio
                           if (d.exchange_rate) {
                             const toNum = parseFormattedNumber(validated)
-                            const rate = parseFloat(d.exchange_rate)
+                            const rate = parseFormattedNumber(d.exchange_rate)
                             if (toNum > 0 && rate > 0) {
                               const fromNum = toNum * rate
                               newDraft.from_amount = fromNum.toFixed(2).replace('.', ',')
@@ -2684,7 +3245,7 @@ export default function Payments() {
                           // Recalcular from_amount con el valor formateado
                           if (d.exchange_rate) {
                             const toNum = parseFormattedNumber(formatted)
-                            const rate = parseFloat(d.exchange_rate)
+                            const rate = parseFormattedNumber(d.exchange_rate)
                             if (toNum > 0 && rate > 0) {
                               const fromNum = toNum * rate
                               newDraft.from_amount = formatForDisplay(fromNum.toFixed(2))
@@ -2829,7 +3390,7 @@ export default function Payments() {
                         ...exchangeDraft,
                         from_amount: parseFormattedNumber(exchangeDraft.from_amount),
                         to_amount: parseFormattedNumber(exchangeDraft.to_amount),
-                        exchange_rate: parseFloat(exchangeDraft.exchange_rate),
+                        exchange_rate: parseFormattedNumber(exchangeDraft.exchange_rate),
                         from_account_id: parseInt(exchangeDraft.from_account_id),
                         to_account_id: parseInt(exchangeDraft.to_account_id)
                       }
