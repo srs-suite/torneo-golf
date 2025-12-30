@@ -1,6 +1,12 @@
 // Database functions for TeeTracker Pro
 import { executeQuery, executeTransaction, getPool } from '../config/database.js';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // ================================
 // CLUBS (GOLF COURSES) FUNCTIONS
@@ -1467,6 +1473,43 @@ async function getPaymentsSummary(clubId, fromDate, toDate) {
 }
 
 /**
+ * Save expense photo from base64
+ */
+async function saveExpensePhoto(clubId, base64Data, expenseId) {
+    try {
+        if (!base64Data) return null;
+        
+        // Parse base64 data (format: data:image/jpeg;base64,/9j/4AAQ...)
+        const matches = base64Data.match(/^data:image\/(\w+);base64,(.+)$/);
+        if (!matches) {
+            throw new Error('Invalid base64 image data');
+        }
+        
+        const imageType = matches[1]; // jpeg, png, etc.
+        const imageData = matches[2];
+        
+        // Create uploads/expenses directory if it doesn't exist
+        const uploadsDir = path.join(__dirname, '..', 'uploads', 'expenses');
+        if (!fs.existsSync(uploadsDir)) {
+            fs.mkdirSync(uploadsDir, { recursive: true });
+        }
+        
+        // Generate unique filename
+        const filename = `expense_${clubId}_${expenseId || Date.now()}_${crypto.randomBytes(8).toString('hex')}.${imageType}`;
+        const filePath = path.join(uploadsDir, filename);
+        
+        // Write file
+        fs.writeFileSync(filePath, imageData, 'base64');
+        
+        // Return relative path for database storage
+        return `expenses/${filename}`;
+    } catch (error) {
+        console.error('❌ Error saving expense photo:', error);
+        throw error;
+    }
+}
+
+/**
  * Get expenses
  */
 async function getExpenses(clubId, fromDate, toDate) {
@@ -1482,6 +1525,7 @@ async function getExpenses(clubId, fromDate, toDate) {
                 e.custodian,
                 e.account_id,
                 ca.account_name,
+                e.receipt_photo_path,
                 e.created_at
             FROM club_expenses e
             LEFT JOIN custodian_accounts ca ON e.account_id = ca.account_id
@@ -1515,11 +1559,33 @@ async function getExpenses(clubId, fromDate, toDate) {
  */
 async function addExpense(clubId, expenseData) {
     try {
+        // Validar fondos suficientes si se especificó una cuenta
+        if (expenseData.account_id) {
+            const accountQuery = `SELECT current_balance_ars, current_balance_usd FROM custodian_accounts WHERE account_id = ? AND club_id = ?`;
+            const { rows: accountRows } = await executeQuery(accountQuery, [expenseData.account_id, clubId]);
+            
+            if (accountRows.length === 0) {
+                throw new Error('Cuenta no encontrada');
+            }
+            
+            const account = accountRows[0];
+            const currency = expenseData.currency || 'ARS';
+            const availableAmount = currency === 'USD' ? account.current_balance_usd : account.current_balance_ars;
+            const expenseAmount = Number(expenseData.amount);
+            
+            if (availableAmount < expenseAmount) {
+                throw new Error(`Fondos insuficientes en la cuenta. Disponible: ${availableAmount.toFixed(2)} ${currency}, Requerido: ${expenseAmount.toFixed(2)} ${currency}`);
+            }
+        }
+        
+        // Primero insertamos el gasto para obtener el ID
         const query = `
             INSERT INTO club_expenses (
-                club_id, expense_date, amount, currency, receipt_number, detail, custodian, account_id, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                club_id, expense_date, amount, currency, receipt_number, detail, custodian, account_id, receipt_photo_path, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
         `;
+        
+        let receiptPhotoPath = expenseData.receipt_photo_path || null;
         
         const params = [
             clubId,
@@ -1529,11 +1595,20 @@ async function addExpense(clubId, expenseData) {
             expenseData.receipt_number || null,
             expenseData.detail || null,
             expenseData.custodian || null,
-            expenseData.account_id || null
+            expenseData.account_id || null,
+            receiptPhotoPath
         ];
         
         const { rows } = await executeQuery(query, params);
         const expenseId = rows.insertId;
+        
+        // Si hay una foto en base64, guardarla como archivo y actualizar
+        if (expenseData.receipt_photo_base64 && !receiptPhotoPath) {
+            receiptPhotoPath = await saveExpensePhoto(clubId, expenseData.receipt_photo_base64, expenseId);
+            // Actualizar el gasto con la ruta de la foto
+            const updateQuery = `UPDATE club_expenses SET receipt_photo_path = ? WHERE expense_id = ? AND club_id = ?`;
+            await executeQuery(updateQuery, [receiptPhotoPath, expenseId, clubId]);
+        }
         
         // Si se especificó una cuenta, crear transacción y actualizar saldo
         if (expenseData.account_id) {
@@ -1592,6 +1667,23 @@ async function deleteExpense(clubId, expenseId) {
  */
 async function updateExpense(clubId, expenseId, expenseData) {
     try {
+        // Si hay una foto en base64, guardarla como archivo
+        let receiptPhotoPath = expenseData.receipt_photo_path;
+        if (expenseData.receipt_photo_base64) {
+            // Si hay una foto anterior, eliminarla
+            if (receiptPhotoPath) {
+                try {
+                    const oldFilePath = path.join(__dirname, '..', 'uploads', receiptPhotoPath);
+                    if (fs.existsSync(oldFilePath)) {
+                        fs.unlinkSync(oldFilePath);
+                    }
+                } catch (error) {
+                    console.error('Error deleting old photo:', error);
+                }
+            }
+            receiptPhotoPath = await saveExpensePhoto(clubId, expenseData.receipt_photo_base64, expenseId);
+        }
+        
         // Actualizar el gasto
         const query = `
             UPDATE club_expenses 
@@ -1602,7 +1694,8 @@ async function updateExpense(clubId, expenseId, expenseData) {
                 receipt_number = ?,
                 detail = ?,
                 custodian = ?,
-                account_id = ?
+                account_id = ?,
+                receipt_photo_path = ?
             WHERE club_id = ? AND expense_id = ?
         `;
         
@@ -1614,6 +1707,7 @@ async function updateExpense(clubId, expenseId, expenseData) {
             expenseData.detail || null,
             expenseData.custodian || null,
             expenseData.account_id || null,
+            receiptPhotoPath,
             clubId,
             expenseId
         ];
@@ -1670,6 +1764,11 @@ async function getOtherIncomes(clubId, fromDate, toDate) {
                 oi.custodian,
                 oi.account_id,
                 ca.account_name,
+                oi.received_amount,
+                oi.received_currency,
+                oi.change_amount,
+                oi.change_currency,
+                oi.exchange_rate,
                 oi.created_at,
                 CONCAT(m.first_name, ' ', m.last_name) as member_name
             FROM other_incomes oi
@@ -1707,8 +1806,9 @@ async function addOtherIncome(clubId, incomeData) {
     try {
         const query = `
             INSERT INTO other_incomes (
-                club_id, member_id, income_date, amount, currency, payment_type, description, custodian, account_id, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                club_id, member_id, income_date, amount, currency, payment_type, description, custodian, account_id,
+                received_amount, received_currency, change_amount, change_currency, exchange_rate, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
         `;
         
         const params = [
@@ -1720,7 +1820,12 @@ async function addOtherIncome(clubId, incomeData) {
             incomeData.payment_type || 'efectivo',
             incomeData.description || null,
             incomeData.custodian || null,
-            incomeData.account_id || null
+            incomeData.account_id || null,
+            incomeData.received_amount || null,
+            incomeData.received_currency || null,
+            incomeData.change_amount || null,
+            incomeData.change_currency || null,
+            incomeData.exchange_rate || null
         ];
         
         const { rows } = await executeQuery(query, params);
@@ -1728,17 +1833,59 @@ async function addOtherIncome(clubId, incomeData) {
         
         // Si se especificó una cuenta, crear transacción y actualizar saldo
         if (incomeData.account_id) {
+            // Calcular el monto a ingresar: si hay received_amount, usar ese; sino usar amount
+            const amountToReceive = incomeData.received_amount || incomeData.amount;
+            const currencyToReceive = incomeData.received_currency || incomeData.currency || 'ARS';
+            
             await createTransaction(clubId, {
                 transaction_type: 'income_other',
                 transaction_date: incomeData.income_date,
                 from_account_id: null,
                 to_account_id: incomeData.account_id,
-                amount: incomeData.amount,
-                currency: incomeData.currency || 'ARS',
+                amount: amountToReceive,
+                currency: currencyToReceive,
                 description: incomeData.description || 'Ingreso registrado',
                 reference_type: 'other_income',
                 reference_id: incomeId
             });
+            
+            // Si hay cambio, crear un expense automáticamente
+            if (incomeData.change_amount && incomeData.change_amount > 0 && incomeData.account_id) {
+                // Obtener nombre del socio si existe
+                let memberName = '';
+                if (incomeData.member_id) {
+                    try {
+                        const memberQuery = `SELECT first_name, last_name FROM members WHERE member_id = ? AND course_id = ?`;
+                        const { rows: memberRows } = await executeQuery(memberQuery, [incomeData.member_id, clubId]);
+                        if (memberRows.length > 0) {
+                            memberName = `${memberRows[0].first_name} ${memberRows[0].last_name}`;
+                            console.log(`✅ Nombre del socio obtenido: ${memberName}`);
+                        } else {
+                            console.warn(`⚠️ No se encontró socio con ID ${incomeData.member_id} en club ${clubId}`);
+                        }
+                    } catch (error) {
+                        console.error('❌ Error obteniendo nombre del socio:', error);
+                    }
+                } else {
+                    console.log('ℹ️ No hay member_id en incomeData');
+                }
+                
+                const changeDetail = memberName 
+                    ? `Cambio devuelto a ${memberName} - ${incomeData.description || 'Ingreso registrado'}`
+                    : `Cambio devuelto - ${incomeData.description || 'Ingreso registrado'}`;
+                
+                console.log(`💰 Creando gasto de cambio: ${changeDetail}`);
+                
+                await addExpense(clubId, {
+                    expense_date: incomeData.income_date,
+                    amount: incomeData.change_amount,
+                    currency: incomeData.change_currency || 'ARS',
+                    receipt_number: null,
+                    detail: changeDetail,
+                    custodian: incomeData.custodian || null,
+                    account_id: incomeData.account_id
+                });
+            }
         }
         
         return { income_id: incomeId };
@@ -1754,18 +1901,73 @@ async function addOtherIncome(clubId, incomeData) {
 async function deleteOtherIncome(clubId, incomeId) {
     try {
         // Primero obtener los datos del ingreso para revertir el balance
-        const getQuery = `SELECT amount, currency, account_id FROM other_incomes WHERE club_id = ? AND income_id = ?`;
+        const getQuery = `SELECT amount, currency, account_id, received_amount, received_currency, change_amount, change_currency FROM other_incomes WHERE club_id = ? AND income_id = ?`;
         const { rows: incomeRows } = await executeQuery(getQuery, [clubId, incomeId]);
         
-        if (incomeRows.length > 0 && incomeRows[0].account_id) {
+        if (incomeRows.length > 0) {
             const income = incomeRows[0];
-            // Revertir: restar el monto (porque al ingresar se sumó)
-            await updateAccountBalance(
-                income.account_id,
-                income.amount,
-                income.currency || 'ARS',
-                'subtract'
-            );
+            
+            // Revertir el balance de la cuenta principal (usar received_amount si existe, sino amount)
+            if (income.account_id) {
+                const amountToRevert = income.received_amount || income.amount;
+                const currencyToRevert = income.received_currency || income.currency || 'ARS';
+                
+                await updateAccountBalance(
+                    income.account_id,
+                    amountToRevert,
+                    currencyToRevert,
+                    'subtract'
+                );
+            }
+            
+            // Si hay cambio, también revertir el expense del cambio
+            if (income.change_amount > 0 && income.account_id) {
+                await updateAccountBalance(
+                    income.account_id,
+                    income.change_amount,
+                    income.change_currency || 'ARS',
+                    'add'
+                );
+            }
+        }
+        
+        // Eliminar la transacción asociada en account_transactions
+        const deleteTransactionQuery = `DELETE FROM account_transactions WHERE club_id = ? AND reference_type = 'other_income' AND reference_id = ?`;
+        await executeQuery(deleteTransactionQuery, [clubId, incomeId]);
+        
+        // Eliminar el expense del cambio si existe
+        const deleteChangeExpenseQuery = `
+            DELETE FROM club_expenses 
+            WHERE club_id = ? 
+            AND expense_date = (SELECT income_date FROM other_incomes WHERE income_id = ? AND club_id = ?)
+            AND amount = (SELECT change_amount FROM other_incomes WHERE income_id = ? AND club_id = ?)
+            AND currency = (SELECT change_currency FROM other_incomes WHERE income_id = ? AND club_id = ?)
+            AND description LIKE '%Cambio%'
+        `;
+        // Primero obtener la fecha y montos del cambio
+        if (incomeRows.length > 0 && incomeRows[0].change_amount > 0) {
+            const income = incomeRows[0];
+            const deleteExpenseQuery = `
+                DELETE FROM club_expenses 
+                WHERE club_id = ? 
+                AND account_id = ?
+                AND expense_date = (SELECT income_date FROM other_incomes WHERE income_id = ? AND club_id = ?)
+                AND amount = ?
+                AND currency = ?
+                AND description LIKE '%Cambio%'
+            `;
+            const getIncomeDateQuery = `SELECT income_date FROM other_incomes WHERE club_id = ? AND income_id = ?`;
+            const { rows: dateRows } = await executeQuery(getIncomeDateQuery, [clubId, incomeId]);
+            if (dateRows.length > 0) {
+                await executeQuery(deleteExpenseQuery, [
+                    clubId,
+                    income.account_id,
+                    incomeId,
+                    clubId,
+                    income.change_amount,
+                    income.change_currency || 'ARS'
+                ]);
+            }
         }
         
         // Eliminar el ingreso
@@ -1783,6 +1985,11 @@ async function deleteOtherIncome(clubId, incomeId) {
  */
 async function updateOtherIncome(clubId, incomeId, incomeData) {
     try {
+        // Obtener el ingreso actual para verificar si hay cambios en el cambio
+        const getCurrentQuery = `SELECT change_amount, change_currency, account_id FROM other_incomes WHERE club_id = ? AND income_id = ?`;
+        const { rows: currentRows } = await executeQuery(getCurrentQuery, [clubId, incomeId]);
+        const currentIncome = currentRows[0];
+        
         // Actualizar el ingreso
         const query = `
             UPDATE other_incomes 
@@ -1794,7 +2001,12 @@ async function updateOtherIncome(clubId, incomeId, incomeData) {
                 payment_type = ?,
                 description = ?,
                 custodian = ?,
-                account_id = ?
+                account_id = ?,
+                received_amount = ?,
+                received_currency = ?,
+                change_amount = ?,
+                change_currency = ?,
+                exchange_rate = ?
             WHERE club_id = ? AND income_id = ?
         `;
         
@@ -1807,11 +2019,19 @@ async function updateOtherIncome(clubId, incomeId, incomeData) {
             incomeData.description || null,
             incomeData.custodian || null,
             incomeData.account_id || null,
+            incomeData.received_amount || null,
+            incomeData.received_currency || null,
+            incomeData.change_amount || null,
+            incomeData.change_currency || null,
+            incomeData.exchange_rate || null,
             clubId,
             incomeId
         ];
         
         const { rows } = await executeQuery(query, params);
+        
+        // TODO: Si cambió el cambio, deberíamos actualizar/eliminar el expense relacionado
+        // Por ahora, solo actualizamos el ingreso
         
         return { success: true, affectedRows: rows.affectedRows };
     } catch (error) {
@@ -1923,14 +2143,27 @@ async function getCurrencyBalance(clubId) {
         }
         
         // 2. Otros ingresos por moneda
+        // Usar received_amount si existe (monto realmente recibido), sino usar amount (monto a cobrar)
         try {
             const otherIncomesQuery = `
                 SELECT 
-                    COALESCE(currency, 'ARS') as currency,
-                    SUM(amount) as total
+                    COALESCE(
+                        CASE WHEN received_currency IS NOT NULL THEN received_currency ELSE currency END,
+                        'ARS'
+                    ) as currency,
+                    SUM(
+                        CASE 
+                            WHEN received_amount IS NOT NULL AND received_amount > 0 
+                            THEN received_amount 
+                            ELSE amount 
+                        END
+                    ) as total
                 FROM other_incomes
                 WHERE club_id = ?
-                GROUP BY COALESCE(currency, 'ARS')
+                GROUP BY COALESCE(
+                    CASE WHEN received_currency IS NOT NULL THEN received_currency ELSE currency END,
+                    'ARS'
+                )
             `;
             const otherIncomes = await executeQuery(otherIncomesQuery, [clubId]);
             otherIncomes.rows.forEach(r => {
@@ -2160,6 +2393,13 @@ async function deleteCurrencyExchange(clubId, exchangeId) {
         
         const query = `DELETE FROM currency_exchanges WHERE club_id = ? AND exchange_id = ?`;
         const { rows } = await executeQuery(query, [clubId, exchangeId]);
+        
+        if (rows.affectedRows === 0) {
+            console.warn(`⚠️ No se encontró conversión con ID ${exchangeId} para eliminar`);
+        } else {
+            console.log(`✅ Conversión ${exchangeId} eliminada. Filas afectadas: ${rows.affectedRows}`);
+        }
+        
         return { success: true, affectedRows: rows.affectedRows };
     } catch (error) {
         console.error('❌ Error deleting currency exchange:', error);
@@ -3346,12 +3586,17 @@ async function updateParticipantPayment(courseId, tournamentId, participantId, p
         const newCurrency = paymentData.currency || 'ARS';
         
         if (newPaymentStatus === 'paid' && previousPaymentStatus !== 'paid') {
-            // Nuevo pago: sumar a la cuenta
-            const tournamentQuery = `SELECT account_id FROM tournaments WHERE tournament_id = ? AND course_id = ?`;
+            // Nuevo pago: sumar a la cuenta y crear transacción
+            const tournamentQuery = `SELECT account_id, club_id, tournament_date, tournament_name FROM tournaments WHERE tournament_id = ? AND course_id = ?`;
             const { rows: tournamentRows } = await executeQuery(tournamentQuery, [tournamentId, courseId]);
             
             if (tournamentRows[0]?.account_id) {
                 const accountId = tournamentRows[0].account_id;
+                const clubId = tournamentRows[0].club_id;
+                const tournamentDate = tournamentRows[0].tournament_date;
+                const tournamentName = tournamentRows[0].tournament_name || 'Torneo';
+                
+                // Actualizar balance de la cuenta
                 const field = newCurrency === 'USD' ? 'current_balance_usd' : 'current_balance_ars';
                 const updateAccountQuery = `
                     UPDATE custodian_accounts 
@@ -3359,15 +3604,32 @@ async function updateParticipantPayment(courseId, tournamentId, participantId, p
                     WHERE account_id = ?
                 `;
                 await executeQuery(updateAccountQuery, [newAmount, accountId]);
+                
+                // Crear transacción de ingreso de torneo
+                await createTransaction(clubId, {
+                    transaction_type: 'income_tournament',
+                    transaction_date: tournamentDate || new Date().toISOString().split('T')[0],
+                    from_account_id: null,
+                    to_account_id: accountId,
+                    amount: newAmount,
+                    currency: newCurrency,
+                    description: `Pago de torneo: ${tournamentName} - Participante ID: ${participantId}`,
+                    reference_type: 'tournament_payment',
+                    reference_id: participantId
+                });
+                
                 console.log(`✅ Added ${newAmount} ${newCurrency} to account ${accountId} (tournament payment)`);
             }
         } else if (previousPaymentStatus === 'paid' && newPaymentStatus !== 'paid') {
-            // Revertir pago: restar de la cuenta
-            const tournamentQuery = `SELECT account_id FROM tournaments WHERE tournament_id = ? AND course_id = ?`;
+            // Revertir pago: restar de la cuenta y eliminar/crear transacción de reversión
+            const tournamentQuery = `SELECT account_id, club_id FROM tournaments WHERE tournament_id = ? AND course_id = ?`;
             const { rows: tournamentRows } = await executeQuery(tournamentQuery, [tournamentId, courseId]);
             
             if (tournamentRows[0]?.account_id) {
                 const accountId = tournamentRows[0].account_id;
+                const clubId = tournamentRows[0].club_id;
+                
+                // Actualizar balance de la cuenta
                 const field = previousCurrency === 'USD' ? 'current_balance_usd' : 'current_balance_ars';
                 const updateAccountQuery = `
                     UPDATE custodian_accounts 
@@ -3375,23 +3637,70 @@ async function updateParticipantPayment(courseId, tournamentId, participantId, p
                     WHERE account_id = ?
                 `;
                 await executeQuery(updateAccountQuery, [previousAmount, accountId]);
+                
+                // Crear transacción de reversión (expense para revertir el ingreso)
+                await createTransaction(clubId, {
+                    transaction_type: 'expense',
+                    transaction_date: new Date().toISOString().split('T')[0],
+                    from_account_id: accountId,
+                    to_account_id: null,
+                    amount: previousAmount,
+                    currency: previousCurrency,
+                    description: `Reversión de pago de torneo - Participante ID: ${participantId}`,
+                    reference_type: 'tournament_payment_reversal',
+                    reference_id: participantId
+                });
+                
                 console.log(`✅ Removed ${previousAmount} ${previousCurrency} from account ${accountId} (payment reverted)`);
             }
         } else if (previousPaymentStatus === 'paid' && newPaymentStatus === 'paid' && (previousAmount !== newAmount || previousCurrency !== newCurrency)) {
-            // Ajustar monto: restar el anterior y sumar el nuevo
-            const tournamentQuery = `SELECT account_id FROM tournaments WHERE tournament_id = ? AND course_id = ?`;
+            // Ajustar monto: restar el anterior y sumar el nuevo, crear transacciones correspondientes
+            const tournamentQuery = `SELECT account_id, club_id, tournament_date FROM tournaments WHERE tournament_id = ? AND course_id = ?`;
             const { rows: tournamentRows } = await executeQuery(tournamentQuery, [tournamentId, courseId]);
             
             if (tournamentRows[0]?.account_id) {
                 const accountId = tournamentRows[0].account_id;
+                const clubId = tournamentRows[0].club_id;
+                const tournamentDate = tournamentRows[0].tournament_date;
                 
                 // Restar el anterior
                 const prevField = previousCurrency === 'USD' ? 'current_balance_usd' : 'current_balance_ars';
                 await executeQuery(`UPDATE custodian_accounts SET ${prevField} = ${prevField} - ? WHERE account_id = ?`, [previousAmount, accountId]);
                 
+                // Crear transacción de reversión del monto anterior
+                await createTransaction(clubId, {
+                    transaction_type: 'expense',
+                    transaction_date: new Date().toISOString().split('T')[0],
+                    from_account_id: accountId,
+                    to_account_id: null,
+                    amount: previousAmount,
+                    currency: previousCurrency,
+                    description: `Ajuste de pago de torneo (reversión) - Participante ID: ${participantId}`,
+                    reference_type: 'tournament_payment_adjustment',
+                    reference_id: participantId
+                });
+                
                 // Sumar el nuevo
                 const newField = newCurrency === 'USD' ? 'current_balance_usd' : 'current_balance_ars';
                 await executeQuery(`UPDATE custodian_accounts SET ${newField} = ${newField} + ? WHERE account_id = ?`, [newAmount, accountId]);
+                
+                // Obtener nombre del torneo para la descripción
+                const tournamentNameQuery = `SELECT tournament_name FROM tournaments WHERE tournament_id = ? AND course_id = ?`;
+                const { rows: nameRows } = await executeQuery(tournamentNameQuery, [tournamentId, courseId]);
+                const tournamentName = nameRows[0]?.tournament_name || 'Torneo';
+                
+                // Crear nueva transacción con el monto ajustado
+                await createTransaction(clubId, {
+                    transaction_type: 'income_tournament',
+                    transaction_date: tournamentDate || new Date().toISOString().split('T')[0],
+                    from_account_id: null,
+                    to_account_id: accountId,
+                    amount: newAmount,
+                    currency: newCurrency,
+                    description: `Ajuste de pago de torneo: ${tournamentName} - Participante ID: ${participantId}`,
+                    reference_type: 'tournament_payment',
+                    reference_id: participantId
+                });
                 
                 console.log(`✅ Adjusted account ${accountId}: -${previousAmount} ${previousCurrency}, +${newAmount} ${newCurrency}`);
             }
@@ -5375,10 +5684,12 @@ async function getMemberHandicapHistory(clubId, memberId) {
 
 /**
  * Get all accounts for a club
+ * @param {number} clubId - Club ID
+ * @param {boolean} includeInactive - If true, includes inactive (closed) accounts
  */
-async function getAccounts(clubId) {
+async function getAccounts(clubId, includeInactive = false) {
     try {
-        const query = `
+        let query = `
             SELECT 
                 account_id,
                 account_name,
@@ -5388,10 +5699,18 @@ async function getAccounts(clubId) {
                 is_active,
                 created_at
             FROM custodian_accounts
-            WHERE club_id = ? AND is_active = TRUE
-            ORDER BY account_name
+            WHERE club_id = ?
         `;
-        const { rows } = await executeQuery(query, [clubId]);
+        
+        const params = [clubId];
+        
+        if (!includeInactive) {
+            query += ` AND is_active = TRUE`;
+        }
+        
+        query += ` ORDER BY is_active DESC, account_name`;
+        
+        const { rows } = await executeQuery(query, params);
         return rows;
     } catch (error) {
         console.error('❌ Error getting accounts:', error);
@@ -5500,32 +5819,36 @@ async function getTransactions(clubId, fromDate, toDate) {
                 t.transaction_type,
                 t.amount,
                 t.currency,
+                NULL as to_amount,
+                NULL as to_currency,
                 t.description,
                 t.reference_type,
                 t.reference_id,
                 t.created_at,
+                t.from_account_id,
+                t.to_account_id,
                 fa.account_name as from_account_name,
                 ta.account_name as to_account_name,
                 -- Información adicional según el tipo de transacción
                 -- Primero intenta con reference_type y reference_id, luego busca por coincidencia
                 COALESCE(
                     CASE WHEN t.reference_type = 'other_income' THEN oi1.member_id END,
-                    CASE WHEN t.transaction_type = 'income_other' AND t.to_account_id = oi2.account_id 
-                         AND t.transaction_date = oi2.income_date AND t.amount = oi2.amount 
-                         AND t.currency = oi2.currency THEN oi2.member_id END
+                    CASE WHEN t.transaction_type = 'income_other' AND t.to_account_id = oi2_ranked.account_id 
+                         AND t.transaction_date = oi2_ranked.income_date AND t.amount = oi2_ranked.amount 
+                         AND t.currency = oi2_ranked.currency THEN oi2_ranked.member_id END
                 ) as member_id,
                 COALESCE(
                     CASE WHEN t.reference_type = 'other_income' THEN CONCAT(m1.first_name, ' ', m1.last_name) END,
-                    CASE WHEN t.transaction_type = 'income_other' AND t.to_account_id = oi2.account_id 
-                         AND t.transaction_date = oi2.income_date AND t.amount = oi2.amount 
-                         AND t.currency = oi2.currency THEN CONCAT(m2.first_name, ' ', m2.last_name) END
+                    CASE WHEN t.transaction_type = 'income_other' AND t.to_account_id = oi2_ranked.account_id 
+                         AND t.transaction_date = oi2_ranked.income_date AND t.amount = oi2_ranked.amount 
+                         AND t.currency = oi2_ranked.currency THEN CONCAT(m2.first_name, ' ', m2.last_name) END
                 ) as member_name,
                 COALESCE(
                     CASE WHEN t.reference_type = 'other_income' THEN oi1.payment_type END,
                     CASE WHEN t.reference_type = 'expense' THEN e1.receipt_number END,
-                    CASE WHEN t.transaction_type = 'income_other' AND t.to_account_id = oi2.account_id 
-                         AND t.transaction_date = oi2.income_date AND t.amount = oi2.amount 
-                         AND t.currency = oi2.currency THEN oi2.payment_type END,
+                    CASE WHEN t.transaction_type = 'income_other' AND t.to_account_id = oi2_ranked.account_id 
+                         AND t.transaction_date = oi2_ranked.income_date AND t.amount = oi2_ranked.amount 
+                         AND t.currency = oi2_ranked.currency THEN oi2_ranked.payment_type END,
                     CASE WHEN t.transaction_type = 'expense' AND t.from_account_id = e2.account_id 
                          AND t.transaction_date = e2.expense_date AND t.amount = e2.amount 
                          AND t.currency = e2.currency THEN e2.receipt_number END
@@ -5533,9 +5856,9 @@ async function getTransactions(clubId, fromDate, toDate) {
                 COALESCE(
                     CASE WHEN t.reference_type = 'other_income' THEN oi1.custodian END,
                     CASE WHEN t.reference_type = 'expense' THEN e1.custodian END,
-                    CASE WHEN t.transaction_type = 'income_other' AND t.to_account_id = oi2.account_id 
-                         AND t.transaction_date = oi2.income_date AND t.amount = oi2.amount 
-                         AND t.currency = oi2.currency THEN oi2.custodian END,
+                    CASE WHEN t.transaction_type = 'income_other' AND t.to_account_id = oi2_ranked.account_id 
+                         AND t.transaction_date = oi2_ranked.income_date AND t.amount = oi2_ranked.amount 
+                         AND t.currency = oi2_ranked.currency THEN oi2_ranked.custodian END,
                     CASE WHEN t.transaction_type = 'expense' AND t.from_account_id = e2.account_id 
                          AND t.transaction_date = e2.expense_date AND t.amount = e2.amount 
                          AND t.currency = e2.currency THEN e2.custodian END
@@ -5544,17 +5867,34 @@ async function getTransactions(clubId, fromDate, toDate) {
             LEFT JOIN custodian_accounts fa ON t.from_account_id = fa.account_id
             LEFT JOIN custodian_accounts ta ON t.to_account_id = ta.account_id
             -- JOINs con reference_type y reference_id
-            LEFT JOIN other_incomes oi1 ON t.reference_type = 'other_income' AND t.reference_id = oi1.income_id
+            LEFT JOIN other_incomes oi1 ON t.reference_type = 'other_income' AND t.reference_id = oi1.income_id AND oi1.club_id = t.club_id
             LEFT JOIN members m1 ON oi1.member_id = m1.member_id
-            LEFT JOIN club_expenses e1 ON t.reference_type = 'expense' AND t.reference_id = e1.expense_id
+            LEFT JOIN club_expenses e1 ON t.reference_type = 'expense' AND t.reference_id = e1.expense_id AND e1.club_id = t.club_id
             -- JOINs por coincidencia (para transacciones antiguas sin reference_type)
-            LEFT JOIN other_incomes oi2 ON t.transaction_type = 'income_other' 
-                AND t.to_account_id = oi2.account_id 
-                AND t.transaction_date = oi2.income_date 
-                AND t.amount = oi2.amount 
-                AND t.currency = oi2.currency
-                AND (t.reference_type IS NULL OR t.reference_type != 'other_income' OR t.reference_id != oi2.income_id)
-            LEFT JOIN members m2 ON oi2.member_id = m2.member_id
+            -- Usar subquery para obtener solo el primer other_income que coincida (evitar duplicados)
+            LEFT JOIN (
+                SELECT 
+                    oi.income_id,
+                    oi.member_id,
+                    oi.account_id,
+                    oi.income_date,
+                    oi.amount,
+                    oi.currency,
+                    oi.payment_type,
+                    oi.custodian
+                FROM other_incomes oi
+                INNER JOIN (
+                    SELECT account_id, income_date, amount, currency, MIN(income_id) as min_income_id
+                    FROM other_incomes
+                    GROUP BY account_id, income_date, amount, currency
+                ) oi_min ON oi.income_id = oi_min.min_income_id
+            ) oi2_ranked ON t.transaction_type = 'income_other' 
+                AND t.to_account_id = oi2_ranked.account_id 
+                AND t.transaction_date = oi2_ranked.income_date 
+                AND t.amount = oi2_ranked.amount 
+                AND t.currency = oi2_ranked.currency
+                AND (t.reference_type IS NULL OR t.reference_type != 'other_income' OR t.reference_id != oi2_ranked.income_id)
+            LEFT JOIN members m2 ON oi2_ranked.member_id = m2.member_id
             LEFT JOIN club_expenses e2 ON t.transaction_type = 'expense' 
                 AND t.from_account_id = e2.account_id 
                 AND t.transaction_date = e2.expense_date 
@@ -5562,6 +5902,18 @@ async function getTransactions(clubId, fromDate, toDate) {
                 AND t.currency = e2.currency
                 AND (t.reference_type IS NULL OR t.reference_type != 'expense' OR t.reference_id != e2.expense_id)
             WHERE t.club_id = ?
+            -- Excluir transacciones huérfanas (que tienen reference_type pero el registro referenciado no existe)
+            -- Las transferencias no tienen reference_type, así que siempre se incluyen
+            -- Las transacciones de torneos (tournament_payment) siempre se incluyen
+            AND (
+                t.reference_type IS NULL 
+                OR t.transaction_type = 'transfer'
+                OR t.reference_type = 'tournament_payment'
+                OR t.reference_type = 'tournament_payment_reversal'
+                OR t.reference_type = 'tournament_payment_adjustment'
+                OR (t.reference_type = 'other_income' AND EXISTS (SELECT 1 FROM other_incomes oi WHERE oi.income_id = t.reference_id AND oi.club_id = t.club_id))
+                OR (t.reference_type = 'expense' AND EXISTS (SELECT 1 FROM club_expenses e WHERE e.expense_id = t.reference_id AND e.club_id = t.club_id))
+            )
         `;
         
         const params = [clubId];
@@ -5585,10 +5937,14 @@ async function getTransactions(clubId, fromDate, toDate) {
                 'exchange' as transaction_type,
                 ce.from_amount as amount,
                 ce.from_currency as currency,
-                CONCAT('Conversión: ', ce.from_amount, ' ', ce.from_currency, ' → ', ce.to_amount, ' ', ce.to_currency, IF(ce.notes IS NOT NULL, CONCAT(' (', ce.notes, ')'), '')) as description,
+                ce.to_amount as to_amount,
+                ce.to_currency as to_currency,
+                CONCAT(ce.from_amount, ' ', ce.from_currency, ' → ', ce.to_amount, ' ', ce.to_currency, IF(ce.notes IS NOT NULL, CONCAT(' (', ce.notes, ')'), '')) as description,
                 'currency_exchange' as reference_type,
                 ce.exchange_id as reference_id,
                 ce.created_at,
+                ce.from_account_id,
+                ce.to_account_id,
                 fa.account_name as from_account_name,
                 ta.account_name as to_account_name,
                 NULL as member_id,
@@ -5616,7 +5972,54 @@ async function getTransactions(clubId, fromDate, toDate) {
         query += ` ORDER BY transaction_date DESC, created_at DESC`;
         
         const { rows } = await executeQuery(query, params);
-        return rows;
+        
+        // Debug: log todas las transacciones para verificar tipos
+        const transactionTypes = rows.reduce((acc, r) => {
+            acc[r.transaction_type] = (acc[r.transaction_type] || 0) + 1;
+            return acc;
+        }, {});
+        console.log(`📊 getTransactions para club ${clubId}:`, {
+            total: rows.length,
+            tipos: transactionTypes,
+            fromDate,
+            toDate
+        });
+        
+        // Debug específico para transacciones de torneos
+        const tournamentTransactions = rows.filter(r => r.transaction_type === 'income_tournament');
+        if (tournamentTransactions.length > 0) {
+            console.log(`🏆 getTransactions: Se encontraron ${tournamentTransactions.length} transacciones de torneos`);
+            const totalARS = tournamentTransactions
+                .filter(t => (t.currency || 'ARS') === 'ARS')
+                .reduce((sum, t) => sum + Number(t.amount || 0), 0);
+            console.log(`   Total ARS en transacciones de torneos: ${totalARS}`);
+        } else {
+            console.log(`⚠️  getTransactions: NO se encontraron transacciones de torneos para club ${clubId}`);
+        }
+        
+        // Debug: log transferencias para verificar que se están obteniendo
+        const transfers = rows.filter(r => r.transaction_type === 'transfer');
+        if (transfers.length > 0) {
+            console.log(`📊 getTransactions: Se encontraron ${transfers.length} transferencias para club ${clubId}`);
+            transfers.forEach(t => {
+                console.log(`  - ID: ${t.transaction_id}, Fecha: ${t.transaction_date}, Desde: "${t.from_account_name || 'N/A'}", Hacia: "${t.to_account_name || 'N/A'}", Monto: ${t.amount} ${t.currency}`);
+            });
+        } else {
+            console.log(`⚠️ getTransactions: NO se encontraron transferencias para club ${clubId}. Total transacciones: ${rows.length}`);
+        }
+        
+        // Eliminar duplicados basados en transaction_id (puede haber duplicados por los JOINs)
+        const seen = new Set();
+        const uniqueRows = rows.filter(row => {
+            const key = `${row.transaction_id}_${row.transaction_date}_${row.amount}_${row.currency}`;
+            if (seen.has(key)) {
+                return false;
+            }
+            seen.add(key);
+            return true;
+        });
+        
+        return uniqueRows;
     } catch (error) {
         console.error('❌ Error getting transactions:', error);
         throw error;
@@ -5738,6 +6141,158 @@ async function createTransaction(clubId, transactionData) {
     }
 }
 
+/**
+ * Get account balance breakdown (for debugging)
+ */
+async function getAccountBalanceBreakdown(clubId, accountName) {
+    try {
+        console.log(`🔍 getAccountBalanceBreakdown: clubId=${clubId}, accountName="${accountName}"`);
+        // Primero obtener el account_id
+        const accountQuery = `SELECT account_id, account_name, current_balance_ars, current_balance_usd FROM custodian_accounts WHERE club_id = ? AND account_name = ?`;
+        const { rows: accountRows } = await executeQuery(accountQuery, [clubId, accountName]);
+        
+        console.log(`🔍 Account rows encontradas: ${accountRows.length}`);
+        
+        if (accountRows.length === 0) {
+            throw new Error(`Cuenta "${accountName}" no encontrada`);
+        }
+        
+        const account = accountRows[0];
+        const accountId = account.account_id;
+        
+        // Obtener todas las transacciones relacionadas con esta cuenta
+        const transactionsQuery = `
+            SELECT 
+                t.transaction_id,
+                t.transaction_type,
+                t.transaction_date,
+                t.amount,
+                t.currency,
+                t.from_account_id,
+                t.to_account_id,
+                t.description,
+                fa.account_name as from_account_name,
+                ta.account_name as to_account_name
+            FROM account_transactions t
+            LEFT JOIN custodian_accounts fa ON t.from_account_id = fa.account_id
+            LEFT JOIN custodian_accounts ta ON t.to_account_id = ta.account_id
+            WHERE t.club_id = ?
+            AND (t.from_account_id = ? OR t.to_account_id = ?)
+            ORDER BY t.transaction_date DESC, t.created_at DESC
+        `;
+        
+        const { rows: transactions } = await executeQuery(transactionsQuery, [clubId, accountId, accountId]);
+        
+        // Obtener conversiones de moneda
+        const exchangesQuery = `
+            SELECT 
+                ce.exchange_id,
+                ce.exchange_date,
+                ce.from_amount,
+                ce.from_currency,
+                ce.to_amount,
+                ce.to_currency,
+                fa.account_name as from_account_name,
+                ta.account_name as to_account_name
+            FROM currency_exchanges ce
+            LEFT JOIN custodian_accounts fa ON ce.from_account_id = fa.account_id
+            LEFT JOIN custodian_accounts ta ON ce.to_account_id = ta.account_id
+            WHERE ce.club_id = ?
+            AND (ce.from_account_id = ? OR ce.to_account_id = ?)
+            ORDER BY ce.exchange_date DESC
+        `;
+        
+        const { rows: exchanges } = await executeQuery(exchangesQuery, [clubId, accountId, accountId]);
+        
+        // Calcular desglose USD
+        let totalIngresosUSD = 0;
+        let totalEgresosUSD = 0;
+        const ingresosUSD = [];
+        const egresosUSD = [];
+        
+        // Procesar transacciones
+        transactions.forEach(tx => {
+            if (tx.currency === 'USD') {
+                if (tx.to_account_id === accountId) {
+                    // Ingreso
+                    totalIngresosUSD += Number(tx.amount);
+                    ingresosUSD.push({
+                        fecha: tx.transaction_date,
+                        tipo: tx.transaction_type,
+                        monto: Number(tx.amount),
+                        descripcion: tx.description || `${tx.transaction_type} desde ${tx.from_account_name || 'N/A'}`
+                    });
+                } else if (tx.from_account_id === accountId) {
+                    // Egreso
+                    totalEgresosUSD += Number(tx.amount);
+                    egresosUSD.push({
+                        fecha: tx.transaction_date,
+                        tipo: tx.transaction_type,
+                        monto: Number(tx.amount),
+                        descripcion: tx.description || `${tx.transaction_type} hacia ${tx.to_account_name || 'N/A'}`
+                    });
+                }
+            }
+        });
+        
+        // Procesar conversiones
+        exchanges.forEach(ex => {
+            if (ex.to_account_id === accountId && ex.to_currency === 'USD') {
+                // Ingreso USD por conversión
+                totalIngresosUSD += Number(ex.to_amount);
+                ingresosUSD.push({
+                    fecha: ex.exchange_date,
+                    tipo: 'exchange',
+                    monto: Number(ex.to_amount),
+                    descripcion: `Conversión: ${ex.from_amount} ${ex.from_currency} → ${ex.to_amount} ${ex.to_currency} desde ${ex.from_account_name || 'N/A'}`
+                });
+            } else if (ex.from_account_id === accountId && ex.from_currency === 'USD') {
+                // Egreso USD por conversión
+                totalEgresosUSD += Number(ex.from_amount);
+                egresosUSD.push({
+                    fecha: ex.exchange_date,
+                    tipo: 'exchange',
+                    monto: Number(ex.from_amount),
+                    descripcion: `Conversión: ${ex.from_amount} ${ex.from_currency} → ${ex.to_amount} ${ex.to_currency} hacia ${ex.to_account_name || 'N/A'}`
+                });
+            }
+        });
+        
+        const balanceCalculado = totalIngresosUSD - totalEgresosUSD;
+        const balanceReal = Number(account.current_balance_usd || 0);
+        const diferencia = balanceReal - balanceCalculado;
+        
+        console.log(`💰 Balance breakdown para ${account.account_name}:`, {
+            balanceRealUSD: balanceReal,
+            balanceCalculadoUSD: balanceCalculado,
+            diferenciaUSD: diferencia,
+            totalIngresosUSD,
+            totalEgresosUSD,
+            totalTransacciones: transactions.length,
+            totalConversiones: exchanges.length,
+            ingresosCount: ingresosUSD.length,
+            egresosCount: egresosUSD.length
+        });
+        
+        return {
+            cuenta: account.account_name,
+            account_id: accountId,
+            balanceRealUSD: balanceReal,
+            balanceCalculadoUSD: balanceCalculado,
+            diferenciaUSD: diferencia,
+            totalIngresosUSD,
+            totalEgresosUSD,
+            ingresosUSD: ingresosUSD.sort((a, b) => new Date(a.fecha) - new Date(b.fecha)),
+            egresosUSD: egresosUSD.sort((a, b) => new Date(a.fecha) - new Date(b.fecha)),
+            totalTransacciones: transactions.length,
+            totalConversiones: exchanges.length
+        };
+    } catch (error) {
+        console.error('❌ Error getting account balance breakdown:', error);
+        throw error;
+    }
+}
+
 // ================================
 // SYSTEM FUNCTIONS  
 // ================================
@@ -5779,7 +6334,7 @@ export {
     getCurrencyBalance, getCustodians,
     
     // Custodian accounts functions
-    getAccounts, createAccount, updateAccount, deleteAccount, getTransactions, createTransaction,
+    getAccounts, createAccount, updateAccount, deleteAccount, getTransactions, createTransaction, getAccountBalanceBreakdown,
     
     // Course holes functions
     createCourseHolesTable, getCourseHoles, updateCourseHole, updateMultipleCourseHoles, getCourseStatistics,

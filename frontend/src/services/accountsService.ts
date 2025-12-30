@@ -31,8 +31,10 @@ export interface Transaction {
 }
 
 export const accountsService = {
-  async getAccounts(clubId: number) {
-    const response = await axios.get(`/api/club/${clubId}/accounting/accounts`)
+  async getAccounts(clubId: number, includeInactive: boolean = false) {
+    const response = await axios.get(`/api/club/${clubId}/accounting/accounts`, {
+      params: includeInactive ? { includeInactive: 'true' } : {}
+    })
     return response.data.data || []
   },
   

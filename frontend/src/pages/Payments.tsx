@@ -82,6 +82,8 @@ export default function Payments() {
   const [showFilterMemberDropdown, setShowFilterMemberDropdown] = useState(false)
   const [showFilterDescriptionDropdown, setShowFilterDescriptionDropdown] = useState(false)
   const [showFilterCustodianDropdown, setShowFilterCustodianDropdown] = useState(false)
+  const [selectedAccountDetail, setSelectedAccountDetail] = useState<string | null>(null)
+  const [transactionSortOrder, setTransactionSortOrder] = useState<'asc' | 'desc'>('desc')
 
   // Lista de meses
   const monthsList = [
@@ -416,16 +418,64 @@ export default function Payments() {
   }
 
   const exportTransactionsToExcel = () => {
+    // Ordenar transacciones por fecha ascendente (igual que en la tabla)
+    const sortedTransactions = [...transactions].sort((a, b) => {
+      const dateA = new Date(a.transaction_date).getTime()
+      const dateB = new Date(b.transaction_date).getTime()
+      if (dateA !== dateB) return dateA - dateB
+      return (a.transaction_id || 0) - (b.transaction_id || 0)
+    })
+
+    // Calcular balances usando la misma lógica que la tabla
+    let runningBalanceARS = 0
+    let runningBalanceUSD = 0
+
     // Preparar datos para exportación
-    const dataToExport = transactions.map(tx => {
+    const dataToExport = sortedTransactions.map(tx => {
       const currency = tx.currency || 'ARS'
       const amount = Number(tx.amount || 0)
       
-      // Separar montos por moneda
-      const montoARS = currency === 'ARS' ? amount : 0
-      const montoUSD = currency === 'USD' ? amount : 0
+      // Calcular entrada y salida usando la misma lógica que la tabla
+      let ingresoARS = 0
+      let egresoARS = 0
+      let ingresoUSD = 0
+      let egresoUSD = 0
       
-      // Determinar tipo de transacción en texto
+      if (tx.transaction_type === 'income_tournament' || tx.transaction_type === 'income_other') {
+        if (currency === 'ARS') ingresoARS = amount
+        else ingresoUSD = amount
+      } else if (tx.transaction_type === 'expense') {
+        if (currency === 'ARS') egresoARS = amount
+        else egresoUSD = amount
+      } else if (tx.transaction_type === 'transfer') {
+        if (currency === 'ARS') {
+          egresoARS = amount
+          ingresoARS = amount
+        } else {
+          egresoUSD = amount
+          ingresoUSD = amount
+        }
+      } else if (tx.transaction_type === 'exchange') {
+        const fromCurrency = (tx as any).from_currency || currency
+        const toCurrency = (tx as any).to_currency || currency
+        const fromAmount = Number((tx as any).from_amount || amount)
+        const toAmount = Number((tx as any).to_amount || amount)
+        
+        if (fromCurrency === 'ARS') egresoARS = fromAmount
+        else egresoUSD = fromAmount
+        
+        if (toCurrency === 'ARS') ingresoARS = toAmount
+        else ingresoUSD = toAmount
+      }
+      
+      // Actualizar balance acumulado (excluyendo transferencias cuando no hay cuenta seleccionada)
+      const isTransfer = tx.transaction_type === 'transfer'
+      if (!isTransfer) {
+        runningBalanceARS = runningBalanceARS + ingresoARS - egresoARS
+        runningBalanceUSD = runningBalanceUSD + ingresoUSD - egresoUSD
+      }
+      
+      // Determinar tipo de transacción con nombre del socio
       let tipoTransaccion = ''
       switch (tx.transaction_type) {
         case 'income_tournament':
@@ -447,32 +497,35 @@ export default function Payments() {
           tipoTransaccion = tx.transaction_type || '-'
       }
       
-      // Información adicional según el tipo
-      let infoAdicional = ''
-      if (tx.transaction_type === 'income_other') {
-        const parts = []
-        if ((tx as any).member_name) parts.push(`Socio: ${(tx as any).member_name}`)
-        if ((tx as any).additional_info) parts.push(`Tipo: ${(tx as any).additional_info}`)
-        if ((tx as any).custodian) parts.push(`En posesión: ${(tx as any).custodian}`)
-        infoAdicional = parts.join(' | ')
-      } else if (tx.transaction_type === 'expense') {
-        const parts = []
-        if ((tx as any).additional_info) parts.push(`Recibo: ${(tx as any).additional_info}`)
-        if ((tx as any).custodian) parts.push(`En posesión: ${(tx as any).custodian}`)
-        infoAdicional = parts.join(' | ')
-      } else if (tx.transaction_type === 'exchange' && (tx as any).additional_info) {
-        infoAdicional = (tx as any).additional_info
+      // Agregar nombre del socio al tipo si existe
+      if ((tx as any).member_name) {
+        tipoTransaccion += ` - ${(tx as any).member_name}`
+      }
+      
+      // Descripción: para conversiones usar notes, para otros usar description
+      let descripcion = tx.description || '-'
+      if (tx.transaction_type === 'exchange' && (tx as any).reference_id) {
+        const exchangeId = (tx as any).reference_id
+        const exchange = currencyExchanges.find((ex: any) => ex.exchange_id === exchangeId)
+        if (exchange && exchange.notes) {
+          descripcion = exchange.notes
+        } else {
+          descripcion = '-'
+        }
       }
       
       return {
         'Fecha': new Date(tx.transaction_date).toLocaleDateString('es-AR'),
         'Tipo': tipoTransaccion,
-        'Desde Cuenta': tx.from_account_name || '-',
-        'Hacia Cuenta': tx.to_account_name || '-',
-        'Monto ARS': montoARS,
-        'Monto USD': montoUSD,
-        'Descripción': tx.description || '-',
-        'Información Adicional': infoAdicional || '-'
+        'Descripción': descripcion,
+        'Desde': tx.from_account_name || '-',
+        'Hacia': tx.to_account_name || '-',
+        'Entrada ARS': ingresoARS > 0 ? ingresoARS : '',
+        'Salida ARS': egresoARS > 0 ? egresoARS : '',
+        'Entrada USD': ingresoUSD > 0 ? ingresoUSD : '',
+        'Salida USD': egresoUSD > 0 ? egresoUSD : '',
+        'Saldo ARS': runningBalanceARS,
+        'Saldo USD': runningBalanceUSD
       }
     })
     
@@ -483,13 +536,16 @@ export default function Payments() {
     // Ajustar ancho de columnas
     ws['!cols'] = [
       { wch: 12 },  // Fecha
-      { wch: 15 },  // Tipo
-      { wch: 20 },  // Desde Cuenta
-      { wch: 20 },  // Hacia Cuenta
-      { wch: 15 },  // Monto ARS
-      { wch: 15 },  // Monto USD
+      { wch: 20 },  // Tipo
       { wch: 30 },  // Descripción
-      { wch: 40 }   // Información Adicional
+      { wch: 20 },  // Desde
+      { wch: 20 },  // Hacia
+      { wch: 15 },  // Entrada ARS
+      { wch: 15 },  // Salida ARS
+      { wch: 15 },  // Entrada USD
+      { wch: 15 },  // Salida USD
+      { wch: 15 },  // Saldo ARS
+      { wch: 15 }   // Saldo USD
     ]
     
     // Agregar hoja al workbook
@@ -867,12 +923,36 @@ export default function Payments() {
     const loadTransactions = async () => {
       if (!clubIdNum || tab !== 'cuentas') return
       try {
-        const transactionsData = await accountsService.getTransactions(clubIdNum, { from: from || undefined, to: to || undefined })
+        // Para la pestaña Cuentas, NO aplicar filtros de fecha
+        // El historial de movimientos debe mostrar TODAS las transacciones para calcular balances correctamente
+        console.log('🔍 Cargando transacciones (sin filtros de fecha para pestaña Cuentas):', { 
+          clubId: clubIdNum,
+          filtrosActivos: { from, to },
+          nota: 'Los filtros de fecha se ignoran en la pestaña Cuentas para mostrar todas las transacciones'
+        })
+        const transactionsData = await accountsService.getTransactions(clubIdNum, {})
         // Debug: verificar datos adicionales
+        console.log('📊 Transacciones cargadas del backend:', {
+          total: transactionsData.length,
+          porTipo: transactionsData.reduce((acc: any, tx: any) => {
+            const type = tx.transaction_type || 'unknown'
+            acc[type] = (acc[type] || 0) + 1
+            return acc
+          }, {}),
+          tournamentTransactions: transactionsData.filter((t: any) => t.transaction_type === 'income_tournament').length,
+          fechas: transactionsData.length > 0 ? {
+            primera: transactionsData[0].transaction_date,
+            ultima: transactionsData[transactionsData.length - 1].transaction_date
+          } : null
+        })
         if (transactionsData.length > 0) {
           const sampleTx = transactionsData.find((t: any) => t.transaction_type === 'income_other')
           if (sampleTx) {
             console.log('🔍 Sample transaction with income_other:', sampleTx)
+          }
+          const sampleTournamentTx = transactionsData.find((t: any) => t.transaction_type === 'income_tournament')
+          if (sampleTournamentTx) {
+            console.log('🏆 Sample transaction with income_tournament:', sampleTournamentTx)
           }
         }
         setTransactions(transactionsData)
@@ -2282,114 +2362,542 @@ export default function Payments() {
 
             {/* Historial de Transacciones */}
             <div className="bg-white rounded-lg border">
-              <div className="p-4 border-b bg-gray-50">
+              <div className="p-4 border-b bg-gray-50 flex items-center justify-between">
                 <h3 className="font-semibold text-gray-900">Historial de Movimientos</h3>
+                <div className="flex items-center gap-2">
+                  <label className="text-sm text-gray-700">Filtrar por cuenta:</label>
+                  <select
+                    value={selectedAccountDetail || ''}
+                    onChange={(e) => setSelectedAccountDetail(e.target.value || null)}
+                    className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    <option value="">Todas las cuentas</option>
+                    {accounts && accounts.length > 0 ? accounts.map(account => (
+                      <option key={account.account_id} value={account.account_id.toString()}>
+                        {account.account_name}
+                      </option>
+                    )) : null}
+                  </select>
+                  {selectedAccountDetail && (
+                    <button
+                      onClick={() => setSelectedAccountDetail(null)}
+                      className="p-1 text-gray-500 hover:text-gray-700"
+                      title="Limpiar filtro"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                  <label className="text-sm text-gray-700 ml-2">Ordenar:</label>
+                  <select
+                    value={transactionSortOrder}
+                    onChange={(e) => setTransactionSortOrder(e.target.value as 'asc' | 'desc')}
+                    className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    <option value="desc">Más recientes primero</option>
+                    <option value="asc">Más antiguas primero</option>
+                  </select>
+                </div>
               </div>
               <div className="overflow-x-auto">
                 {loading ? (
                   <div className="p-6 text-center text-gray-600">Cargando...</div>
-                ) : transactions.length === 0 ? (
-                  <div className="p-6 text-center text-gray-500">
-                    No hay transacciones registradas
-                  </div>
-                ) : (
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Tipo</th>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Desde</th>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Hacia</th>
-                        <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Monto</th>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Descripción</th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                      {transactions.map(tx => (
-                        <tr key={tx.transaction_id} className="hover:bg-gray-50">
-                          <td className="px-4 py-2 text-sm text-gray-900">
-                            {new Date(tx.transaction_date).toLocaleDateString('es-AR')}
-                          </td>
-                          <td className="px-4 py-2 text-sm">
-                            <div className="space-y-1">
-                              <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
-                                tx.transaction_type === 'income_tournament' ? 'bg-green-100 text-green-800' :
-                                tx.transaction_type === 'income_other' ? 'bg-blue-100 text-blue-800' :
-                                tx.transaction_type === 'expense' ? 'bg-red-100 text-red-800' :
-                                tx.transaction_type === 'transfer' ? 'bg-purple-100 text-purple-800' :
-                                tx.transaction_type === 'exchange' ? 'bg-yellow-100 text-yellow-800' :
-                                'bg-gray-100 text-gray-800'
-                              }`}>
-                                {tx.transaction_type === 'income_tournament' ? 'Ingreso Torneo' :
-                                 tx.transaction_type === 'income_other' ? 'Otro Ingreso' :
-                                 tx.transaction_type === 'expense' ? 'Gasto' :
-                                 tx.transaction_type === 'transfer' ? 'Transferencia' :
-                                 tx.transaction_type === 'exchange' ? 'Conversión' :
-                                 tx.transaction_type}
-                              </span>
-                              {/* Información adicional según el tipo */}
-                              {tx.transaction_type === 'income_other' && (tx as any).member_name && (
-                                <div className="text-xs text-gray-600">
-                                  👤 {(tx as any).member_name}
-                                </div>
-                              )}
-                              {tx.transaction_type === 'income_other' && (tx as any).additional_info && (
-                                <div className="text-xs text-gray-500 capitalize">
-                                  💳 {(tx as any).additional_info}
-                                </div>
-                              )}
-                              {tx.transaction_type === 'income_other' && (tx as any).custodian && (
-                                <div className="text-xs text-gray-500">
-                                  👤 En posesión: {(tx as any).custodian}
-                                </div>
-                              )}
-                              {tx.transaction_type === 'expense' && (tx as any).additional_info && (
-                                <div className="text-xs text-gray-500">
-                                  🧾 Recibo: {(tx as any).additional_info}
-                                </div>
-                              )}
-                              {tx.transaction_type === 'expense' && (tx as any).custodian && (
-                                <div className="text-xs text-gray-500">
-                                  👤 En posesión: {(tx as any).custodian}
-                                </div>
-                              )}
-                              {tx.transaction_type === 'exchange' && (tx as any).additional_info && (
-                                <div className="text-xs text-gray-500">
-                                  {(tx as any).additional_info}
-                                </div>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-4 py-2 text-sm text-gray-900">
-                            {tx.from_account_name || '-'}
-                          </td>
-                          <td className="px-4 py-2 text-sm text-gray-900">
-                            {tx.to_account_name || '-'}
-                          </td>
-                          <td className="px-4 py-2 text-sm text-right">
-                            <span className={`font-semibold ${
-                              tx.transaction_type === 'expense' ? 'text-red-600' : 'text-green-600'
-                            }`}>
-                              {tx.currency === 'USD' ? 'US$' : '$'}
-                              {formatCurrency(Number(tx.amount || 0))}
-                            </span>
-                          </td>
-                          <td className="px-4 py-2 text-sm text-gray-600">
-                            <div className="space-y-1">
-                              <div>{tx.description || '-'}</div>
-                              {/* Mostrar información adicional en la descripción si no hay en el tipo */}
-                              {tx.transaction_type === 'income_other' && !(tx as any).member_name && tx.description && (
-                                <div className="text-xs text-gray-400 italic">
-                                  {tx.description}
-                                </div>
-                              )}
-                            </div>
-                          </td>
+                ) : (() => {
+                  // Verificar que transactions esté definido
+                  if (!transactions || !Array.isArray(transactions)) {
+                    return (
+                      <div className="p-6 text-center text-gray-500">
+                        No hay transacciones disponibles
+                      </div>
+                    )
+                  }
+                  
+                  // Filtrar transacciones por cuenta seleccionada
+                  let filteredTransactions = selectedAccountDetail
+                    ? transactions.filter(tx => {
+                        try {
+                          const accountId = selectedAccountDetail.toString()
+                          // Buscar la cuenta seleccionada por ID para obtener su nombre
+                          const selectedAccount = accounts && accounts.length > 0 
+                            ? accounts.find((acc: any) => String(acc.account_id) === accountId)
+                            : null
+                          const selectedAccountName = selectedAccount?.account_name
+                          
+                          if (!selectedAccountName) {
+                            console.warn('⚠️ No se encontró la cuenta seleccionada:', accountId, 'Cuentas disponibles:', accounts?.map((a: any) => ({ id: a.account_id, name: a.account_name })))
+                            return false
+                          }
+                          
+                          // Normalizar IDs a string para comparación
+                          const fromAccountId = tx.from_account_id != null ? String(tx.from_account_id) : null
+                          const toAccountId = tx.to_account_id != null ? String(tx.to_account_id) : null
+                          // También verificar si hay un campo account_id directo (por si acaso)
+                          const directAccountId = (tx as any).account_id != null ? String((tx as any).account_id) : null
+                          
+                          // Comparar por ID si están disponibles
+                          const matchesById = fromAccountId === accountId || toAccountId === accountId || directAccountId === accountId
+                          
+                          // Si no hay IDs, comparar por nombre de cuenta (comparación case-insensitive y sin espacios extra)
+                          const matchesByName = selectedAccountName && (
+                            (tx.from_account_name && tx.from_account_name.trim() === selectedAccountName.trim()) || 
+                            (tx.to_account_name && tx.to_account_name.trim() === selectedAccountName.trim())
+                          )
+                          
+                          const matches = matchesById || matchesByName
+                          
+                          // Debug para las primeras transacciones
+                          if (transactions.indexOf(tx) < 3) {
+                            console.log('🔍 Filtro transacción:', 
+                              'ID:', tx.transaction_id,
+                              'Tipo:', tx.transaction_type,
+                              'From ID:', fromAccountId,
+                              'To ID:', toAccountId,
+                              'From Name:', tx.from_account_name,
+                              'To Name:', tx.to_account_name,
+                              'Cuenta seleccionada:', selectedAccountName,
+                              'Match ID:', matchesById,
+                              'Match Name:', matchesByName,
+                              'MATCH:', matches
+                            )
+                          }
+                          
+                          return matches
+                        } catch (error) {
+                          console.error('Error filtrando transacción:', error, tx)
+                          return false
+                        }
+                      })
+                    : transactions
+                  
+                  // Debug detallado
+                  if (selectedAccountDetail) {
+                    const accountId = selectedAccountDetail.toString()
+                    console.log('🔍 Filtrado por cuenta:', {
+                      selectedAccountId: accountId,
+                      selectedAccountIdType: typeof accountId,
+                      totalTransactions: transactions.length,
+                      filteredTransactions: filteredTransactions.length
+                    })
+                    
+                    // Mostrar primeras 5 transacciones con sus IDs para debug
+                    if (transactions.length > 0) {
+                      console.log('🔍 Primeras transacciones:')
+                      transactions.slice(0, 5).forEach((tx: any) => {
+                        console.log('  - ID:', tx.transaction_id, 
+                          'Tipo:', tx.transaction_type,
+                          'From ID:', tx.from_account_id, 
+                          'To ID:', tx.to_account_id,
+                          'From Name:', tx.from_account_name,
+                          'To Name:', tx.to_account_name
+                        )
+                      })
+                    }
+                    
+                    // Mostrar cuentas disponibles
+                    if (accounts && accounts.length > 0) {
+                      console.log('🔍 Cuentas disponibles:')
+                      accounts.forEach((acc: any) => {
+                        console.log('  - ID:', acc.account_id, 'Nombre:', acc.account_name)
+                      })
+                    } else {
+                      console.log('🔍 Cuentas disponibles: (vacío o no cargado)')
+                    }
+                  }
+
+                  // Agrupar transacciones de torneos por fecha y cuenta destino
+                  // En lugar de mostrar cada pago individual, mostrar el total recaudado por torneo
+                  const tournamentGroups = new Map<string, any[]>()
+                  const otherTransactions: any[] = []
+                  
+                  filteredTransactions.forEach(tx => {
+                    if (tx.transaction_type === 'income_tournament' && tx.reference_type === 'tournament_payment') {
+                      // Crear una clave única por fecha, cuenta destino y moneda
+                      const dateKey = tx.transaction_date
+                      const accountKey = tx.to_account_id || tx.to_account_name || 'unknown'
+                      const currencyKey = tx.currency || 'ARS'
+                      const groupKey = `${dateKey}_${accountKey}_${currencyKey}`
+                      
+                      if (!tournamentGroups.has(groupKey)) {
+                        tournamentGroups.set(groupKey, [])
+                      }
+                      tournamentGroups.get(groupKey)!.push(tx)
+                    } else {
+                      otherTransactions.push(tx)
+                    }
+                  })
+                  
+                  // Crear transacciones agrupadas para torneos
+                  const groupedTournamentTransactions = Array.from(tournamentGroups.entries()).map(([key, group]) => {
+                    const firstTx = group[0]
+                    const totalAmount = group.reduce((sum, tx) => sum + Number(tx.amount || 0), 0)
+                    const participantCount = group.length
+                    
+                    // Extraer el nombre del torneo de la descripción
+                    // Las descripciones tienen formato: "Pago de torneo: [nombre] - Participante ID: X"
+                    let tournamentName = 'Torneo'
+                    if (firstTx.description) {
+                      // Buscar patrón "Pago de torneo: [nombre] -"
+                      const match = firstTx.description.match(/Pago de torneo:\s*([^-]+?)\s*-/i)
+                      if (match && match[1]) {
+                        tournamentName = match[1].trim()
+                      } else {
+                        // Si no se encuentra el patrón, intentar extraer cualquier texto después de "Pago de torneo:"
+                        const altMatch = firstTx.description.match(/Pago de torneo[:\s]+(.+?)(?:\s*-\s*Participante|$)/i)
+                        if (altMatch && altMatch[1]) {
+                          tournamentName = altMatch[1].trim()
+                        } else {
+                          // Si no hay nombre específico, usar la fecha
+                          const date = new Date(firstTx.transaction_date)
+                          tournamentName = `Torneo ${date.toLocaleDateString('es-AR', { day: 'numeric', month: 'long', year: 'numeric' })}`
+                        }
+                      }
+                    }
+                    
+                    return {
+                      ...firstTx,
+                      transaction_id: `TOURNAMENT_GROUP_${key}`, // ID único para el grupo
+                      amount: totalAmount,
+                      description: `${tournamentName} - Total recaudado (${participantCount} participantes)`,
+                      _isGrouped: true,
+                      _originalCount: participantCount,
+                      _originalTransactions: group
+                    }
+                  })
+                  
+                  // Combinar transacciones agrupadas con las demás
+                  const allTransactions = [...groupedTournamentTransactions, ...otherTransactions]
+                  
+                  // Ordenar transacciones por fecha ascendente (de viejo a nuevo) para calcular balance correctamente
+                  const sortedAsc = allTransactions.sort((a, b) => {
+                    const dateA = new Date(a.transaction_date).getTime()
+                    const dateB = new Date(b.transaction_date).getTime()
+                    if (dateA !== dateB) return dateA - dateB
+                    // Si tienen la misma fecha, ordenar por ID para mantener consistencia
+                    return (a.transaction_id || 0) - (b.transaction_id || 0)
+                  })
+
+                  if (sortedAsc.length === 0) {
+                    return (
+                      <div className="p-6 text-center text-gray-500">
+                        {selectedAccountDetail ? 'No hay transacciones para la cuenta seleccionada' : 'No hay transacciones registradas'}
+                      </div>
+                    )
+                  }
+
+                  // Balance inicial siempre es 0 - todo el dinero viene de transacciones
+                  const initialBalanceARS = 0
+                  const initialBalanceUSD = 0
+
+                  // Calcular balance acumulado desde la transacción más antigua
+                  // Primero calculamos los balances en orden ascendente
+                  const transactionsWithBalance = sortedAsc.map(tx => {
+                    const currency = tx.currency || 'ARS'
+                    const amount = Number(tx.amount || 0)
+                    
+                    // Determinar si es ingreso o egreso según el tipo de transacción y la cuenta seleccionada
+                    let ingresoARS = 0
+                    let egresoARS = 0
+                    let ingresoUSD = 0
+                    let egresoUSD = 0
+                    
+                    if (selectedAccountDetail) {
+                      const accountId = selectedAccountDetail.toString()
+                      // Buscar la cuenta seleccionada para obtener su nombre
+                      const selectedAccount = accounts && accounts.length > 0 
+                        ? accounts.find((acc: any) => String(acc.account_id) === accountId)
+                        : null
+                      const selectedAccountName = selectedAccount?.account_name
+                      
+                      // Comparar por ID si están disponibles, sino por nombre
+                      const isFromAccount = tx.from_account_id?.toString() === accountId || 
+                                           (selectedAccountName && tx.from_account_name?.trim() === selectedAccountName.trim())
+                      const isToAccount = tx.to_account_id?.toString() === accountId || 
+                                         (selectedAccountName && tx.to_account_name?.trim() === selectedAccountName.trim())
+                      
+                      if (tx.transaction_type === 'income_tournament' || tx.transaction_type === 'income_other') {
+                        // Ingreso: aumenta el balance de la cuenta destino
+                        if (isToAccount) {
+                          if (currency === 'ARS') ingresoARS = amount
+                          else ingresoUSD = amount
+                        }
+                      } else if (tx.transaction_type === 'expense') {
+                        // Gasto: disminuye el balance de la cuenta origen
+                        if (isFromAccount) {
+                          if (currency === 'ARS') egresoARS = amount
+                          else egresoUSD = amount
+                        }
+                      } else if (tx.transaction_type === 'transfer') {
+                        // Transferencia: sale de origen, entra a destino
+                        if (isFromAccount) {
+                          if (currency === 'ARS') egresoARS = amount
+                          else egresoUSD = amount
+                        }
+                        if (isToAccount) {
+                          if (currency === 'ARS') ingresoARS = amount
+                          else ingresoUSD = amount
+                        }
+                      } else if (tx.transaction_type === 'exchange') {
+                        // Conversión: sale de una moneda, entra otra
+                        const fromCurrency = (tx as any).from_currency || currency
+                        const toCurrency = (tx as any).to_currency || currency
+                        const fromAmount = Number((tx as any).from_amount || amount)
+                        const toAmount = Number((tx as any).to_amount || amount)
+                        
+                        if (isFromAccount) {
+                          if (fromCurrency === 'ARS') egresoARS = fromAmount
+                          else egresoUSD = fromAmount
+                        }
+                        if (isToAccount) {
+                          if (toCurrency === 'ARS') ingresoARS = toAmount
+                          else ingresoUSD = toAmount
+                        }
+                      }
+                    } else {
+                      // Sin filtro (todas las cuentas): mostrar todas las transacciones
+                      // Ingresos, gastos y conversiones afectan el balance total
+                      // Transferencias NO afectan el balance total (solo mueven dinero entre cuentas)
+                      if (tx.transaction_type === 'income_tournament' || tx.transaction_type === 'income_other') {
+                        // Ingreso: aumenta el balance total
+                        if (currency === 'ARS') ingresoARS = amount
+                        else ingresoUSD = amount
+                      } else if (tx.transaction_type === 'expense') {
+                        // Gasto: disminuye el balance total
+                        if (currency === 'ARS') egresoARS = amount
+                        else egresoUSD = amount
+                      } else if (tx.transaction_type === 'transfer') {
+                        // Transferencia: mostrar entrada y salida pero no afecta balance total
+                        if (currency === 'ARS') {
+                          egresoARS = amount
+                          ingresoARS = amount
+                        } else {
+                          egresoUSD = amount
+                          ingresoUSD = amount
+                        }
+                      } else if (tx.transaction_type === 'exchange') {
+                        // Conversión: descuenta en una moneda y agrega en otra
+                        const fromCurrency = (tx as any).from_currency || currency
+                        const toCurrency = (tx as any).to_currency || currency
+                        const fromAmount = Number((tx as any).from_amount || amount)
+                        const toAmount = Number((tx as any).to_amount || amount)
+                        
+                        // Descuento en la moneda origen
+                        if (fromCurrency === 'ARS') egresoARS = fromAmount
+                        else egresoUSD = fromAmount
+                        
+                        // Agrego en la moneda destino
+                        if (toCurrency === 'ARS') ingresoARS = toAmount
+                        else ingresoUSD = toAmount
+                      }
+                    }
+                    
+                    return { tx, ingresoARS, egresoARS, ingresoUSD, egresoUSD }
+                  })
+
+                  // Calcular balance acumulado empezando desde el balance inicial
+                  let runningBalanceARS = initialBalanceARS
+                  let runningBalanceUSD = initialBalanceUSD
+                  
+                  // Debug: calcular total esperado
+                  if (!selectedAccountDetail && accounts && accounts.length > 0) {
+                    const totalExpectedARS = accounts.reduce((sum, acc) => sum + Number(acc.current_balance_ars || 0), 0)
+                    const totalExpectedUSD = accounts.reduce((sum, acc) => sum + Number(acc.current_balance_usd || 0), 0)
+                    console.log('💰 Balance esperado ARS:', totalExpectedARS, 'USD:', totalExpectedUSD)
+                    
+                    // Debug: contar transacciones de torneos
+                    const tournamentTransactions = transactions.filter((tx: any) => tx.transaction_type === 'income_tournament')
+                    const tournamentTotalARS = tournamentTransactions
+                      .filter((tx: any) => (tx.currency || 'ARS') === 'ARS')
+                      .reduce((sum: number, tx: any) => sum + Number(tx.amount || 0), 0)
+                    const tournamentTotalUSD = tournamentTransactions
+                      .filter((tx: any) => (tx.currency || 'ARS') === 'USD')
+                      .reduce((sum: number, tx: any) => sum + Number(tx.amount || 0), 0)
+                    console.log('🏆 Transacciones de torneos:', {
+                      count: tournamentTransactions.length,
+                      totalARS: tournamentTotalARS,
+                      totalUSD: tournamentTotalUSD,
+                      sample: tournamentTransactions.slice(0, 3).map((t: any) => ({
+                        id: t.transaction_id,
+                        amount: t.amount,
+                        currency: t.currency,
+                        to_account_name: t.to_account_name
+                      }))
+                    })
+                  }
+                  
+                  const transactionsWithCalculatedBalance = transactionsWithBalance.map(item => {
+                    // Actualizar balance antes de guardarlo
+                    // ARS y USD son independientes - cada uno se calcula con sus propias columnas
+                    if (!selectedAccountDetail) {
+                      // Solo las transferencias NO afectan el balance total (solo mueven dinero entre cuentas)
+                      // Ingresos, gastos y conversiones SÍ afectan el balance
+                      const isTransfer = item.tx.transaction_type === 'transfer'
+                      
+                      if (!isTransfer) {
+                        // Para ARS: usar solo columnas ARS (entrada ARS - salida ARS)
+                        const cambioARS = item.ingresoARS - item.egresoARS
+                        runningBalanceARS = runningBalanceARS + cambioARS
+                        // Para USD: usar solo columnas USD (entrada USD - salida USD)
+                        const cambioUSD = item.ingresoUSD - item.egresoUSD
+                        runningBalanceUSD = runningBalanceUSD + cambioUSD
+                        
+                        // Debug para todas las transacciones
+                        if (cambioARS !== 0 || cambioUSD !== 0) {
+                          console.log('🔍 Transacción:', item.tx.transaction_type, item.tx.transaction_date, 
+                            'Ingreso ARS:', item.ingresoARS, 'Egreso ARS:', item.egresoARS,
+                            'Ingreso USD:', item.ingresoUSD, 'Egreso USD:', item.egresoUSD,
+                            'Cambio ARS:', cambioARS, 'Cambio USD:', cambioUSD,
+                            'Balance ARS:', runningBalanceARS, 'Balance USD:', runningBalanceUSD)
+                        }
+                      } else {
+                        // Debug para transferencias
+                        console.log('🔄 Transferencia excluida:', item.tx.transaction_date, 
+                          'ARS:', item.ingresoARS, 'USD:', item.ingresoUSD)
+                      }
+                    } else {
+                      // Con cuenta seleccionada, todas las transacciones afectan el balance de esa cuenta
+                      // Para ARS: usar solo columnas ARS
+                      runningBalanceARS = runningBalanceARS + item.ingresoARS - item.egresoARS
+                      // Para USD: usar solo columnas USD
+                      runningBalanceUSD = runningBalanceUSD + item.ingresoUSD - item.egresoUSD
+                    }
+                    
+                    return {
+                      ...item,
+                      balanceARS: runningBalanceARS,
+                      balanceUSD: runningBalanceUSD
+                    }
+                  })
+                  
+                  // Debug: mostrar balance final calculado
+                  if (!selectedAccountDetail && transactionsWithCalculatedBalance.length > 0) {
+                    const finalBalance = transactionsWithCalculatedBalance[transactionsWithCalculatedBalance.length - 1]
+                    console.log('💰 Balance final calculado ARS:', finalBalance.balanceARS, 'USD:', finalBalance.balanceUSD)
+                  }
+
+                  // Aplicar orden según la selección del usuario
+                  const finalTransactions = transactionSortOrder === 'desc' 
+                    ? [...transactionsWithCalculatedBalance].reverse()
+                    : transactionsWithCalculatedBalance
+
+                  return (
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-3 text-left font-semibold text-gray-700">Fecha</th>
+                          <th className="px-4 py-3 text-left font-semibold text-gray-700">Tipo</th>
+                          <th className="px-4 py-3 text-left font-semibold text-gray-700">Descripción</th>
+                          <th className="px-4 py-3 text-left font-semibold text-gray-700">Desde</th>
+                          <th className="px-4 py-3 text-left font-semibold text-gray-700">Hacia</th>
+                          <th className="px-4 py-3 text-right font-semibold text-gray-700">Entrada ARS</th>
+                          <th className="px-4 py-3 text-right font-semibold text-gray-700">Salida ARS</th>
+                          <th className="px-4 py-3 text-right font-semibold text-gray-700">Entrada USD</th>
+                          <th className="px-4 py-3 text-right font-semibold text-gray-700">Salida USD</th>
+                          <th className="px-4 py-3 text-right font-semibold text-gray-700">Saldo ARS</th>
+                          <th className="px-4 py-3 text-right font-semibold text-gray-700">Saldo USD</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {finalTransactions.map(({ tx, ingresoARS, egresoARS, ingresoUSD, egresoUSD, balanceARS, balanceUSD }) => {
+                          // Descripción: para conversiones buscar las notas en currencyExchanges, para otros usar description
+                          let descripcion = tx.description || '-'
+                          if (tx.transaction_type === 'exchange' && (tx as any).reference_id) {
+                            // Buscar la conversión en currencyExchanges usando el reference_id
+                            const exchangeId = (tx as any).reference_id
+                            const exchange = currencyExchanges.find((ex: any) => ex.exchange_id === exchangeId)
+                            if (exchange && exchange.notes) {
+                              descripcion = exchange.notes
+                            } else {
+                              // Si no hay notas, mostrar solo el guión
+                              descripcion = '-'
+                            }
+                          }
+                          
+                          return (
+                            <tr key={tx.transaction_id} className="hover:bg-gray-50">
+                              <td className="px-4 py-3 text-sm text-gray-900">
+                                {new Date(tx.transaction_date).toLocaleDateString('es-AR')}
+                              </td>
+                              <td className="px-4 py-3 text-sm">
+                                <div className="space-y-1">
+                                  <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
+                                    tx.transaction_type === 'income_tournament' ? 'bg-green-100 text-green-800' :
+                                    tx.transaction_type === 'income_other' ? 'bg-blue-100 text-blue-800' :
+                                    tx.transaction_type === 'expense' ? 'bg-red-100 text-red-800' :
+                                    tx.transaction_type === 'transfer' ? 'bg-purple-100 text-purple-800' :
+                                    tx.transaction_type === 'exchange' ? 'bg-yellow-100 text-yellow-800' :
+                                    'bg-gray-100 text-gray-800'
+                                  }`}>
+                                    {tx.transaction_type === 'income_tournament' ? 'Ingreso Torneo' :
+                                     tx.transaction_type === 'income_other' ? 'Otro Ingreso' :
+                                     tx.transaction_type === 'expense' ? 'Gasto' :
+                                     tx.transaction_type === 'transfer' ? 'Transferencia' :
+                                     tx.transaction_type === 'exchange' ? 'Conversión' :
+                                     tx.transaction_type}
+                                  </span>
+                                  {(tx as any).member_name && (
+                                    <div className="text-xs text-gray-600">
+                                      👤 {(tx as any).member_name}
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-600">
+                                {descripcion}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-900">
+                                {tx.from_account_name || '-'}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-900">
+                                {tx.to_account_name || '-'}
+                              </td>
+                              <td className="px-4 py-3 text-right text-sm">
+                                {ingresoARS > 0 ? (
+                                  <span className="text-green-600 font-semibold">
+                                    ${formatCurrency(ingresoARS)}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-400">-</span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-right text-sm">
+                                {egresoARS > 0 ? (
+                                  <span className="text-red-600 font-semibold">
+                                    ${formatCurrency(egresoARS)}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-400">-</span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-right text-sm">
+                                {ingresoUSD > 0 ? (
+                                  <span className="text-green-600 font-semibold">
+                                    US${formatCurrency(ingresoUSD)}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-400">-</span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-right text-sm">
+                                {egresoUSD > 0 ? (
+                                  <span className="text-red-600 font-semibold">
+                                    US${formatCurrency(egresoUSD)}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-400">-</span>
+                                )}
+                              </td>
+                              <td className={`px-4 py-3 text-right font-semibold ${balanceARS >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                ${formatCurrency(balanceARS)}
+                              </td>
+                              <td className={`px-4 py-3 text-right font-semibold ${balanceUSD >= 0 ? 'text-blue-600' : 'text-red-600'}`}>
+                                US${formatCurrency(balanceUSD)}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  )
+                })()}
               </div>
             </div>
           </div>

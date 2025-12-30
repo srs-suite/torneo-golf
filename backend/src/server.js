@@ -51,7 +51,7 @@ import {
     getCurrencyBalance, getCustodians,
     
     // Custodian accounts functions
-    getAccounts, createAccount, updateAccount, deleteAccount, getTransactions, createTransaction,
+    getAccounts, createAccount, updateAccount, deleteAccount, getTransactions, createTransaction, getAccountBalanceBreakdown,
     
     // System functions
     getSystemStats, getRecentActivity
@@ -567,7 +567,10 @@ async function handleClubAPI(req, res, pathParts) {
         
         // Accounting (expenses)
         else if (resource === 'accounting') {
-            const action = pathParts[4]; // Changed from pathParts[3] to pathParts[4]
+            // pathParts después de filter: ['api', 'club', '1', 'accounting', 'transactions']
+            // pathParts[4] es 'transactions'
+            const action = pathParts[4]; // action is the element after 'accounting' in the path
+            console.log('🔍 Accounting action:', { action, pathParts, url: req.url });
             
             if (action === 'expenses') {
                 if (method === 'GET') {
@@ -734,7 +737,9 @@ async function handleClubAPI(req, res, pathParts) {
             // Accounts (fondos/cuentas)
             else if (action === 'accounts') {
                 if (method === 'GET') {
-                    const accounts = await getAccounts(parseInt(clubId));
+                    const url = new URL(req.url, `http://${req.headers.host}`);
+                    const includeInactive = url.searchParams.get('includeInactive') === 'true';
+                    const accounts = await getAccounts(parseInt(clubId), includeInactive);
                     sendJSON(res, { success: true, data: accounts });
                 } else if (method === 'POST') {
                     const accountData = await parseBody(req);
@@ -767,6 +772,27 @@ async function handleClubAPI(req, res, pathParts) {
                     const transactionData = await parseBody(req);
                     const newTransaction = await createTransaction(parseInt(clubId), transactionData);
                     sendJSON(res, { success: true, data: newTransaction, message: 'Transacción creada exitosamente' });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
+            }
+            // Account balance breakdown (for debugging)
+            else if (action === 'account-balance-breakdown') {
+                if (method === 'GET') {
+                    try {
+                        const url = new URL(req.url, `http://${req.headers.host}`);
+                        const accountName = url.searchParams.get('accountName');
+                        console.log('🔍 Account balance breakdown request:', { clubId, accountName, url: req.url });
+                        if (!accountName) {
+                            sendError(res, 'accountName es requerido', 400);
+                            return;
+                        }
+                        const breakdown = await getAccountBalanceBreakdown(parseInt(clubId), accountName);
+                        sendJSON(res, { success: true, data: breakdown });
+                    } catch (error) {
+                        console.error('❌ Error en account-balance-breakdown:', error);
+                        sendError(res, error.message || 'Error al obtener el desglose del balance', 500);
+                    }
                 } else {
                     sendError(res, 'Método no permitido', 405);
                 }
@@ -1130,6 +1156,31 @@ const server = http.createServer(async (req, res) => {
     if (pathname.startsWith('/uploads/logos/')) {
         const fileName = pathname.substring(15); // Remove '/uploads/logos/'
         const filePath = path.join(__dirname, 'uploads', 'logos', fileName);
+        
+        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+            const ext = path.extname(filePath).toLowerCase();
+            const contentType = {
+                '.png': 'image/png',
+                '.jpg': 'image/jpeg',
+                '.jpeg': 'image/jpeg',
+                '.gif': 'image/gif',
+                '.webp': 'image/webp',
+                '.svg': 'image/svg+xml'
+            }[ext] || 'application/octet-stream';
+            
+            res.writeHead(200, { 
+                'Content-Type': contentType,
+                'Cache-Control': 'public, max-age=31536000' // Cache 1 year
+            });
+            fs.createReadStream(filePath).pipe(res);
+            return;
+        }
+    }
+
+    // Serve uploaded expense photos
+    if (pathname.startsWith('/uploads/expenses/')) {
+        const fileName = pathname.substring(18); // Remove '/uploads/expenses/'
+        const filePath = path.join(__dirname, 'uploads', 'expenses', fileName);
         
         if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
             const ext = path.extname(filePath).toLowerCase();
