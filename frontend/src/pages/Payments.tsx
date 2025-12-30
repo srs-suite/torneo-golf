@@ -2511,8 +2511,10 @@ export default function Payments() {
                   filteredTransactions.forEach(tx => {
                     if (tx.transaction_type === 'income_tournament' && tx.reference_type === 'tournament_payment') {
                       // Crear una clave única por fecha, cuenta destino y moneda
-                      const dateKey = tx.transaction_date
-                      const accountKey = tx.to_account_id || tx.to_account_name || 'unknown'
+                      // Normalizar la fecha para evitar problemas con diferentes formatos
+                      const txDate = new Date(tx.transaction_date)
+                      const dateKey = txDate.toISOString().split('T')[0] // YYYY-MM-DD
+                      const accountKey = tx.to_account_id?.toString() || tx.to_account_name || 'unknown'
                       const currencyKey = tx.currency || 'ARS'
                       const groupKey = `${dateKey}_${accountKey}_${currencyKey}`
                       
@@ -2561,6 +2563,15 @@ export default function Payments() {
                       _originalCount: participantCount,
                       _originalTransactions: group
                     }
+                  })
+                  
+                  // Debug: verificar agrupación
+                  console.log('🏆 Agrupación de torneos:', {
+                    totalFiltered: filteredTransactions.length,
+                    tournamentTransactions: filteredTransactions.filter(tx => tx.transaction_type === 'income_tournament' && tx.reference_type === 'tournament_payment').length,
+                    gruposCreados: tournamentGroups.size,
+                    transaccionesAgrupadas: groupedTournamentTransactions.length,
+                    otrasTransacciones: otherTransactions.length
                   })
                   
                   // Combinar transacciones agrupadas con las demás
