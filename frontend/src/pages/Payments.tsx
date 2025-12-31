@@ -39,6 +39,8 @@ export default function Payments() {
   const [showExchangeModal, setShowExchangeModal] = useState(false)
   const [expenseDraft, setExpenseDraft] = useState({ expense_date: '', amount: '', currency: 'ARS', receipt_number: '', detail: '', custodian: '', account_id: '', receipt_photo_base64: '', receipt_photo_path: '' })
   const [expensePhotoPreview, setExpensePhotoPreview] = useState<string | null>(null)
+  const [showPhotoModal, setShowPhotoModal] = useState(false)
+  const [photoModalUrl, setPhotoModalUrl] = useState<string | null>(null)
   const [incomeDraft, setIncomeDraft] = useState({ member_id: '', income_date: '', amount: '', currency: 'ARS', payment_type: 'efectivo', description: '', custodian: '', account_id: '' })
   const [exchangeDraft, setExchangeDraft] = useState({ 
     exchange_date: '', 
@@ -2011,12 +2013,8 @@ export default function Payments() {
                         {(e as any).receipt_photo_path ? (
                           <button
                             onClick={() => {
-                              const img = new Image()
-                              img.src = `/api/uploads/${(e as any).receipt_photo_path}`
-                              const newWindow = window.open('', '_blank')
-                              if (newWindow) {
-                                newWindow.document.write(`<html><head><title>Foto del Recibo</title></head><body style="margin:0;padding:20px;text-align:center;background:#f0f0f0;"><img src="${img.src}" style="max-width:100%;height:auto;border:1px solid #ddd;box-shadow:0 2px 8px rgba(0,0,0,0.1);" onerror="this.parentElement.innerHTML='<p style=color:red;>Error al cargar la imagen</p>'" /></body></html>`)
-                              }
+                              setPhotoModalUrl(`/uploads/${(e as any).receipt_photo_path}`)
+                              setShowPhotoModal(true)
                             }}
                             className="text-blue-600 hover:text-blue-900"
                             title="Ver foto del recibo"
@@ -2045,7 +2043,7 @@ export default function Payments() {
                                     receipt_photo_base64: '',
                                     receipt_photo_path: (e as any).receipt_photo_path || ''
                                   })
-                                  setExpensePhotoPreview((e as any).receipt_photo_path ? `/api/uploads/${(e as any).receipt_photo_path}` : null)
+                                  setExpensePhotoPreview((e as any).receipt_photo_path ? `/uploads/${(e as any).receipt_photo_path}` : null)
                                   setEditingExpenseId(e.expense_id)
                                   setShowExpenseModal(true)
                                 }}
@@ -3368,7 +3366,7 @@ export default function Payments() {
                   )}
                   {expenseDraft.receipt_photo_path && !expensePhotoPreview && (
                     <div className="mt-2 relative">
-                      <img src={`/api/uploads/${expenseDraft.receipt_photo_path}`} alt="Foto actual" className="max-w-full h-32 object-contain border rounded" onError={(e) => {
+                      <img src={`/uploads/${expenseDraft.receipt_photo_path}`} alt="Foto actual" className="max-w-full h-32 object-contain border rounded" onError={(e) => {
                         (e.target as HTMLImageElement).style.display = 'none'
                       }} />
                       <button
@@ -4053,6 +4051,39 @@ export default function Payments() {
                   Guardar
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal para ver foto del recibo */}
+        {showPhotoModal && photoModalUrl && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" onClick={() => {
+            setShowPhotoModal(false)
+            setPhotoModalUrl(null)
+          }}>
+            <div className="relative max-w-4xl max-h-[90vh] p-4" onClick={(e) => e.stopPropagation()}>
+              <button
+                onClick={() => {
+                  setShowPhotoModal(false)
+                  setPhotoModalUrl(null)
+                }}
+                className="absolute top-2 right-2 bg-white/90 hover:bg-white text-gray-800 rounded-full p-2 z-10"
+                title="Cerrar"
+              >
+                <X className="h-6 w-6" />
+              </button>
+              <img 
+                src={photoModalUrl} 
+                alt="Foto del recibo" 
+                className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = 'none'
+                  const errorDiv = document.createElement('div')
+                  errorDiv.className = 'bg-red-100 text-red-800 p-4 rounded-lg text-center'
+                  errorDiv.textContent = 'Error al cargar la imagen'
+                  e.target.parentElement?.appendChild(errorDiv)
+                }}
+              />
             </div>
           </div>
         )}
