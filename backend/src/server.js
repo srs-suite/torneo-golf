@@ -1051,13 +1051,21 @@ async function handlePublicReportAPI(req, res, pathParts) {
             });
         }
         // Get account transactions endpoint
-        else if (action === 'account' && pathParts[5] === 'transactions' && method === 'GET') {
-            const accountId = parseInt(pathParts[4]);
+        // URL: /api/public/report/1/account/2/transactions
+        // pathParts: ['api', 'public', 'report', '1', 'account', '2', 'transactions']
+        else if (action === 'account' && pathParts.length >= 7 && pathParts[6] === 'transactions' && method === 'GET') {
+            const accountId = parseInt(pathParts[5]); // pathParts[5] es el accountId
             const url = new URL(req.url, `http://${req.headers.host}`);
             const token = url.searchParams.get('token');
             
+            console.log('📊 Account transactions request:', { clubId, accountId, pathParts });
+            
             if (!token) {
                 return sendError(res, 'Token requerido', 400);
+            }
+            
+            if (!accountId || isNaN(accountId)) {
+                return sendError(res, 'ID de cuenta inválido', 400);
             }
             
             // Verify token
@@ -1073,11 +1081,14 @@ async function handlePublicReportAPI(req, res, pathParts) {
                 tx.from_account_id === accountId || tx.to_account_id === accountId
             );
             
+            console.log(`📊 Found ${accountTransactions.length} transactions for account ${accountId}`);
+            
             sendJSON(res, {
                 success: true,
                 data: accountTransactions
             });
         } else {
+            console.log('❌ Public Report API: Recurso no encontrado', { action, pathParts, method });
             sendError(res, 'Recurso no encontrado', 404);
         }
     } catch (error) {

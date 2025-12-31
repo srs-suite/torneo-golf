@@ -1479,20 +1479,20 @@ export default function Payments() {
                 <div className="bg-white rounded-lg border p-6">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-sm font-medium text-gray-600">Balance Neto</h3>
-                    <div className={`p-2 rounded-lg ${currencyBalance.ARS >= 0 ? 'bg-blue-100' : 'bg-orange-100'}`}>
-                      <DollarSign className={`h-5 w-5 ${currencyBalance.ARS >= 0 ? 'text-blue-600' : 'text-orange-600'}`} />
+                    <div className={`p-2 rounded-lg ${(accounts.reduce((sum, acc) => sum + Number(acc.current_balance_ars || 0), 0)) >= 0 ? 'bg-blue-100' : 'bg-orange-100'}`}>
+                      <DollarSign className={`h-5 w-5 ${(accounts.reduce((sum, acc) => sum + Number(acc.current_balance_ars || 0), 0)) >= 0 ? 'text-blue-600' : 'text-orange-600'}`} />
                     </div>
                   </div>
                   <div className="space-y-1">
-                    <div className={`text-2xl font-bold ${currencyBalance.ARS >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>
-                      ${formatCurrency(Math.abs(currencyBalance.ARS))}
+                    <div className={`text-2xl font-bold ${(accounts.reduce((sum, acc) => sum + Number(acc.current_balance_ars || 0), 0)) >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>
+                      ${formatCurrency(Math.abs(accounts.reduce((sum, acc) => sum + Number(acc.current_balance_ars || 0), 0)))}
                     </div>
-                    <div className={`text-xl font-bold ${currencyBalance.USD >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>
-                      US${formatCurrency(Math.abs(currencyBalance.USD))}
+                    <div className={`text-xl font-bold ${(accounts.reduce((sum, acc) => sum + Number(acc.current_balance_usd || 0), 0)) >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>
+                      US${formatCurrency(Math.abs(accounts.reduce((sum, acc) => sum + Number(acc.current_balance_usd || 0), 0)))}
                     </div>
                   </div>
-                  <p className={`text-sm font-medium mt-2 ${currencyBalance.ARS >= 0 ? 'text-green-600' : 'text-orange-600'}`}>
-                    {currencyBalance.ARS >= 0 ? 'Superávit' : 'Déficit'}
+                  <p className={`text-sm font-medium mt-2 ${(accounts.reduce((sum, acc) => sum + Number(acc.current_balance_ars || 0), 0)) >= 0 ? 'text-green-600' : 'text-orange-600'}`}>
+                    {(accounts.reduce((sum, acc) => sum + Number(acc.current_balance_ars || 0), 0)) >= 0 ? 'Superávit' : 'Déficit'}
                   </p>
                 </div>
               </div>
@@ -4166,9 +4166,8 @@ export default function Payments() {
                     display: 'flex',
                     justifyContent: 'center',
                     alignItems: 'center',
-                    minWidth: '100%',
-                    minHeight: '100%',
-                    padding: '20px',
+                    width: '100%',
+                    height: '100%',
                     transform: `translate(${photoPosition.x}px, ${photoPosition.y}px)`,
                     transition: isDragging ? 'none' : 'transform 0.1s ease-out'
                   }}
@@ -4177,8 +4176,8 @@ export default function Payments() {
                     src={photoModalUrl} 
                     alt="Foto del recibo" 
                     style={{
-                      maxWidth: '100%',
-                      maxHeight: '100%',
+                      maxWidth: 'calc(100% - 40px)',
+                      maxHeight: 'calc(100% - 40px)',
                       width: 'auto',
                       height: 'auto',
                       transform: `scale(${photoZoom})`,
@@ -4186,7 +4185,8 @@ export default function Payments() {
                       transition: isDragging ? 'none' : 'transform 0.2s ease-out',
                       userSelect: 'none',
                       pointerEvents: 'none',
-                      objectFit: 'contain'
+                      objectFit: 'contain',
+                      margin: 'auto'
                     }}
                     draggable={false}
                     onError={(e) => {
