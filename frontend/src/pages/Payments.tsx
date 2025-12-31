@@ -4077,11 +4077,15 @@ export default function Payments() {
                 alt="Foto del recibo" 
                 className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl"
                 onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = 'none'
+                  const target = e.target as HTMLImageElement
+                  target.style.display = 'none'
                   const errorDiv = document.createElement('div')
                   errorDiv.className = 'bg-red-100 text-red-800 p-4 rounded-lg text-center'
                   errorDiv.textContent = 'Error al cargar la imagen'
-                  e.target.parentElement?.appendChild(errorDiv)
+                  const parent = target.parentElement
+                  if (parent) {
+                    parent.appendChild(errorDiv)
+                  }
                 }}
               />
             </div>
