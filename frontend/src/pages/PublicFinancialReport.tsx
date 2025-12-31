@@ -32,8 +32,7 @@ interface Transaction {
 
 interface FinancialData {
   summary: FinancialSummary;
-  tournaments: any[];
-  otherIncomes: Transaction[];
+  incomes: Transaction[];
   expenses: Transaction[];
   accounts: any[];
   memberName: string;
@@ -50,7 +49,6 @@ export default function PublicFinancialReport() {
   const [token, setToken] = useState('');
   const [selectedItem, setSelectedItem] = useState<{type: 'income' | 'expense', data: Transaction} | null>(null);
   const [expandedSections, setExpandedSections] = useState({
-    tournaments: false,
     incomes: false,
     expenses: false,
     accounts: false
@@ -350,79 +348,8 @@ export default function PublicFinancialReport() {
           </div>
         )}
 
-        {/* Tournament Incomes */}
-        {financialData.summary.totalTournamentIncomes > 0 && (
-          <div className="bg-white rounded-lg shadow-md mb-6 overflow-hidden">
-            <button
-              onClick={() => setExpandedSections({...expandedSections, tournaments: !expandedSections.tournaments})}
-              className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
-            >
-              <div className="flex items-center space-x-3">
-                <div className="bg-purple-100 p-2 rounded-lg">
-                  <TrendingUp className="w-5 h-5 text-purple-600" />
-                </div>
-                <div className="text-left">
-                  <h2 className="text-lg font-bold text-gray-800">Ingresos por Torneos</h2>
-                  <p className="text-sm text-gray-500">
-                    {financialData.tournaments?.filter(t => ((t.paid_participants_count || 0) * (t.entry_fee || 0)) > 0).length || 0} torneos
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center space-x-3">
-                <span className="text-lg font-bold text-purple-600">
-                  {formatCurrency(financialData.summary.totalTournamentIncomes)}
-                </span>
-                {expandedSections.tournaments ? (
-                  <ChevronUp className="w-5 h-5 text-gray-400" />
-                ) : (
-                  <ChevronDown className="w-5 h-5 text-gray-400" />
-                )}
-              </div>
-            </button>
-            
-            {expandedSections.tournaments && financialData.tournaments && (
-              <div className="border-t border-gray-200">
-                {financialData.tournaments
-                  .filter(t => ((t.paid_participants_count || 0) * (t.entry_fee || 0)) > 0)
-                  .map((tournament, index) => {
-                    const income = (tournament.paid_participants_count || 0) * (tournament.entry_fee || 0);
-                    return (
-                      <div
-                        key={index}
-                        className="px-6 py-4 border-b border-gray-100 hover:bg-purple-50 transition-colors"
-                      >
-                        <div className="flex justify-between items-start">
-                          <div className="flex-1">
-                            <div className="flex items-center space-x-2 mb-1">
-                              <div className="w-2 h-2 rounded-full bg-purple-500"></div>
-                              <p className="text-xs text-gray-500">{formatDate(tournament.tournament_date)}</p>
-                            </div>
-                            <p className="font-semibold text-gray-900 text-base">{tournament.tournament_name || 'Torneo'}</p>
-                            <div className="flex flex-wrap gap-1 mt-2">
-                              <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">
-                                {tournament.paid_participants_count || 0} jugadores
-                              </span>
-                              <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
-                                Inscripción: {formatCurrency(tournament.entry_fee || 0)}
-                              </span>
-                            </div>
-                          </div>
-                          <div className="text-right ml-4">
-                            <p className="text-xl font-bold text-purple-600">
-                              {formatCurrency(income)}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Other Incomes */}
-        {financialData.otherIncomes.length > 0 && (
+        {/* Incomes (combined: tournaments + other incomes) */}
+        {financialData.incomes && financialData.incomes.length > 0 && (
           <div className="bg-white rounded-lg shadow-md mb-6 overflow-hidden">
             <button
               onClick={() => setExpandedSections({...expandedSections, incomes: !expandedSections.incomes})}
@@ -433,14 +360,21 @@ export default function PublicFinancialReport() {
                   <TrendingUp className="w-5 h-5 text-green-600" />
                 </div>
                 <div className="text-left">
-                  <h2 className="text-lg font-bold text-gray-800">Otros Ingresos</h2>
-                  <p className="text-sm text-gray-500">{financialData.otherIncomes.length} registros</p>
+                  <h2 className="text-lg font-bold text-gray-800">Ingresos</h2>
+                  <p className="text-sm text-gray-500">{financialData.incomes.length} registros</p>
                 </div>
               </div>
               <div className="flex items-center space-x-3">
-                <span className="text-lg font-bold text-green-600">
-                  {formatCurrency(financialData.summary.totalOtherIncomes)}
-                </span>
+                <div className="text-right">
+                  <span className="text-lg font-bold text-green-600 block">
+                    {formatCurrency(financialData.summary.incomeARS || 0, 'ARS')}
+                  </span>
+                  {(financialData.summary.incomeUSD || 0) > 0 && (
+                    <span className="text-sm font-bold text-blue-600 block">
+                      {formatCurrency(financialData.summary.incomeUSD || 0, 'USD')}
+                    </span>
+                  )}
+                </div>
                 {expandedSections.incomes ? (
                   <ChevronUp className="w-5 h-5 text-gray-400" />
                 ) : (
@@ -451,7 +385,7 @@ export default function PublicFinancialReport() {
             
             {expandedSections.incomes && (
               <div className="border-t border-gray-200">
-                {financialData.otherIncomes.map((income, index) => (
+                {financialData.incomes.map((income, index) => (
                   <div
                     key={index}
                     onClick={() => setSelectedItem({type: 'income', data: income})}
@@ -465,12 +399,17 @@ export default function PublicFinancialReport() {
                         </div>
                         <p className="font-semibold text-gray-900 text-base">{income.concept}</p>
                         <div className="flex flex-wrap gap-1 mt-2">
+                          {income.type === 'tournament' && (
+                            <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">
+                              🏆 Torneo
+                            </span>
+                          )}
                           {income.member_name && (
                             <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
                               {income.member_name}
                             </span>
                           )}
-                          {income.payment_method && (
+                          {income.payment_method && income.payment_method !== 'torneo' && (
                             <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded capitalize">
                               {income.payment_method}
                             </span>

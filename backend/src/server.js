@@ -905,34 +905,34 @@ async function handlePublicReportAPI(req, res, pathParts) {
                 expenses,
                 otherIncomes,
                 tournaments,
-                accounts
+                accounts,
+                exchanges
             ] = await Promise.all([
                 getExpenses(parseInt(clubId), from, to),
                 getOtherIncomes(parseInt(clubId), from, to),
                 getAllTournaments(parseInt(clubId)),
-                getAccounts(parseInt(clubId))
+                getAccounts(parseInt(clubId)),
+                getCurrencyExchanges(parseInt(clubId), from, to)
             ]);
 
             // Calculate incomes and expenses by currency
             let incomeARS = 0, incomeUSD = 0;
             let expenseARS = 0, expenseUSD = 0;
-            let tournamentIncomeTotal = 0;
-            let otherIncomeTotal = 0;
+            let totalIncome = 0;
             
-            // Tournament incomes by currency
+            // Tournament incomes by currency (assumed ARS unless specified)
             tournaments.forEach(tournament => {
                 const paid = tournament.paid_participants_count || 0;
                 const fee = parseFloat(tournament.entry_fee || 0);
                 const income = paid * fee;
-                tournamentIncomeTotal += income;
-                // Assuming tournaments are in ARS unless specified otherwise
+                totalIncome += income;
                 incomeARS += income;
             });
             
             // Other incomes by currency
             otherIncomes.forEach(income => {
                 const amount = parseFloat(income.amount || 0);
-                otherIncomeTotal += amount;
+                totalIncome += amount;
                 if (income.currency === 'USD') {
                     incomeUSD += amount;
                 } else {
@@ -950,34 +950,77 @@ async function handlePublicReportAPI(req, res, pathParts) {
                 }
             });
             
+            // Currency exchanges affect the balance
+            // When selling ARS to buy USD: ARS decreases, USD increases
+            // When selling USD to buy ARS: USD decreases, ARS increases
+            exchanges.forEach(exchange => {
+                if (exchange.from_currency === 'ARS') {
+                    incomeARS -= parseFloat(exchange.from_amount || 0);
+                } else if (exchange.from_currency === 'USD') {
+                    incomeUSD -= parseFloat(exchange.from_amount || 0);
+                }
+                
+                if (exchange.to_currency === 'ARS') {
+                    incomeARS += parseFloat(exchange.to_amount || 0);
+                } else if (exchange.to_currency === 'USD') {
+                    incomeUSD += parseFloat(exchange.to_amount || 0);
+                }
+            });
+            
+            // Balance = Incomes - Expenses (including conversions)
             const balanceARS = incomeARS - expenseARS;
             const balanceUSD = incomeUSD - expenseUSD;
             
-            console.log('💰 Tournament Income Total:', tournamentIncomeTotal);
-            console.log('💰 Other Income Total:', otherIncomeTotal);
+            console.log('💰 Total Income:', totalIncome);
             console.log('💰 Income ARS:', incomeARS, 'USD:', incomeUSD);
             console.log('💰 Expense ARS:', expenseARS, 'USD:', expenseUSD);
             console.log('💰 Balance ARS:', balanceARS, 'USD:', balanceUSD);
-            console.log('🏆 Tournaments count:', tournaments.length);
-            console.log('🏆 Tournaments data:', JSON.stringify(tournaments.map(t => ({
-                name: t.tournament_name,
-                date: t.tournament_date,
-                paid: t.paid_participants_count,
-                fee: t.entry_fee,
-                income: (t.paid_participants_count || 0) * (t.entry_fee || 0)
-            })), null, 2));
+            console.log('💰 Exchanges count:', exchanges.length);
 
-            // Map other incomes to frontend format
-            const mappedOtherIncomes = otherIncomes.map(income => ({
-                date: income.income_date,
-                concept: income.description || 'Ingreso',
-                amount: parseFloat(income.amount),
-                currency: income.currency,
-                payment_method: income.payment_type,
-                member_name: income.member_name,
-                custodian: income.account_name || income.custodian || 'Sin asignar',
-                created_at: income.created_at
-            }));
+            // Combine all incomes (tournaments + other incomes) into a single list
+            const allIncomes = [];
+            
+            // Add tournament incomes
+            tournaments.forEach(tournament => {
+                const paid = tournament.paid_participants_count || 0;
+                const fee = parseFloat(tournament.entry_fee || 0);
+                const income = paid * fee;
+                if (income > 0) {
+                    allIncomes.push({
+                        date: tournament.tournament_date,
+                        concept: tournament.tournament_name || 'Torneo',
+                        amount: income,
+                        currency: 'ARS', // Tournaments are assumed ARS
+                        payment_method: 'torneo',
+                        member_name: null,
+                        custodian: null,
+                        created_at: tournament.created_at,
+                        type: 'tournament'
+                    });
+                }
+            });
+            
+            // Add other incomes
+            otherIncomes.forEach(income => {
+                allIncomes.push({
+                    date: income.income_date,
+                    concept: income.description || 'Ingreso',
+                    amount: parseFloat(income.amount),
+                    currency: income.currency || 'ARS',
+                    payment_method: income.payment_type,
+                    member_name: income.member_name,
+                    custodian: income.account_name || income.custodian || 'Sin asignar',
+                    created_at: income.created_at,
+                    type: 'other'
+                });
+            });
+            
+            // Sort all incomes by date (newest first)
+            allIncomes.sort((a, b) => {
+                const dateA = new Date(a.date).getTime();
+                const dateB = new Date(b.date).getTime();
+                return dateB - dateA;
+            });
 
             // Map expenses to frontend format
             const mappedExpenses = expenses.map(expense => ({
@@ -1001,15 +1044,11 @@ async function handlePublicReportAPI(req, res, pathParts) {
                         expenseUSD: expenseUSD,
                         balanceARS: balanceARS,
                         balanceUSD: balanceUSD,
-                        // Legacy fields for backwards compatibility
-                        totalTournamentIncomes: tournamentIncomeTotal,
-                        totalOtherIncomes: otherIncomeTotal,
                         totalIncomes: incomeARS + incomeUSD,
                         totalExpenses: expenseARS + expenseUSD,
                         balance: balanceARS
                     },
-                    tournaments: tournaments,
-                    otherIncomes: mappedOtherIncomes,
+                    incomes: allIncomes,
                     expenses: mappedExpenses,
                     accounts: accounts || [],
                     memberName: verification.memberName
