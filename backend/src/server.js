@@ -987,6 +987,7 @@ async function handlePublicReportAPI(req, res, pathParts) {
                 currency: expense.currency,
                 receipt_number: expense.receipt_number,
                 custodian: expense.account_name || expense.custodian || 'Sin asignar',
+                receipt_photo_path: expense.receipt_photo_path,
                 created_at: expense.created_at
             }));
 
