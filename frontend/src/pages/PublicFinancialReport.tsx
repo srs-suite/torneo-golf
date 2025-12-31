@@ -122,13 +122,21 @@ export default function PublicFinancialReport() {
   };
 
   const loadAccountTransactions = async (accountId: number, authToken: string) => {
+    if (!accountId) {
+      console.error('loadAccountTransactions: accountId is undefined or null');
+      return;
+    }
     if (accountTransactions[accountId] || loadingTransactions[accountId]) {
       return; // Ya cargadas o cargando
     }
 
+    console.log('loadAccountTransactions: Iniciando carga para cuenta', accountId);
     setLoadingTransactions(prev => ({ ...prev, [accountId]: true }));
     try {
-      const response = await axios.get(`/api/public/report/${clubId}/account/${accountId}/transactions?token=${authToken}`);
+      const url = `/api/public/report/${clubId}/account/${accountId}/transactions?token=${authToken}`;
+      console.log('loadAccountTransactions: URL:', url);
+      const response = await axios.get(url);
+      console.log('loadAccountTransactions: Respuesta:', response.data);
       if (response.data.success) {
         // Ordenar transacciones por fecha (más recientes primero)
         const sorted = (response.data.data || []).sort((a: any, b: any) => {
@@ -136,10 +144,15 @@ export default function PublicFinancialReport() {
           const dateB = new Date(b.transaction_date).getTime();
           return dateB - dateA;
         });
+        console.log('loadAccountTransactions: Transacciones ordenadas:', sorted.length);
         setAccountTransactions(prev => ({ ...prev, [accountId]: sorted }));
+      } else {
+        console.error('loadAccountTransactions: Respuesta no exitosa:', response.data);
+        setAccountTransactions(prev => ({ ...prev, [accountId]: [] }));
       }
     } catch (err: any) {
       console.error('Error loading account transactions:', err);
+      console.error('Error details:', err.response?.data);
       setAccountTransactions(prev => ({ ...prev, [accountId]: [] }));
     } finally {
       setLoadingTransactions(prev => ({ ...prev, [accountId]: false }));
@@ -147,6 +160,10 @@ export default function PublicFinancialReport() {
   };
 
   const toggleAccount = (accountId: number) => {
+    if (!accountId) {
+      console.error('toggleAccount: accountId is undefined or null');
+      return;
+    }
     const newExpanded = new Set(expandedAccounts);
     if (newExpanded.has(accountId)) {
       newExpanded.delete(accountId);
@@ -154,7 +171,10 @@ export default function PublicFinancialReport() {
       newExpanded.add(accountId);
       // Cargar transacciones si no están cargadas
       if (!accountTransactions[accountId] && token) {
+        console.log('Cargando transacciones para cuenta:', accountId);
         loadAccountTransactions(accountId, token);
+      } else if (!token) {
+        console.error('toggleAccount: No hay token disponible');
       }
     }
     setExpandedAccounts(newExpanded);
@@ -322,34 +342,34 @@ export default function PublicFinancialReport() {
           <div className="bg-white rounded-lg shadow-md overflow-hidden">
             <button
               onClick={() => setExpandedSections({...expandedSections, accounts: !expandedSections.accounts})}
-              className="w-full px-6 py-6 flex items-center justify-between hover:bg-gray-50 transition-colors"
+              className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
             >
-              <div className="flex items-center space-x-3">
-                <div className="bg-blue-100 p-2 rounded-lg">
-                  <DollarSign className="w-6 h-6 text-blue-600" />
+              <div className="flex items-center space-x-3 flex-1 min-w-0">
+                <div className="bg-blue-100 p-2 rounded-lg flex-shrink-0">
+                  <DollarSign className="w-5 h-5 text-blue-600" />
                 </div>
-                <div className="text-left">
-                  <h2 className="text-2xl font-bold text-gray-800">Balance Neto</h2>
-                  <p className="text-sm text-gray-500">
+                <div className="text-left flex-1 min-w-0">
+                  <h2 className="text-lg font-bold text-gray-800">Balance Neto</h2>
+                  <p className="text-xs text-gray-500">
                     {financialData.accounts?.length || 0} cuentas
                   </p>
                 </div>
               </div>
-              <div className="flex items-center space-x-4">
+              <div className="flex items-center space-x-3 flex-shrink-0">
                 <div className="text-right">
-                  <p className={`text-4xl font-bold ${(financialData.summary.balanceARS || financialData.summary.balance) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  <p className={`text-xl font-bold ${(financialData.summary.balanceARS || financialData.summary.balance) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                     {formatCurrency(financialData.summary.balanceARS || financialData.summary.balance, 'ARS')}
                   </p>
                   {financialData.summary.balanceUSD !== undefined && financialData.summary.balanceUSD !== 0 && (
-                    <p className={`text-2xl font-bold ${financialData.summary.balanceUSD >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    <p className={`text-sm font-bold ${financialData.summary.balanceUSD >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                       {formatCurrency(financialData.summary.balanceUSD, 'USD')}
                     </p>
                   )}
                 </div>
                 {expandedSections.accounts ? (
-                  <ChevronUp className="w-6 h-6 text-gray-400" />
+                  <ChevronUp className="w-5 h-5 text-gray-400 flex-shrink-0" />
                 ) : (
-                  <ChevronDown className="w-6 h-6 text-gray-400" />
+                  <ChevronDown className="w-5 h-5 text-gray-400 flex-shrink-0" />
                 )}
               </div>
             </button>

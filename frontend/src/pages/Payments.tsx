@@ -4131,10 +4131,7 @@ export default function Payments() {
                   height: '90vh',
                   maxHeight: '900px',
                   overflow: 'auto',
-                  cursor: photoZoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default',
-                  display: 'flex',
-                  justifyContent: 'center',
-                  alignItems: 'center'
+                  cursor: photoZoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default'
                 }}
                 onWheel={(e) => {
                   e.stopPropagation()
@@ -4166,7 +4163,12 @@ export default function Payments() {
               >
                 <div
                   style={{
-                    display: 'inline-block',
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    minWidth: '100%',
+                    minHeight: '100%',
+                    padding: '20px',
                     transform: `translate(${photoPosition.x}px, ${photoPosition.y}px)`,
                     transition: isDragging ? 'none' : 'transform 0.1s ease-out'
                   }}
@@ -4175,9 +4177,8 @@ export default function Payments() {
                     src={photoModalUrl} 
                     alt="Foto del recibo" 
                     style={{
-                      display: 'block',
-                      maxWidth: 'none',
-                      maxHeight: 'none',
+                      maxWidth: '100%',
+                      maxHeight: '100%',
                       width: 'auto',
                       height: 'auto',
                       transform: `scale(${photoZoom})`,
@@ -4188,32 +4189,6 @@ export default function Payments() {
                       objectFit: 'contain'
                     }}
                     draggable={false}
-                    onLoad={(e) => {
-                      const img = e.target as HTMLImageElement
-                      // Asegurar que la imagen se muestre completa al cargar
-                      if (photoZoom === 1) {
-                        const container = img.closest('div[style*="overflow"]') as HTMLElement
-                        if (container) {
-                          const containerWidth = container.clientWidth
-                          const containerHeight = container.clientHeight
-                          const imgWidth = img.naturalWidth
-                          const imgHeight = img.naturalHeight
-                          
-                          // Calcular el tamaño máximo para que quepa en el contenedor
-                          const scaleX = containerWidth / imgWidth
-                          const scaleY = containerHeight / imgHeight
-                          const scale = Math.min(scaleX, scaleY, 1)
-                          
-                          if (scale < 1) {
-                            img.style.maxWidth = `${imgWidth * scale}px`
-                            img.style.maxHeight = `${imgHeight * scale}px`
-                          } else {
-                            img.style.maxWidth = `${imgWidth}px`
-                            img.style.maxHeight = `${imgHeight}px`
-                          }
-                        }
-                      }
-                    }}
                     onError={(e) => {
                       const target = e.target as HTMLImageElement
                       target.style.display = 'none'
