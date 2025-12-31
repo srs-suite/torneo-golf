@@ -4,17 +4,15 @@ import { DollarSign, TrendingUp, TrendingDown, Smartphone, CheckCircle, Download
 import axios from 'axios';
 
 interface FinancialSummary {
-  totalTournamentIncomes: number;
-  totalOtherIncomes: number;
   totalIncomes: number;
   totalExpenses: number;
   balance: number;
-  incomeARS?: number;
-  incomeUSD?: number;
-  expenseARS?: number;
-  expenseUSD?: number;
-  balanceARS?: number;
-  balanceUSD?: number;
+  incomeARS: number;
+  incomeUSD: number;
+  expenseARS: number;
+  expenseUSD: number;
+  balanceARS: number;
+  balanceUSD: number;
 }
 
 interface Transaction {
@@ -455,9 +453,16 @@ export default function PublicFinancialReport() {
               </div>
             </div>
             <div className="flex items-center space-x-3">
-              <span className="text-lg font-bold text-red-600">
-                {formatCurrency(financialData.summary.totalExpenses)}
-              </span>
+              <div className="text-right">
+                <span className="text-lg font-bold text-red-600 block">
+                  {formatCurrency(financialData.summary.expenseARS || 0, 'ARS')}
+                </span>
+                {(financialData.summary.expenseUSD || 0) > 0 && (
+                  <span className="text-sm font-bold text-red-600 block">
+                    {formatCurrency(financialData.summary.expenseUSD || 0, 'USD')}
+                  </span>
+                )}
+              </div>
               {expandedSections.expenses ? (
                 <ChevronUp className="w-5 h-5 text-gray-400" />
               ) : (
