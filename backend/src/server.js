@@ -950,24 +950,9 @@ async function handlePublicReportAPI(req, res, pathParts) {
                 }
             });
             
-            // Currency exchanges affect the balance
-            // When selling ARS to buy USD: ARS decreases, USD increases
-            // When selling USD to buy ARS: USD decreases, ARS increases
-            exchanges.forEach(exchange => {
-                if (exchange.from_currency === 'ARS') {
-                    incomeARS -= parseFloat(exchange.from_amount || 0);
-                } else if (exchange.from_currency === 'USD') {
-                    incomeUSD -= parseFloat(exchange.from_amount || 0);
-                }
-                
-                if (exchange.to_currency === 'ARS') {
-                    incomeARS += parseFloat(exchange.to_amount || 0);
-                } else if (exchange.to_currency === 'USD') {
-                    incomeUSD += parseFloat(exchange.to_amount || 0);
-                }
-            });
-            
-            // Balance = Incomes - Expenses (including conversions)
+            // Balance = Incomes - Expenses
+            // Note: Currency exchanges don't affect the net balance, they only move money between currencies
+            // The balance shown is the net result of all income and expense transactions
             const balanceARS = incomeARS - expenseARS;
             const balanceUSD = incomeUSD - expenseUSD;
             
