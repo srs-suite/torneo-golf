@@ -41,6 +41,10 @@ export default function Payments() {
   const [expensePhotoPreview, setExpensePhotoPreview] = useState<string | null>(null)
   const [showPhotoModal, setShowPhotoModal] = useState(false)
   const [photoModalUrl, setPhotoModalUrl] = useState<string | null>(null)
+  const [photoZoom, setPhotoZoom] = useState(1)
+  const [photoPosition, setPhotoPosition] = useState({ x: 0, y: 0 })
+  const [isDragging, setIsDragging] = useState(false)
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
   const [incomeDraft, setIncomeDraft] = useState({ member_id: '', income_date: '', amount: '', currency: 'ARS', payment_type: 'efectivo', description: '', custodian: '', account_id: '' })
   const [exchangeDraft, setExchangeDraft] = useState({ 
     exchange_date: '', 
@@ -4057,37 +4061,125 @@ export default function Payments() {
 
         {/* Modal para ver foto del recibo */}
         {showPhotoModal && photoModalUrl && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" onClick={() => {
-            setShowPhotoModal(false)
-            setPhotoModalUrl(null)
-          }}>
-            <div className="relative max-w-4xl max-h-[90vh] p-4" onClick={(e) => e.stopPropagation()}>
-              <button
-                onClick={() => {
-                  setShowPhotoModal(false)
-                  setPhotoModalUrl(null)
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" 
+            onClick={() => {
+              setShowPhotoModal(false)
+              setPhotoModalUrl(null)
+              setPhotoZoom(1)
+              setPhotoPosition({ x: 0, y: 0 })
+            }}
+          >
+            <div 
+              className="relative max-w-4xl max-h-[90vh] p-4" 
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Botones de control */}
+              <div className="absolute top-2 right-2 flex gap-2 z-20">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setPhotoZoom(Math.max(0.5, photoZoom - 0.25))
+                  }}
+                  className="bg-white/90 hover:bg-white text-gray-800 rounded-full p-2"
+                  title="Alejar"
+                >
+                  <span className="text-xl font-bold">−</span>
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setPhotoZoom(1)
+                    setPhotoPosition({ x: 0, y: 0 })
+                  }}
+                  className="bg-white/90 hover:bg-white text-gray-800 rounded-full px-3 py-2 text-sm"
+                  title="Resetear zoom"
+                >
+                  {Math.round(photoZoom * 100)}%
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setPhotoZoom(Math.min(3, photoZoom + 0.25))
+                  }}
+                  className="bg-white/90 hover:bg-white text-gray-800 rounded-full p-2"
+                  title="Acercar"
+                >
+                  <span className="text-xl font-bold">+</span>
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setShowPhotoModal(false)
+                    setPhotoModalUrl(null)
+                    setPhotoZoom(1)
+                    setPhotoPosition({ x: 0, y: 0 })
+                  }}
+                  className="bg-white/90 hover:bg-white text-gray-800 rounded-full p-2"
+                  title="Cerrar"
+                >
+                  <X className="h-6 w-6" />
+                </button>
+              </div>
+              
+              {/* Contenedor de la imagen con zoom y arrastre */}
+              <div 
+                className="overflow-hidden rounded-lg shadow-2xl"
+                style={{ 
+                  maxWidth: '90vw', 
+                  maxHeight: '90vh',
+                  cursor: photoZoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default'
                 }}
-                className="absolute top-2 right-2 bg-white/90 hover:bg-white text-gray-800 rounded-full p-2 z-10"
-                title="Cerrar"
-              >
-                <X className="h-6 w-6" />
-              </button>
-              <img 
-                src={photoModalUrl} 
-                alt="Foto del recibo" 
-                className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl"
-                onError={(e) => {
-                  const target = e.target as HTMLImageElement
-                  target.style.display = 'none'
-                  const errorDiv = document.createElement('div')
-                  errorDiv.className = 'bg-red-100 text-red-800 p-4 rounded-lg text-center'
-                  errorDiv.textContent = 'Error al cargar la imagen'
-                  const parent = target.parentElement
-                  if (parent) {
-                    parent.appendChild(errorDiv)
+                onWheel={(e) => {
+                  e.stopPropagation()
+                  const delta = e.deltaY > 0 ? -0.1 : 0.1
+                  setPhotoZoom(Math.max(0.5, Math.min(3, photoZoom + delta)))
+                }}
+                onMouseDown={(e) => {
+                  if (photoZoom > 1) {
+                    setIsDragging(true)
+                    setDragStart({ x: e.clientX - photoPosition.x, y: e.clientY - photoPosition.y })
                   }
                 }}
-              />
+                onMouseMove={(e) => {
+                  if (isDragging && photoZoom > 1) {
+                    setPhotoPosition({
+                      x: e.clientX - dragStart.x,
+                      y: e.clientY - dragStart.y
+                    })
+                  }
+                }}
+                onMouseUp={() => setIsDragging(false)}
+                onMouseLeave={() => setIsDragging(false)}
+              >
+                <img 
+                  src={photoModalUrl} 
+                  alt="Foto del recibo" 
+                  className="object-contain transition-transform duration-200"
+                  style={{
+                    width: '100%',
+                    height: 'auto',
+                    transform: `scale(${photoZoom}) translate(${photoPosition.x / photoZoom}px, ${photoPosition.y / photoZoom}px)`,
+                    transformOrigin: 'center center'
+                  }}
+                  onError={(e) => {
+                    const target = e.target as HTMLImageElement
+                    target.style.display = 'none'
+                    const errorDiv = document.createElement('div')
+                    errorDiv.className = 'bg-red-100 text-red-800 p-4 rounded-lg text-center'
+                    errorDiv.textContent = 'Error al cargar la imagen'
+                    const parent = target.parentElement
+                    if (parent) {
+                      parent.appendChild(errorDiv)
+                    }
+                  }}
+                />
+              </div>
+              
+              {/* Instrucciones */}
+              <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 bg-black/50 text-white text-xs px-3 py-1 rounded z-20">
+                Rueda del mouse: zoom | Click y arrastrar: mover imagen
+              </div>
             </div>
           </div>
         )}
