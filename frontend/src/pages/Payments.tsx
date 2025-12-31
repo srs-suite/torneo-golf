@@ -37,7 +37,8 @@ export default function Payments() {
   const [showExpenseModal, setShowExpenseModal] = useState(false)
   const [showIncomeModal, setShowIncomeModal] = useState(false)
   const [showExchangeModal, setShowExchangeModal] = useState(false)
-  const [expenseDraft, setExpenseDraft] = useState({ expense_date: '', amount: '', currency: 'ARS', receipt_number: '', detail: '', custodian: '', account_id: '' })
+  const [expenseDraft, setExpenseDraft] = useState({ expense_date: '', amount: '', currency: 'ARS', receipt_number: '', detail: '', custodian: '', account_id: '', receipt_photo_base64: '', receipt_photo_path: '' })
+  const [expensePhotoPreview, setExpensePhotoPreview] = useState<string | null>(null)
   const [incomeDraft, setIncomeDraft] = useState({ member_id: '', income_date: '', amount: '', currency: 'ARS', payment_type: 'efectivo', description: '', custodian: '', account_id: '' })
   const [exchangeDraft, setExchangeDraft] = useState({ 
     exchange_date: '', 
@@ -1359,7 +1360,8 @@ export default function Payments() {
                 </button>
                 <button onClick={() => {
                   const today = getLocalDateString()
-                  setExpenseDraft({ expense_date: today, amount: '', currency: 'ARS', receipt_number: '', detail: '', custodian: '', account_id: '' })
+                  setExpenseDraft({ expense_date: today, amount: '', currency: 'ARS', receipt_number: '', detail: '', custodian: '', account_id: '', receipt_photo_base64: '', receipt_photo_path: '' })
+                  setExpensePhotoPreview(null)
                   setShowExpenseModal(true)
                 }} className="px-3 py-2 bg-gray-900 text-white rounded hover:bg-gray-800">
                   Agregar gasto
@@ -1981,6 +1983,7 @@ export default function Payments() {
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Recibo</th>
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Detalle</th>
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Pagado desde</th>
+                    <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Foto</th>
                     <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Acciones</th>
                   </tr>
                 </thead>
@@ -2005,6 +2008,26 @@ export default function Payments() {
                         )}
                       </td>
                       <td className="px-4 py-2 text-center">
+                        {(e as any).receipt_photo_path ? (
+                          <button
+                            onClick={() => {
+                              const img = new Image()
+                              img.src = `/api/uploads/${(e as any).receipt_photo_path}`
+                              const newWindow = window.open('', '_blank')
+                              if (newWindow) {
+                                newWindow.document.write(`<html><head><title>Foto del Recibo</title></head><body style="margin:0;padding:20px;text-align:center;background:#f0f0f0;"><img src="${img.src}" style="max-width:100%;height:auto;border:1px solid #ddd;box-shadow:0 2px 8px rgba(0,0,0,0.1);" onerror="this.parentElement.innerHTML='<p style=color:red;>Error al cargar la imagen</p>'" /></body></html>`)
+                              }
+                            }}
+                            className="text-blue-600 hover:text-blue-900"
+                            title="Ver foto del recibo"
+                          >
+                            <Camera className="h-5 w-5" />
+                          </button>
+                        ) : (
+                          <span className="text-gray-400">-</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 text-center">
                         <div className="flex items-center justify-center gap-2">
                           {permissions.canManageExpenses && (
                             <>
@@ -2018,8 +2041,11 @@ export default function Payments() {
                                     receipt_number: e.receipt_number || '',
                                     detail: e.detail || '',
                                     custodian: (e as any).custodian || '',
-                                    account_id: (e as any).account_id ? (e as any).account_id.toString() : ''
+                                    account_id: (e as any).account_id ? (e as any).account_id.toString() : '',
+                                    receipt_photo_base64: '',
+                                    receipt_photo_path: (e as any).receipt_photo_path || ''
                                   })
+                                  setExpensePhotoPreview((e as any).receipt_photo_path ? `/api/uploads/${(e as any).receipt_photo_path}` : null)
                                   setEditingExpenseId(e.expense_id)
                                   setShowExpenseModal(true)
                                 }}
@@ -3234,7 +3260,8 @@ export default function Payments() {
           <div className="fixed inset-0 z-50">
             <div className="absolute inset-0 bg-black/30" onClick={() => {
               setShowExpenseModal(false)
-              setExpenseDraft({ expense_date: '', amount: '', currency: 'ARS', receipt_number: '', detail: '', custodian: '', account_id: '' })
+              setExpenseDraft({ expense_date: '', amount: '', currency: 'ARS', receipt_number: '', detail: '', custodian: '', account_id: '', receipt_photo_base64: '', receipt_photo_path: '' })
+              setExpensePhotoPreview(null)
               setEditingExpenseId(null)
               setShowCustodianDropdown(false)
             }} />
@@ -3300,11 +3327,69 @@ export default function Payments() {
                   <label className="block text-sm text-gray-600">Detalle</label>
                   <textarea value={expenseDraft.detail} onChange={(e) => setExpenseDraft(d => ({ ...d, detail: e.target.value }))} className="w-full px-3 py-2 border rounded" rows={3} />
                 </div>
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">Foto del recibo (opcional)</label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0]
+                      if (file) {
+                        if (file.size > 5 * 1024 * 1024) {
+                          toast.error('La imagen es demasiado grande. Máximo 5MB')
+                          return
+                        }
+                        const reader = new FileReader()
+                        reader.onloadend = () => {
+                          const base64String = reader.result as string
+                          setExpenseDraft(d => ({ ...d, receipt_photo_base64: base64String, receipt_photo_path: '' }))
+                          setExpensePhotoPreview(base64String)
+                        }
+                        reader.readAsDataURL(file)
+                      }
+                    }}
+                    className="w-full px-3 py-2 border rounded"
+                  />
+                  {expensePhotoPreview && (
+                    <div className="mt-2 relative">
+                      <img src={expensePhotoPreview} alt="Vista previa" className="max-w-full h-32 object-contain border rounded" />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setExpensePhotoPreview(null)
+                          setExpenseDraft(d => ({ ...d, receipt_photo_base64: '', receipt_photo_path: '' }))
+                        }}
+                        className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
+                        title="Eliminar foto"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
+                  {expenseDraft.receipt_photo_path && !expensePhotoPreview && (
+                    <div className="mt-2 relative">
+                      <img src={`/api/uploads/${expenseDraft.receipt_photo_path}`} alt="Foto actual" className="max-w-full h-32 object-contain border rounded" onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none'
+                      }} />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setExpenseDraft(d => ({ ...d, receipt_photo_path: '' }))
+                        }}
+                        className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
+                        title="Eliminar foto"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="flex justify-end gap-2 pt-2">
                 <button onClick={() => {
                   setShowExpenseModal(false)
-                  setExpenseDraft({ expense_date: '', amount: '', currency: 'ARS', receipt_number: '', detail: '', custodian: '', account_id: '' })
+                  setExpenseDraft({ expense_date: '', amount: '', currency: 'ARS', receipt_number: '', detail: '', custodian: '', account_id: '', receipt_photo_base64: '', receipt_photo_path: '' })
+                  setExpensePhotoPreview(null)
                   setEditingExpenseId(null)
                   setShowCustodianDropdown(false)
                 }} className="px-4 py-2 border rounded">Cancelar</button>
@@ -3328,7 +3413,8 @@ export default function Payments() {
                         toast.success('Gasto agregado exitosamente')
                       }
                       setShowExpenseModal(false)
-                      setExpenseDraft({ expense_date: '', amount: '', currency: 'ARS', receipt_number: '', detail: '', custodian: '', account_id: '' })
+                      setExpenseDraft({ expense_date: '', amount: '', currency: 'ARS', receipt_number: '', detail: '', custodian: '', account_id: '', receipt_photo_base64: '', receipt_photo_path: '' })
+                      setExpensePhotoPreview(null)
                       setEditingExpenseId(null)
                       setShowCustodianDropdown(false)
                       const ex = await paymentsService.getExpenses(clubIdNum, { from: from || undefined, to: to || undefined })
