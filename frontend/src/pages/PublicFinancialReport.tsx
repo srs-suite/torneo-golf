@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { DollarSign, TrendingUp, TrendingDown, Smartphone, CheckCircle, Download, X, FileText, ChevronDown, ChevronUp } from 'lucide-react';
+import { DollarSign, TrendingUp, TrendingDown, Smartphone, CheckCircle, Download, X, FileText, ChevronDown, ChevronUp, Camera } from 'lucide-react';
 import axios from 'axios';
 
 interface FinancialSummary {
@@ -27,6 +27,7 @@ interface Transaction {
   receipt_number?: string;
   custodian?: string;
   created_at?: string;
+  receipt_photo_path?: string;
 }
 
 interface FinancialData {
@@ -54,6 +55,8 @@ export default function PublicFinancialReport() {
     expenses: false,
     accounts: false
   });
+  const [showPhotoModal, setShowPhotoModal] = useState(false);
+  const [photoModalUrl, setPhotoModalUrl] = useState<string | null>(null);
 
   // Check for existing token on mount
   useEffect(() => {
@@ -555,12 +558,31 @@ export default function PublicFinancialReport() {
                             {expense.currency}
                           </span>
                         )}
+                        {expense.receipt_photo_path && (
+                          <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded flex items-center gap-1">
+                            <Camera className="w-3 h-3" />
+                            Foto disponible
+                          </span>
+                        )}
                       </div>
                     </div>
-                    <div className="text-right ml-4">
+                    <div className="text-right ml-4 flex flex-col items-end gap-2">
                       <p className="text-xl font-bold text-red-600">
                         {formatCurrency(expense.amount, expense.currency)}
                       </p>
+                      {expense.receipt_photo_path && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPhotoModalUrl(`/uploads/${expense.receipt_photo_path}`);
+                            setShowPhotoModal(true);
+                          }}
+                          className="text-blue-600 hover:text-blue-800 transition-colors"
+                          title="Ver foto del recibo"
+                        >
+                          <Camera className="w-5 h-5" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -576,10 +598,47 @@ export default function PublicFinancialReport() {
         </div>
       </div>
 
+      {/* Photo Modal */}
+      {showPhotoModal && photoModalUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" onClick={() => {
+          setShowPhotoModal(false);
+          setPhotoModalUrl(null);
+        }}>
+          <div className="relative max-w-4xl max-h-[90vh] p-4" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => {
+                setShowPhotoModal(false);
+                setPhotoModalUrl(null);
+              }}
+              className="absolute top-2 right-2 bg-white/90 hover:bg-white text-gray-800 rounded-full p-2 z-10"
+              title="Cerrar"
+            >
+              <X className="h-6 w-6" />
+            </button>
+            <img 
+              src={photoModalUrl} 
+              alt="Foto del recibo" 
+              className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl"
+              onError={(e) => {
+                const target = e.target as HTMLImageElement;
+                target.style.display = 'none';
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'bg-red-100 text-red-800 p-4 rounded-lg text-center';
+                errorDiv.textContent = 'Error al cargar la imagen';
+                const parent = target.parentElement;
+                if (parent) {
+                  parent.appendChild(errorDiv);
+                }
+              }}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Detail Modal */}
       {selectedItem && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 print:hidden">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center space-x-3">
                 <div className={`p-2 rounded-lg ${selectedItem.type === 'income' ? 'bg-green-100' : 'bg-red-100'}`}>
@@ -631,6 +690,22 @@ export default function PublicFinancialReport() {
                 <div>
                   <label className="text-sm font-medium text-gray-500">Número de Comprobante</label>
                   <p className="text-base text-gray-900 mt-1">{selectedItem.data.receipt_number}</p>
+                </div>
+              )}
+
+              {selectedItem.type === 'expense' && selectedItem.data.receipt_photo_path && (
+                <div>
+                  <label className="text-sm font-medium text-gray-500">Foto del Recibo</label>
+                  <button
+                    onClick={() => {
+                      setPhotoModalUrl(`/uploads/${selectedItem.data.receipt_photo_path}`);
+                      setShowPhotoModal(true);
+                    }}
+                    className="mt-2 w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg transition-colors border border-blue-200"
+                  >
+                    <Camera className="w-5 h-5" />
+                    Ver foto del recibo
+                  </button>
                 </div>
               )}
 
