@@ -26,6 +26,7 @@ interface Transaction {
   custodian?: string;
   created_at?: string;
   receipt_photo_path?: string;
+  type?: 'tournament' | 'other';
 }
 
 interface FinancialData {
