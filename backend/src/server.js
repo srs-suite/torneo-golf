@@ -950,16 +950,26 @@ async function handlePublicReportAPI(req, res, pathParts) {
                 }
             });
             
-            // Balance = Incomes - Expenses
-            // Note: Currency exchanges don't affect the net balance, they only move money between currencies
-            // The balance shown is the net result of all income and expense transactions
-            const balanceARS = incomeARS - expenseARS;
-            const balanceUSD = incomeUSD - expenseUSD;
+            // Calculate real balance from accounts (sum of all account balances)
+            let totalBalanceARS = 0;
+            let totalBalanceUSD = 0;
+            
+            if (accounts && accounts.length > 0) {
+                accounts.forEach(account => {
+                    totalBalanceARS += parseFloat(account.current_balance_ars || 0);
+                    totalBalanceUSD += parseFloat(account.current_balance_usd || 0);
+                });
+            }
+            
+            // Also calculate balance from transactions for reference
+            const balanceFromTransactionsARS = incomeARS - expenseARS;
+            const balanceFromTransactionsUSD = incomeUSD - expenseUSD;
             
             console.log('💰 Total Income:', totalIncome);
             console.log('💰 Income ARS:', incomeARS, 'USD:', incomeUSD);
             console.log('💰 Expense ARS:', expenseARS, 'USD:', expenseUSD);
-            console.log('💰 Balance ARS:', balanceARS, 'USD:', balanceUSD);
+            console.log('💰 Balance from transactions ARS:', balanceFromTransactionsARS, 'USD:', balanceFromTransactionsUSD);
+            console.log('💰 Balance from accounts ARS:', totalBalanceARS, 'USD:', totalBalanceUSD);
             console.log('💰 Exchanges count:', exchanges.length);
 
             // Combine all incomes (tournaments + other incomes) into a single list
@@ -1027,11 +1037,11 @@ async function handlePublicReportAPI(req, res, pathParts) {
                         incomeUSD: incomeUSD,
                         expenseARS: expenseARS,
                         expenseUSD: expenseUSD,
-                        balanceARS: balanceARS,
-                        balanceUSD: balanceUSD,
+                        balanceARS: totalBalanceARS, // Use real account balance
+                        balanceUSD: totalBalanceUSD, // Use real account balance
                         totalIncomes: incomeARS + incomeUSD,
                         totalExpenses: expenseARS + expenseUSD,
-                        balance: balanceARS
+                        balance: totalBalanceARS // Use real account balance
                     },
                     incomes: allIncomes,
                     expenses: mappedExpenses,

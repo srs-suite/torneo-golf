@@ -299,18 +299,43 @@ export default function PublicFinancialReport() {
         {/* Accounts Section */}
         {financialData.accounts && financialData.accounts.length > 0 && (
           <div className="bg-white rounded-lg shadow-md mb-6 overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="bg-blue-100 p-2 rounded-lg">
+                    <DollarSign className="w-5 h-5 text-blue-600" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-800">Cuentas / Fondos</h2>
+                    <p className="text-sm text-gray-500">{financialData.accounts.length} cuentas</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-lg font-bold text-green-600">
+                    {formatCurrency(
+                      financialData.accounts.reduce((sum, acc) => sum + Number(acc.current_balance_ars || 0), 0),
+                      'ARS'
+                    )}
+                  </p>
+                  {financialData.accounts.reduce((sum, acc) => sum + Number(acc.current_balance_usd || 0), 0) > 0 && (
+                    <p className="text-sm font-bold text-blue-600 mt-1">
+                      {formatCurrency(
+                        financialData.accounts.reduce((sum, acc) => sum + Number(acc.current_balance_usd || 0), 0),
+                        'USD'
+                      )}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
             <button
               onClick={() => setExpandedSections({...expandedSections, accounts: !expandedSections.accounts})}
               className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
             >
               <div className="flex items-center space-x-3">
-                <div className="bg-blue-100 p-2 rounded-lg">
-                  <DollarSign className="w-5 h-5 text-blue-600" />
-                </div>
-                <div className="text-left">
-                  <h2 className="text-lg font-bold text-gray-800">Cuentas / Fondos</h2>
-                  <p className="text-sm text-gray-500">{financialData.accounts.length} cuentas</p>
-                </div>
+                <span className="text-sm text-gray-600">
+                  {expandedSections.accounts ? 'Ocultar detalles' : 'Ver detalles'}
+                </span>
               </div>
               {expandedSections.accounts ? (
                 <ChevronUp className="w-5 h-5 text-gray-400" />
