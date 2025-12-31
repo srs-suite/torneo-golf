@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { DollarSign, TrendingUp, TrendingDown, Smartphone, CheckCircle, Download, X, FileText, ChevronDown, ChevronUp, Camera } from 'lucide-react';
+import { DollarSign, TrendingDown, Smartphone, CheckCircle, Download, X, FileText, ChevronDown, ChevronUp, Camera } from 'lucide-react';
 import axios from 'axios';
 
 interface FinancialSummary {
@@ -119,6 +119,45 @@ export default function PublicFinancialReport() {
         setError('Tu acceso ha expirado. Por favor ingresá tu teléfono nuevamente.');
       }
     }
+  };
+
+  const loadAccountTransactions = async (accountId: number, authToken: string) => {
+    if (accountTransactions[accountId] || loadingTransactions[accountId]) {
+      return; // Ya cargadas o cargando
+    }
+
+    setLoadingTransactions(prev => ({ ...prev, [accountId]: true }));
+    try {
+      const response = await axios.get(`/api/public/report/${clubId}/account/${accountId}/transactions?token=${authToken}`);
+      if (response.data.success) {
+        // Ordenar transacciones por fecha (más recientes primero)
+        const sorted = (response.data.data || []).sort((a: any, b: any) => {
+          const dateA = new Date(a.transaction_date).getTime();
+          const dateB = new Date(b.transaction_date).getTime();
+          return dateB - dateA;
+        });
+        setAccountTransactions(prev => ({ ...prev, [accountId]: sorted }));
+      }
+    } catch (err: any) {
+      console.error('Error loading account transactions:', err);
+      setAccountTransactions(prev => ({ ...prev, [accountId]: [] }));
+    } finally {
+      setLoadingTransactions(prev => ({ ...prev, [accountId]: false }));
+    }
+  };
+
+  const toggleAccount = (accountId: number) => {
+    const newExpanded = new Set(expandedAccounts);
+    if (newExpanded.has(accountId)) {
+      newExpanded.delete(accountId);
+    } else {
+      newExpanded.add(accountId);
+      // Cargar transacciones si no están cargadas
+      if (!accountTransactions[accountId] && token) {
+        loadAccountTransactions(accountId, token);
+      }
+    }
+    setExpandedAccounts(newExpanded);
   };
 
   const formatCurrency = (amount: number, currency?: string) => {
@@ -366,7 +405,6 @@ export default function PublicFinancialReport() {
                               {transactions.map((tx: any, txIndex: number) => {
                                 const isIncome = tx.to_account_id === accountId;
                                 const isExpense = tx.from_account_id === accountId;
-                                const isTransfer = tx.transaction_type === 'transfer';
                                 const isExchange = tx.transaction_type === 'exchange';
                                 
                                 let amount = 0;
