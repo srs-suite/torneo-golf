@@ -3257,7 +3257,7 @@ export default function Payments() {
 
         {/* Modal de Gastos */}
         {showExpenseModal && (
-          <div className="fixed inset-0 z-50">
+          <div className="fixed inset-0 z-50 overflow-y-auto">
             <div className="absolute inset-0 bg-black/30" onClick={() => {
               setShowExpenseModal(false)
               setExpenseDraft({ expense_date: '', amount: '', currency: 'ARS', receipt_number: '', detail: '', custodian: '', account_id: '', receipt_photo_base64: '', receipt_photo_path: '' })
@@ -3265,7 +3265,7 @@ export default function Payments() {
               setEditingExpenseId(null)
               setShowCustodianDropdown(false)
             }} />
-            <div className="relative mx-auto my-10 w-full max-w-lg bg-white rounded-lg shadow-xl p-4 space-y-3">
+            <div className="relative mx-auto my-10 w-full max-w-lg bg-white rounded-lg shadow-xl p-4 space-y-3 max-h-[90vh] overflow-y-auto">
               <h3 className="text-lg font-semibold">{editingExpenseId ? 'Editar gasto' : 'Nuevo gasto'}</h3>
               <div className="grid grid-cols-1 gap-3">
                 <div>
