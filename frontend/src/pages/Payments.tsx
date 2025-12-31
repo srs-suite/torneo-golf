@@ -4124,10 +4124,13 @@ export default function Payments() {
               
               {/* Contenedor de la imagen con zoom y arrastre */}
               <div 
-                className="overflow-hidden rounded-lg shadow-2xl"
+                className="relative rounded-lg shadow-2xl"
                 style={{ 
-                  maxWidth: '90vw', 
-                  maxHeight: '90vh',
+                  width: '90vw',
+                  maxWidth: '1200px',
+                  height: '90vh',
+                  maxHeight: '800px',
+                  overflow: 'auto',
                   cursor: photoZoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default'
                 }}
                 onWheel={(e) => {
@@ -4137,12 +4140,14 @@ export default function Payments() {
                 }}
                 onMouseDown={(e) => {
                   if (photoZoom > 1) {
+                    e.preventDefault()
                     setIsDragging(true)
                     setDragStart({ x: e.clientX - photoPosition.x, y: e.clientY - photoPosition.y })
                   }
                 }}
                 onMouseMove={(e) => {
                   if (isDragging && photoZoom > 1) {
+                    e.preventDefault()
                     setPhotoPosition({
                       x: e.clientX - dragStart.x,
                       y: e.clientY - dragStart.y
@@ -4152,28 +4157,44 @@ export default function Payments() {
                 onMouseUp={() => setIsDragging(false)}
                 onMouseLeave={() => setIsDragging(false)}
               >
-                <img 
-                  src={photoModalUrl} 
-                  alt="Foto del recibo" 
-                  className="object-contain transition-transform duration-200"
+                <div
                   style={{
-                    width: '100%',
-                    height: 'auto',
-                    transform: `scale(${photoZoom}) translate(${photoPosition.x / photoZoom}px, ${photoPosition.y / photoZoom}px)`,
-                    transformOrigin: 'center center'
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    minWidth: '100%',
+                    minHeight: '100%',
+                    transform: `translate(${photoPosition.x}px, ${photoPosition.y}px)`,
+                    transition: isDragging ? 'none' : 'transform 0.1s ease-out'
                   }}
-                  onError={(e) => {
-                    const target = e.target as HTMLImageElement
-                    target.style.display = 'none'
-                    const errorDiv = document.createElement('div')
-                    errorDiv.className = 'bg-red-100 text-red-800 p-4 rounded-lg text-center'
-                    errorDiv.textContent = 'Error al cargar la imagen'
-                    const parent = target.parentElement
-                    if (parent) {
-                      parent.appendChild(errorDiv)
-                    }
-                  }}
-                />
+                >
+                  <img 
+                    src={photoModalUrl} 
+                    alt="Foto del recibo" 
+                    className="object-contain"
+                    style={{
+                      maxWidth: '100%',
+                      maxHeight: '100%',
+                      transform: `scale(${photoZoom})`,
+                      transformOrigin: 'center center',
+                      transition: isDragging ? 'none' : 'transform 0.2s ease-out',
+                      userSelect: 'none',
+                      pointerEvents: 'none'
+                    }}
+                    draggable={false}
+                    onError={(e) => {
+                      const target = e.target as HTMLImageElement
+                      target.style.display = 'none'
+                      const errorDiv = document.createElement('div')
+                      errorDiv.className = 'bg-red-100 text-red-800 p-4 rounded-lg text-center'
+                      errorDiv.textContent = 'Error al cargar la imagen'
+                      const parent = target.parentElement?.parentElement
+                      if (parent) {
+                        parent.appendChild(errorDiv)
+                      }
+                    }}
+                  />
+                </div>
               </div>
               
               {/* Instrucciones */}
