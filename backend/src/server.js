@@ -1049,6 +1049,34 @@ async function handlePublicReportAPI(req, res, pathParts) {
                     memberName: verification.memberName
                 }
             });
+        }
+        // Get account transactions endpoint
+        else if (action === 'account' && pathParts[5] === 'transactions' && method === 'GET') {
+            const accountId = parseInt(pathParts[4]);
+            const url = new URL(req.url, `http://${req.headers.host}`);
+            const token = url.searchParams.get('token');
+            
+            if (!token) {
+                return sendError(res, 'Token requerido', 400);
+            }
+            
+            // Verify token
+            const verification = await verifyReportToken(parseInt(clubId), token);
+            
+            if (!verification.success) {
+                return sendError(res, verification.message, 401);
+            }
+            
+            // Get transactions for this account
+            const allTransactions = await getTransactions(parseInt(clubId));
+            const accountTransactions = allTransactions.filter(tx => 
+                tx.from_account_id === accountId || tx.to_account_id === accountId
+            );
+            
+            sendJSON(res, {
+                success: true,
+                data: accountTransactions
+            });
         } else {
             sendError(res, 'Recurso no encontrado', 404);
         }

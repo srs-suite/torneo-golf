@@ -48,10 +48,12 @@ export default function PublicFinancialReport() {
   const [token, setToken] = useState('');
   const [selectedItem, setSelectedItem] = useState<{type: 'income' | 'expense', data: Transaction} | null>(null);
   const [expandedSections, setExpandedSections] = useState({
-    incomes: false,
     expenses: false,
     accounts: false
   });
+  const [expandedAccounts, setExpandedAccounts] = useState<Set<number>>(new Set());
+  const [accountTransactions, setAccountTransactions] = useState<Record<number, any[]>>({});
+  const [loadingTransactions, setLoadingTransactions] = useState<Record<number, boolean>>({});
   const [showPhotoModal, setShowPhotoModal] = useState(false);
   const [photoModalUrl, setPhotoModalUrl] = useState<string | null>(null);
   const [photoZoom, setPhotoZoom] = useState(1);
@@ -276,196 +278,158 @@ export default function PublicFinancialReport() {
           </div>
         </div>
 
-        {/* Balance Card */}
+        {/* Balance Neto con desplegable de cuentas */}
         <div className="mb-6">
-          <div className="bg-white rounded-lg shadow-md p-6 text-center">
-            <div className="flex items-center justify-center space-x-2 mb-3">
-              <DollarSign className="w-6 h-6 text-blue-600" />
-              <span className="text-gray-600 text-base font-medium">Balance Neto</span>
-            </div>
-            <div className="space-y-2">
-              <p className={`text-4xl font-bold ${(financialData.summary.balanceARS || financialData.summary.balance) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                {formatCurrency(financialData.summary.balanceARS || financialData.summary.balance, 'ARS')}
-              </p>
-              {financialData.summary.balanceUSD !== undefined && financialData.summary.balanceUSD !== 0 && (
-                <p className={`text-2xl font-bold ${financialData.summary.balanceUSD >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                  {formatCurrency(financialData.summary.balanceUSD, 'USD')}
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Accounts Section */}
-        {financialData.accounts && financialData.accounts.length > 0 && (
-          <div className="bg-white rounded-lg shadow-md mb-6 overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className="bg-blue-100 p-2 rounded-lg">
-                    <DollarSign className="w-5 h-5 text-blue-600" />
-                  </div>
-                  <div>
-                    <h2 className="text-lg font-bold text-gray-800">Cuentas / Fondos</h2>
-                    <p className="text-sm text-gray-500">{financialData.accounts.length} cuentas</p>
-                  </div>
+          <div className="bg-white rounded-lg shadow-md overflow-hidden">
+            <button
+              onClick={() => setExpandedSections({...expandedSections, accounts: !expandedSections.accounts})}
+              className="w-full px-6 py-6 flex items-center justify-between hover:bg-gray-50 transition-colors"
+            >
+              <div className="flex items-center space-x-3">
+                <div className="bg-blue-100 p-2 rounded-lg">
+                  <DollarSign className="w-6 h-6 text-blue-600" />
                 </div>
-                <div className="text-right">
-                  <p className="text-lg font-bold text-green-600">
-                    {formatCurrency(
-                      financialData.accounts.reduce((sum, acc) => sum + Number(acc.current_balance_ars || 0), 0),
-                      'ARS'
-                    )}
+                <div className="text-left">
+                  <h2 className="text-2xl font-bold text-gray-800">Balance Neto</h2>
+                  <p className="text-sm text-gray-500">
+                    {financialData.accounts?.length || 0} cuentas
                   </p>
-                  {financialData.accounts.reduce((sum, acc) => sum + Number(acc.current_balance_usd || 0), 0) > 0 && (
-                    <p className="text-sm font-bold text-blue-600 mt-1">
-                      {formatCurrency(
-                        financialData.accounts.reduce((sum, acc) => sum + Number(acc.current_balance_usd || 0), 0),
-                        'USD'
-                      )}
+                </div>
+              </div>
+              <div className="flex items-center space-x-4">
+                <div className="text-right">
+                  <p className={`text-4xl font-bold ${(financialData.summary.balanceARS || financialData.summary.balance) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {formatCurrency(financialData.summary.balanceARS || financialData.summary.balance, 'ARS')}
+                  </p>
+                  {financialData.summary.balanceUSD !== undefined && financialData.summary.balanceUSD !== 0 && (
+                    <p className={`text-2xl font-bold ${financialData.summary.balanceUSD >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {formatCurrency(financialData.summary.balanceUSD, 'USD')}
                     </p>
                   )}
                 </div>
-              </div>
-            </div>
-            <button
-              onClick={() => setExpandedSections({...expandedSections, accounts: !expandedSections.accounts})}
-              className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
-            >
-              <div className="flex items-center space-x-3">
-                <span className="text-sm text-gray-600">
-                  {expandedSections.accounts ? 'Ocultar detalles' : 'Ver detalles'}
-                </span>
-              </div>
-              {expandedSections.accounts ? (
-                <ChevronUp className="w-5 h-5 text-gray-400" />
-              ) : (
-                <ChevronDown className="w-5 h-5 text-gray-400" />
-              )}
-            </button>
-            
-            {expandedSections.accounts && (
-              <div className="border-t border-gray-200">
-                {financialData.accounts.map((account, index) => (
-                  <div
-                    key={index}
-                    className="px-6 py-4 border-b border-gray-100"
-                  >
-                    <div className="flex justify-between items-center">
-                      <div>
-                        <p className="font-semibold text-gray-900 text-base">{account.account_name}</p>
-                        {account.description && (
-                          <p className="text-xs text-gray-500 mt-1">{account.description}</p>
-                        )}
-                      </div>
-                      <div className="text-right">
-                        <p className="text-sm font-bold text-green-600">
-                          {formatCurrency(Number(account.current_balance_ars || 0), 'ARS')}
-                        </p>
-                        {Number(account.current_balance_usd || 0) > 0 && (
-                          <p className="text-sm font-bold text-blue-600 mt-1">
-                            {formatCurrency(Number(account.current_balance_usd || 0), 'USD')}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Incomes (combined: tournaments + other incomes) */}
-        {financialData.incomes && financialData.incomes.length > 0 && (
-          <div className="bg-white rounded-lg shadow-md mb-6 overflow-hidden">
-            <button
-              onClick={() => setExpandedSections({...expandedSections, incomes: !expandedSections.incomes})}
-              className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
-            >
-              <div className="flex items-center space-x-3">
-                <div className="bg-green-100 p-2 rounded-lg">
-                  <TrendingUp className="w-5 h-5 text-green-600" />
-                </div>
-                <div className="text-left">
-                  <h2 className="text-lg font-bold text-gray-800">Ingresos</h2>
-                  <p className="text-sm text-gray-500">{financialData.incomes.length} registros</p>
-                </div>
-              </div>
-              <div className="flex items-center space-x-3">
-                <div className="text-right">
-                  <span className="text-lg font-bold text-green-600 block">
-                    {formatCurrency(financialData.summary.incomeARS || 0, 'ARS')}
-                  </span>
-                  {(financialData.summary.incomeUSD || 0) > 0 && (
-                    <span className="text-sm font-bold text-blue-600 block">
-                      {formatCurrency(financialData.summary.incomeUSD || 0, 'USD')}
-                    </span>
-                  )}
-                </div>
-                {expandedSections.incomes ? (
-                  <ChevronUp className="w-5 h-5 text-gray-400" />
+                {expandedSections.accounts ? (
+                  <ChevronUp className="w-6 h-6 text-gray-400" />
                 ) : (
-                  <ChevronDown className="w-5 h-5 text-gray-400" />
+                  <ChevronDown className="w-6 h-6 text-gray-400" />
                 )}
               </div>
             </button>
             
-            {expandedSections.incomes && (
-              <div className="border-t border-gray-200">
-                {financialData.incomes.map((income, index) => (
-                  <div
-                    key={index}
-                    onClick={() => setSelectedItem({type: 'income', data: income})}
-                    className="px-6 py-4 border-b border-gray-100 hover:bg-green-50 cursor-pointer transition-colors"
-                  >
-                    <div className="flex justify-between items-start">
-                      <div className="flex-1">
-                        <div className="flex items-center space-x-2 mb-1">
-                          <div className="w-2 h-2 rounded-full bg-green-500"></div>
-                          <p className="text-xs text-gray-500">{formatDate(income.date)}</p>
-                        </div>
-                        <p className="font-semibold text-gray-900 text-base">{income.concept}</p>
-                        <div className="flex flex-wrap gap-1 mt-2">
-                          {income.type === 'tournament' && (
-                            <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">
-                              🏆 Torneo
-                            </span>
-                          )}
-                          {income.member_name && (
-                            <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
-                              {income.member_name}
-                            </span>
-                          )}
-                          {income.payment_method && income.payment_method !== 'torneo' && (
-                            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded capitalize">
-                              {income.payment_method}
-                            </span>
-                          )}
-                          {income.custodian && (
-                            <span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded">
-                              📍 {income.custodian}
-                            </span>
-                          )}
-                          {income.currency && income.currency !== 'ARS' && (
-                            <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">
-                              {income.currency}
-                            </span>
+            {expandedSections.accounts && financialData.accounts && financialData.accounts.length > 0 && (
+              <div className="border-t border-gray-200 bg-gray-50">
+                {financialData.accounts.map((account, index) => {
+                  const accountId = account.account_id;
+                  const isAccountExpanded = expandedAccounts.has(accountId);
+                  const transactions = accountTransactions[accountId] || [];
+                  const isLoading = loadingTransactions[accountId];
+                  
+                  return (
+                    <div key={accountId || index} className="border-b border-gray-200 last:border-b-0">
+                      <button
+                        onClick={() => toggleAccount(accountId)}
+                        className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-100 transition-colors"
+                      >
+                        <div className="flex-1 text-left">
+                          <p className="font-semibold text-gray-900 text-base">{account.account_name}</p>
+                          {account.description && (
+                            <p className="text-xs text-gray-500 mt-1">{account.description}</p>
                           )}
                         </div>
-                      </div>
-                      <div className="text-right ml-4">
-                        <p className="text-xl font-bold text-green-600">
-                          {formatCurrency(income.amount, income.currency)}
-                        </p>
-                      </div>
+                        <div className="flex items-center space-x-4">
+                          <div className="text-right">
+                            <p className="text-sm font-bold text-green-600">
+                              {formatCurrency(Number(account.current_balance_ars || 0), 'ARS')}
+                            </p>
+                            {Number(account.current_balance_usd || 0) > 0 && (
+                              <p className="text-sm font-bold text-blue-600 mt-1">
+                                {formatCurrency(Number(account.current_balance_usd || 0), 'USD')}
+                              </p>
+                            )}
+                          </div>
+                          {isAccountExpanded ? (
+                            <ChevronUp className="w-5 h-5 text-gray-400" />
+                          ) : (
+                            <ChevronDown className="w-5 h-5 text-gray-400" />
+                          )}
+                        </div>
+                      </button>
+                      
+                      {isAccountExpanded && (
+                        <div className="px-6 py-4 bg-white border-t border-gray-200">
+                          {isLoading ? (
+                            <div className="text-center py-4 text-gray-500">
+                              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto"></div>
+                              <p className="mt-2 text-sm">Cargando movimientos...</p>
+                            </div>
+                          ) : transactions.length > 0 ? (
+                            <div className="space-y-2">
+                              {transactions.map((tx: any, txIndex: number) => {
+                                const isIncome = tx.to_account_id === accountId;
+                                const isExpense = tx.from_account_id === accountId;
+                                const isTransfer = tx.transaction_type === 'transfer';
+                                const isExchange = tx.transaction_type === 'exchange';
+                                
+                                let amount = 0;
+                                let currency = tx.currency || 'ARS';
+                                let sign = '';
+                                
+                                if (isExchange) {
+                                  if (tx.from_account_id === accountId) {
+                                    amount = parseFloat(tx.amount || 0);
+                                    currency = tx.currency || 'ARS';
+                                    sign = '-';
+                                  } else if (tx.to_account_id === accountId) {
+                                    amount = parseFloat(tx.to_amount || tx.amount || 0);
+                                    currency = tx.to_currency || tx.currency || 'USD';
+                                    sign = '+';
+                                  }
+                                } else if (isIncome) {
+                                  amount = parseFloat(tx.amount || 0);
+                                  sign = '+';
+                                } else if (isExpense) {
+                                  amount = parseFloat(tx.amount || 0);
+                                  sign = '-';
+                                }
+                                
+                                return (
+                                  <div
+                                    key={txIndex}
+                                    className="px-3 py-2 bg-gray-50 rounded border border-gray-200"
+                                  >
+                                    <div className="flex justify-between items-start">
+                                      <div className="flex-1">
+                                        <div className="flex items-center space-x-2 mb-1">
+                                          <div className={`w-2 h-2 rounded-full ${sign === '+' ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                                          <p className="text-xs text-gray-500">{formatDate(tx.transaction_date)}</p>
+                                        </div>
+                                        <p className="text-sm font-medium text-gray-900">{tx.description || 'Movimiento'}</p>
+                                        {tx.member_name && (
+                                          <p className="text-xs text-gray-600 mt-1">👤 {tx.member_name}</p>
+                                        )}
+                                      </div>
+                                      <div className="text-right ml-4">
+                                        <p className={`text-sm font-bold ${sign === '+' ? 'text-green-600' : 'text-red-600'}`}>
+                                          {sign}{formatCurrency(amount, currency)}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <p className="text-center py-4 text-gray-500 text-sm">No hay movimientos registrados</p>
+                          )}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
-        )}
+        </div>
+
 
         {/* Expenses */}
         <div className="bg-white rounded-lg shadow-md mb-6 overflow-hidden">
