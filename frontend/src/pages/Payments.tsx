@@ -4124,19 +4124,26 @@ export default function Payments() {
               
               {/* Contenedor de la imagen con zoom y arrastre */}
               <div 
-                className="relative rounded-lg shadow-2xl"
+                className="relative rounded-lg shadow-2xl bg-gray-900"
                 style={{ 
                   width: '90vw',
-                  maxWidth: '1200px',
+                  maxWidth: '1400px',
                   height: '90vh',
-                  maxHeight: '800px',
+                  maxHeight: '900px',
                   overflow: 'auto',
-                  cursor: photoZoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default'
+                  cursor: photoZoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default',
+                  display: 'flex',
+                  justifyContent: 'center',
+                  alignItems: 'center'
                 }}
                 onWheel={(e) => {
                   e.stopPropagation()
                   const delta = e.deltaY > 0 ? -0.1 : 0.1
-                  setPhotoZoom(Math.max(0.5, Math.min(3, photoZoom + delta)))
+                  const newZoom = Math.max(0.5, Math.min(3, photoZoom + delta))
+                  setPhotoZoom(newZoom)
+                  if (newZoom === 1) {
+                    setPhotoPosition({ x: 0, y: 0 })
+                  }
                 }}
                 onMouseDown={(e) => {
                   if (photoZoom > 1) {
@@ -4159,11 +4166,7 @@ export default function Payments() {
               >
                 <div
                   style={{
-                    display: 'flex',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    minWidth: '100%',
-                    minHeight: '100%',
+                    display: 'inline-block',
                     transform: `translate(${photoPosition.x}px, ${photoPosition.y}px)`,
                     transition: isDragging ? 'none' : 'transform 0.1s ease-out'
                   }}
@@ -4171,17 +4174,46 @@ export default function Payments() {
                   <img 
                     src={photoModalUrl} 
                     alt="Foto del recibo" 
-                    className="object-contain"
                     style={{
-                      maxWidth: '100%',
-                      maxHeight: '100%',
+                      display: 'block',
+                      maxWidth: 'none',
+                      maxHeight: 'none',
+                      width: 'auto',
+                      height: 'auto',
                       transform: `scale(${photoZoom})`,
                       transformOrigin: 'center center',
                       transition: isDragging ? 'none' : 'transform 0.2s ease-out',
                       userSelect: 'none',
-                      pointerEvents: 'none'
+                      pointerEvents: 'none',
+                      objectFit: 'contain'
                     }}
                     draggable={false}
+                    onLoad={(e) => {
+                      const img = e.target as HTMLImageElement
+                      // Asegurar que la imagen se muestre completa al cargar
+                      if (photoZoom === 1) {
+                        const container = img.closest('div[style*="overflow"]') as HTMLElement
+                        if (container) {
+                          const containerWidth = container.clientWidth
+                          const containerHeight = container.clientHeight
+                          const imgWidth = img.naturalWidth
+                          const imgHeight = img.naturalHeight
+                          
+                          // Calcular el tamaño máximo para que quepa en el contenedor
+                          const scaleX = containerWidth / imgWidth
+                          const scaleY = containerHeight / imgHeight
+                          const scale = Math.min(scaleX, scaleY, 1)
+                          
+                          if (scale < 1) {
+                            img.style.maxWidth = `${imgWidth * scale}px`
+                            img.style.maxHeight = `${imgHeight * scale}px`
+                          } else {
+                            img.style.maxWidth = `${imgWidth}px`
+                            img.style.maxHeight = `${imgHeight}px`
+                          }
+                        }
+                      }
+                    }}
                     onError={(e) => {
                       const target = e.target as HTMLImageElement
                       target.style.display = 'none'
