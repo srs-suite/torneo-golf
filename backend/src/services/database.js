@@ -2315,6 +2315,72 @@ async function addCurrencyExchange(clubId, exchangeData) {
  */
 async function updateCurrencyExchange(clubId, exchangeId, exchangeData) {
     try {
+        // Obtener los valores ANTIGUOS de la conversión antes de actualizar
+        const getOldQuery = `SELECT from_currency, from_amount, to_currency, to_amount, from_account_id, to_account_id FROM currency_exchanges WHERE club_id = ? AND exchange_id = ?`;
+        const { rows: oldExchangeRows } = await executeQuery(getOldQuery, [clubId, exchangeId]);
+        
+        if (oldExchangeRows.length === 0) {
+            throw new Error('Conversión no encontrada');
+        }
+        
+        const oldExchange = oldExchangeRows[0];
+        
+        // Validar que se seleccionaron las cuentas en los nuevos datos
+        if (!exchangeData.from_account_id) {
+            throw new Error('Debe seleccionar la cuenta de origen');
+        }
+        if (!exchangeData.to_account_id) {
+            throw new Error('Debe seleccionar la cuenta de destino');
+        }
+        
+        // Validar fondos suficientes si se está aumentando el monto de origen
+        if (exchangeData.from_account_id === oldExchange.from_account_id && 
+            exchangeData.from_currency === oldExchange.from_currency &&
+            exchangeData.from_amount > oldExchange.from_amount) {
+            const fromAccountQuery = `SELECT current_balance_ars, current_balance_usd FROM custodian_accounts WHERE account_id = ? AND club_id = ?`;
+            const { rows: fromAccountRows } = await executeQuery(fromAccountQuery, [exchangeData.from_account_id, clubId]);
+            
+            if (fromAccountRows.length === 0) {
+                throw new Error('Cuenta de origen no encontrada');
+            }
+            
+            const fromAccount = fromAccountRows[0];
+            const availableAmount = exchangeData.from_currency === 'USD' ? fromAccount.current_balance_usd : fromAccount.current_balance_ars;
+            const additionalAmount = exchangeData.from_amount - oldExchange.from_amount;
+            
+            if (availableAmount < additionalAmount) {
+                throw new Error(`Fondos insuficientes en la cuenta de origen. Disponible: ${availableAmount.toFixed(2)} ${exchangeData.from_currency}, Requerido adicional: ${additionalAmount.toFixed(2)} ${exchangeData.from_currency}`);
+            }
+        }
+        
+        // PASO 1: Revertir los balances ANTIGUOS (devolver lo que se sacó, quitar lo que se agregó)
+        if (oldExchange.from_account_id) {
+            const revertFromQuery = oldExchange.from_currency === 'USD' 
+                ? `UPDATE custodian_accounts SET current_balance_usd = current_balance_usd + ? WHERE account_id = ? AND club_id = ?`
+                : `UPDATE custodian_accounts SET current_balance_ars = current_balance_ars + ? WHERE account_id = ? AND club_id = ?`;
+            
+            await executeQuery(revertFromQuery, [
+                oldExchange.from_amount,
+                oldExchange.from_account_id,
+                clubId
+            ]);
+            console.log(`🔄 Revertido ${oldExchange.from_amount} ${oldExchange.from_currency} a cuenta origen ${oldExchange.from_account_id}`);
+        }
+        
+        if (oldExchange.to_account_id) {
+            const revertToQuery = oldExchange.to_currency === 'USD' 
+                ? `UPDATE custodian_accounts SET current_balance_usd = current_balance_usd - ? WHERE account_id = ? AND club_id = ?`
+                : `UPDATE custodian_accounts SET current_balance_ars = current_balance_ars - ? WHERE account_id = ? AND club_id = ?`;
+            
+            await executeQuery(revertToQuery, [
+                oldExchange.to_amount,
+                oldExchange.to_account_id,
+                clubId
+            ]);
+            console.log(`🔄 Revertido ${oldExchange.to_amount} ${oldExchange.to_currency} de cuenta destino ${oldExchange.to_account_id}`);
+        }
+        
+        // PASO 2: Actualizar el registro en currency_exchanges
         const query = `
             UPDATE currency_exchanges 
             SET 
@@ -2345,6 +2411,34 @@ async function updateCurrencyExchange(clubId, exchangeId, exchangeData) {
         ];
         
         const { rows } = await executeQuery(query, params);
+        
+        // PASO 3: Aplicar los balances NUEVOS (restar de origen, sumar a destino)
+        if (exchangeData.from_account_id) {
+            const updateFromQuery = exchangeData.from_currency === 'USD' 
+                ? `UPDATE custodian_accounts SET current_balance_usd = current_balance_usd - ? WHERE account_id = ? AND club_id = ?`
+                : `UPDATE custodian_accounts SET current_balance_ars = current_balance_ars - ? WHERE account_id = ? AND club_id = ?`;
+            
+            await executeQuery(updateFromQuery, [
+                exchangeData.from_amount,
+                exchangeData.from_account_id,
+                clubId
+            ]);
+            console.log(`✅ Aplicado ${exchangeData.from_amount} ${exchangeData.from_currency} de cuenta origen ${exchangeData.from_account_id}`);
+        }
+        
+        if (exchangeData.to_account_id) {
+            const updateToQuery = exchangeData.to_currency === 'USD' 
+                ? `UPDATE custodian_accounts SET current_balance_usd = current_balance_usd + ? WHERE account_id = ? AND club_id = ?`
+                : `UPDATE custodian_accounts SET current_balance_ars = current_balance_ars + ? WHERE account_id = ? AND club_id = ?`;
+            
+            await executeQuery(updateToQuery, [
+                exchangeData.to_amount,
+                exchangeData.to_account_id,
+                clubId
+            ]);
+            console.log(`✅ Aplicado ${exchangeData.to_amount} ${exchangeData.to_currency} a cuenta destino ${exchangeData.to_account_id}`);
+        }
+        
         return { success: true, affectedRows: rows.affectedRows };
     } catch (error) {
         console.error('❌ Error updating currency exchange:', error);
