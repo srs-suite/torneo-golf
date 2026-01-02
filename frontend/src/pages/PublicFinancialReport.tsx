@@ -111,12 +111,10 @@ export default function PublicFinancialReport() {
       return null
     }
     
-    // Filtrar transacciones relacionadas con esta cuenta
-    const accountTransactions = allTransactions.filter((tx: any) => {
-      const fromMatch = tx.from_account_id && Number(tx.from_account_id) === accountId
-      const toMatch = tx.to_account_id && Number(tx.to_account_id) === accountId
-      return fromMatch || toMatch
-    })
+    // Filtrar transacciones relacionadas con esta cuenta (igual que Payments.tsx)
+    const accountTransactions = allTransactions.filter((tx: any) => 
+      tx.from_account_id === accountId || tx.to_account_id === accountId
+    )
     
     if (accountTransactions.length === 0) {
       return null
@@ -137,8 +135,8 @@ export default function PublicFinancialReport() {
     let balanceUSD = 0
     
     sorted.forEach((tx: any) => {
-      const isFromAccount = tx.from_account_id && Number(tx.from_account_id) === accountId
-      const isToAccount = tx.to_account_id && Number(tx.to_account_id) === accountId
+      const isFromAccount = tx.from_account_id === accountId
+      const isToAccount = tx.to_account_id === accountId
       
       if (tx.transaction_type === 'income_tournament' || tx.transaction_type === 'income_other') {
         if (isToAccount) {
@@ -188,8 +186,8 @@ export default function PublicFinancialReport() {
       // Calcular desglose detallado
       let ingresosARS = 0, ingresosUSD = 0, egresosARS = 0, egresosUSD = 0
       sorted.forEach((tx: any) => {
-        const isFromAccount = tx.from_account_id && Number(tx.from_account_id) === accountId
-        const isToAccount = tx.to_account_id && Number(tx.to_account_id) === accountId
+        const isFromAccount = tx.from_account_id === accountId
+        const isToAccount = tx.to_account_id === accountId
         
         if (tx.transaction_type === 'income_tournament' || tx.transaction_type === 'income_other') {
           if (isToAccount) {
@@ -249,8 +247,8 @@ export default function PublicFinancialReport() {
       
       // Log detallado de cada transacción para identificar el problema
       console.log('📋 Transacciones detalladas Juan Castro Videla:', sorted.map((tx: any, idx: number) => {
-        const isFromAccount = tx.from_account_id && Number(tx.from_account_id) === accountId
-        const isToAccount = tx.to_account_id && Number(tx.to_account_id) === accountId
+        const isFromAccount = tx.from_account_id === accountId
+        const isToAccount = tx.to_account_id === accountId
         let cambioARS = 0
         let cambioUSD = 0
         
