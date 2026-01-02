@@ -2303,6 +2303,28 @@ export default function Payments() {
                         className="absolute top-2 right-2 text-red-500 hover:text-red-700 p-1"
                         title="Eliminar cuenta"
                       >
+                        <X className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                  )
+                })}
+                      <button
+                        onClick={async () => {
+                          if (confirm(`¿Eliminar la cuenta "${account.account_name}"?\n\nEsta acción no se puede deshacer.`)) {
+                            try {
+                              await accountsService.deleteAccount(clubIdNum, account.account_id)
+                              toast.success('Cuenta eliminada exitosamente')
+                              const accountsData = await accountsService.getAccounts(clubIdNum)
+                              setAccounts(accountsData)
+                            } catch (error: any) {
+                              toast.error(error?.response?.data?.error || 'Error al eliminar cuenta')
+                            }
+                          }
+                        }}
+                        className="absolute top-2 right-2 text-red-500 hover:text-red-700 p-1"
+                        title="Eliminar cuenta"
+                      >
                         <X className="w-4 h-4" />
                       </button>
                     )}
