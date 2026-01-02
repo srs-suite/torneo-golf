@@ -718,6 +718,75 @@ export default function Payments() {
     toast.success('Archivo Excel descargado exitosamente')
   }
 
+  // Función para calcular el saldo de una cuenta desde las transacciones
+  const calculateAccountBalance = useMemo(() => {
+    return (accountId: number) => {
+      if (!transactions || transactions.length === 0) {
+        return { ars: 0, usd: 0 }
+      }
+      
+      // Filtrar transacciones relacionadas con esta cuenta
+      const accountTransactions = transactions.filter((tx: any) => 
+        tx.from_account_id === accountId || tx.to_account_id === accountId
+      )
+      
+      // Ordenar por fecha ascendente
+      const sorted = [...accountTransactions].sort((a, b) => {
+        const dateA = new Date(a.transaction_date).getTime()
+        const dateB = new Date(b.transaction_date).getTime()
+        if (dateA !== dateB) return dateA - dateB
+        return (a.transaction_id || 0) - (b.transaction_id || 0)
+      })
+      
+      let balanceARS = 0
+      let balanceUSD = 0
+      
+      sorted.forEach((tx: any) => {
+        const currency = tx.currency || 'ARS'
+        const amount = Number(tx.amount || 0)
+        const isFromAccount = tx.from_account_id === accountId
+        const isToAccount = tx.to_account_id === accountId
+        
+        if (tx.transaction_type === 'income_tournament' || tx.transaction_type === 'income_other') {
+          if (isToAccount) {
+            if (currency === 'ARS') balanceARS += amount
+            else balanceUSD += amount
+          }
+        } else if (tx.transaction_type === 'expense') {
+          if (isFromAccount) {
+            if (currency === 'ARS') balanceARS -= amount
+            else balanceUSD -= amount
+          }
+        } else if (tx.transaction_type === 'transfer') {
+          if (isFromAccount) {
+            if (currency === 'ARS') balanceARS -= amount
+            else balanceUSD -= amount
+          }
+          if (isToAccount) {
+            if (currency === 'ARS') balanceARS += amount
+            else balanceUSD += amount
+          }
+        } else if (tx.transaction_type === 'exchange') {
+          const fromCurrency = (tx as any).from_currency || currency
+          const toCurrency = (tx as any).to_currency || currency
+          const fromAmount = Number((tx as any).from_amount || amount)
+          const toAmount = Number((tx as any).to_amount || amount)
+          
+          if (isFromAccount) {
+            if (fromCurrency === 'ARS') balanceARS -= fromAmount
+            else balanceUSD -= fromAmount
+          }
+          if (isToAccount) {
+            if (toCurrency === 'ARS') balanceARS += toAmount
+            else balanceUSD += toAmount
+          }
+        }
+      })
+      
+      return { ars: balanceARS, usd: balanceUSD }
+    }
+  }, [transactions])
+
   const totalPaid = useMemo(() => {
     return rows.reduce((s, r) => s + (Number(r.total_paid) || 0), 0)
   }, [rows])
@@ -1476,25 +1545,38 @@ export default function Payments() {
                 </div>
 
                 {/* Balance Card */}
-                <div className="bg-white rounded-lg border p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-sm font-medium text-gray-600">Balance Neto</h3>
-                    <div className={`p-2 rounded-lg ${(accounts.reduce((sum, acc) => sum + Number(acc.current_balance_ars || 0), 0)) >= 0 ? 'bg-blue-100' : 'bg-orange-100'}`}>
-                      <DollarSign className={`h-5 w-5 ${(accounts.reduce((sum, acc) => sum + Number(acc.current_balance_ars || 0), 0)) >= 0 ? 'text-blue-600' : 'text-orange-600'}`} />
+                {(() => {
+                  // Calcular balance neto sumando los saldos calculados de todas las cuentas
+                  const totalBalanceARS = accounts.reduce((sum, acc) => {
+                    const balance = calculateAccountBalance(acc.account_id)
+                    return sum + balance.ars
+                  }, 0)
+                  const totalBalanceUSD = accounts.reduce((sum, acc) => {
+                    const balance = calculateAccountBalance(acc.account_id)
+                    return sum + balance.usd
+                  }, 0)
+                  return (
+                    <div className="bg-white rounded-lg border p-6">
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-sm font-medium text-gray-600">Balance Neto</h3>
+                        <div className={`p-2 rounded-lg ${totalBalanceARS >= 0 ? 'bg-blue-100' : 'bg-orange-100'}`}>
+                          <DollarSign className={`h-5 w-5 ${totalBalanceARS >= 0 ? 'text-blue-600' : 'text-orange-600'}`} />
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <div className={`text-2xl font-bold ${totalBalanceARS >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>
+                          ${formatCurrency(Math.abs(totalBalanceARS))}
+                        </div>
+                        <div className={`text-xl font-bold ${totalBalanceUSD >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>
+                          US${formatCurrency(Math.abs(totalBalanceUSD))}
+                        </div>
+                      </div>
+                      <p className={`text-sm font-medium mt-2 ${totalBalanceARS >= 0 ? 'text-green-600' : 'text-orange-600'}`}>
+                        {totalBalanceARS >= 0 ? 'Superávit' : 'Déficit'}
+                      </p>
                     </div>
-                  </div>
-                  <div className="space-y-1">
-                    <div className={`text-2xl font-bold ${(accounts.reduce((sum, acc) => sum + Number(acc.current_balance_ars || 0), 0)) >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>
-                      ${formatCurrency(Math.abs(accounts.reduce((sum, acc) => sum + Number(acc.current_balance_ars || 0), 0)))}
-                    </div>
-                    <div className={`text-xl font-bold ${(accounts.reduce((sum, acc) => sum + Number(acc.current_balance_usd || 0), 0)) >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>
-                      US${formatCurrency(Math.abs(accounts.reduce((sum, acc) => sum + Number(acc.current_balance_usd || 0), 0)))}
-                    </div>
-                  </div>
-                  <p className={`text-sm font-medium mt-2 ${(accounts.reduce((sum, acc) => sum + Number(acc.current_balance_ars || 0), 0)) >= 0 ? 'text-green-600' : 'text-orange-600'}`}>
-                    {(accounts.reduce((sum, acc) => sum + Number(acc.current_balance_ars || 0), 0)) >= 0 ? 'Superávit' : 'Déficit'}
-                  </p>
-                </div>
+                  )
+                })()}
               </div>
             )}
           </div>
@@ -2256,12 +2338,19 @@ export default function Payments() {
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">Estado de Cuentas</h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {accounts.map(account => {
+                  // Calcular saldo desde transacciones (más preciso que usar current_balance de la BD)
+                  const calculatedBalance = calculateAccountBalance(account.account_id)
+                  const balanceARS = calculatedBalance.ars
+                  const balanceUSD = calculatedBalance.usd
+                  
                   // Debug: log account balances
                   if (account.account_name === 'Juan Castro Videla') {
                     console.log('💳 Cuenta Juan Castro Videla:', {
                       account_id: account.account_id,
-                      balance_ars: account.current_balance_ars,
-                      balance_usd: account.current_balance_usd,
+                      balance_ars_calculado: balanceARS,
+                      balance_usd_calculado: balanceUSD,
+                      balance_ars_bd: account.current_balance_ars,
+                      balance_usd_bd: account.current_balance_usd,
                       raw: account
                     })
                   }
@@ -2272,13 +2361,13 @@ export default function Payments() {
                       <div className="flex justify-between items-center">
                         <span className="text-sm text-gray-600">ARS:</span>
                         <span className="font-semibold text-green-600">
-                          ${formatCurrency(Number(account.current_balance_ars || 0))}
+                          ${formatCurrency(balanceARS)}
                         </span>
                       </div>
                       <div className="flex justify-between items-center">
                         <span className="text-sm text-gray-600">USD:</span>
                         <span className="font-semibold text-blue-600">
-                          US${formatCurrency(Number(account.current_balance_usd || 0))}
+                          US${formatCurrency(balanceUSD)}
                         </span>
                       </div>
                     </div>
@@ -2286,7 +2375,7 @@ export default function Payments() {
                       <p className="text-xs text-gray-500 mt-2">{account.description}</p>
                     )}
                     {/* Botón eliminar - solo si saldo es 0 */}
-                    {permissions.canViewAccounting && parseFloat(account.current_balance_ars || 0) === 0 && parseFloat(account.current_balance_usd || 0) === 0 && (
+                    {permissions.canViewAccounting && balanceARS === 0 && balanceUSD === 0 && (
                       <button
                         onClick={async () => {
                           if (confirm(`¿Eliminar la cuenta "${account.account_name}"?\n\nEsta acción no se puede deshacer.`)) {
@@ -2309,27 +2398,6 @@ export default function Payments() {
                   </div>
                   )
                 })}
-                      <button
-                        onClick={async () => {
-                          if (confirm(`¿Eliminar la cuenta "${account.account_name}"?\n\nEsta acción no se puede deshacer.`)) {
-                            try {
-                              await accountsService.deleteAccount(clubIdNum, account.account_id)
-                              toast.success('Cuenta eliminada exitosamente')
-                              const accountsData = await accountsService.getAccounts(clubIdNum)
-                              setAccounts(accountsData)
-                            } catch (error: any) {
-                              toast.error(error?.response?.data?.error || 'Error al eliminar cuenta')
-                            }
-                          }
-                        }}
-                        className="absolute top-2 right-2 text-red-500 hover:text-red-700 p-1"
-                        title="Eliminar cuenta"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
-                ))}
                 </div>
               </div>
             ) : (
@@ -4053,23 +4121,50 @@ export default function Payments() {
                         to_account_id: ''
                       })
                       setEditingExchangeId(null)
-                      // Recargar balance, cuentas y transacciones PRIMERO para asegurar que los datos estén actualizados
-                      const [balance, accountsData, transactionsData, exchangesData] = await Promise.all([
-                        paymentsService.getCurrencyBalance(clubIdNum),
-                        accountsService.getAccounts(clubIdNum),
-                        accountsService.getTransactions(clubIdNum, { from: from || undefined, to: to || undefined }),
-                        paymentsService.getCurrencyExchanges(clubIdNum, { from: from || undefined, to: to || undefined })
-                      ])
-                      console.log('🔄 Datos recargados después de editar conversión:', {
-                        balance,
-                        accounts: accountsData,
-                        transactionsCount: transactionsData.length,
-                        exchangesCount: exchangesData.length
-                      })
-                      setCurrencyBalance(balance)
-                      setAccounts(accountsData)
-                      setTransactions(transactionsData)
-                      setCurrencyExchanges(exchangesData)
+                      // Esperar un momento para asegurar que el backend termine de actualizar los saldos
+                      await new Promise(resolve => setTimeout(resolve, 500))
+                      // Función helper para recargar todos los datos
+                      const reloadAllData = async () => {
+                        const [balance, accountsData, transactionsData, exchangesData, incomesData, otherIncomesData, expensesData] = await Promise.all([
+                          paymentsService.getCurrencyBalance(clubIdNum),
+                          accountsService.getAccounts(clubIdNum),
+                          accountsService.getTransactions(clubIdNum, { from: from || undefined, to: to || undefined }),
+                          paymentsService.getCurrencyExchanges(clubIdNum, { from: from || undefined, to: to || undefined }),
+                          paymentsService.getSummary(clubIdNum, { from: from || undefined, to: to || undefined }),
+                          paymentsService.getOtherIncomes(clubIdNum, { from: from || undefined, to: to || undefined }),
+                          paymentsService.getExpenses(clubIdNum, { from: from || undefined, to: to || undefined })
+                        ])
+                        // Filtrar torneos vigentes para usuarios sin permiso de totales
+                        const filteredIncomesData = permissions.canViewFinancialTotals
+                          ? incomesData
+                          : incomesData.filter((row: any) => 
+                              row.status === 'in_progress' || row.status === 'open'
+                            )
+                        setCurrencyBalance(balance)
+                        setAccounts(accountsData)
+                        setTransactions(transactionsData)
+                        setCurrencyExchanges(exchangesData)
+                        setRows(filteredIncomesData)
+                        setOtherIncomes(otherIncomesData)
+                        setExpenses(expensesData)
+                        console.log('🔄 Datos recargados después de editar conversión:', {
+                          balance,
+                          accounts: accountsData,
+                          juanCastroAccount: accountsData.find((acc: any) => acc.account_name === 'Juan Castro Videla'),
+                          transactionsCount: transactionsData.length,
+                          exchangesCount: exchangesData.length,
+                          incomesCount: incomesData.length,
+                          otherIncomesCount: otherIncomesData.length,
+                          expensesCount: expensesData.length
+                        })
+                        return { accountsData, balance }
+                      }
+                      // Primera recarga
+                      await reloadAllData()
+                      // Segunda recarga después de otro delay para asegurar que los saldos estén completamente actualizados
+                      setTimeout(async () => {
+                        await reloadAllData()
+                      }, 800)
                     } catch (error: any) {
                       const errorMessage = error?.response?.data?.message || error?.message || 'Error al procesar conversión'
                       toast.error(errorMessage)
