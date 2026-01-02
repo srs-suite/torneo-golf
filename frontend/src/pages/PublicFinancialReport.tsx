@@ -185,12 +185,68 @@ export default function PublicFinancialReport() {
     
     // Debug para Juan Castro Videla
     if (accountId === 2) {
+      // Calcular desglose detallado
+      let ingresosARS = 0, ingresosUSD = 0, egresosARS = 0, egresosUSD = 0
+      sorted.forEach((tx: any) => {
+        const isFromAccount = tx.from_account_id && Number(tx.from_account_id) === accountId
+        const isToAccount = tx.to_account_id && Number(tx.to_account_id) === accountId
+        
+        if (tx.transaction_type === 'income_tournament' || tx.transaction_type === 'income_other') {
+          if (isToAccount) {
+            const currency = tx.currency || 'ARS'
+            const amount = Number(tx.amount || 0)
+            if (currency === 'ARS') ingresosARS += amount
+            else ingresosUSD += amount
+          }
+        } else if (tx.transaction_type === 'expense') {
+          if (isFromAccount) {
+            const currency = tx.currency || 'ARS'
+            const amount = Number(tx.amount || 0)
+            if (currency === 'ARS') egresosARS += amount
+            else egresosUSD += amount
+          }
+        } else if (tx.transaction_type === 'transfer') {
+          const currency = tx.currency || 'ARS'
+          const amount = Number(tx.amount || 0)
+          if (isFromAccount) {
+            if (currency === 'ARS') egresosARS += amount
+            else egresosUSD += amount
+          }
+          if (isToAccount) {
+            if (currency === 'ARS') ingresosARS += amount
+            else ingresosUSD += amount
+          }
+        } else if (tx.transaction_type === 'exchange') {
+          const fromCurrency = tx.from_currency || 'ARS'
+          const toCurrency = tx.to_currency || 'USD'
+          const fromAmount = Number(tx.from_amount || 0)
+          const toAmount = Number(tx.to_amount || 0)
+          if (isFromAccount) {
+            if (fromCurrency === 'ARS') egresosARS += fromAmount
+            else egresosUSD += fromAmount
+          }
+          if (isToAccount) {
+            if (toCurrency === 'ARS') ingresosARS += toAmount
+            else ingresosUSD += toAmount
+          }
+        }
+      })
+      
       console.log('💰 Cálculo saldo Juan Castro Videla:', {
         accountId,
         totalTransactions: accountTransactions.length,
         balanceARS,
         balanceUSD,
-        sampleTransactions: sorted.slice(0, 3).map((tx: any) => ({
+        desglose: {
+          ingresosARS,
+          ingresosUSD,
+          egresosARS,
+          egresosUSD,
+          netoARS: ingresosARS - egresosARS,
+          netoUSD: ingresosUSD - egresosUSD
+        },
+        todasLasTransacciones: sorted.map((tx: any) => ({
+          id: tx.transaction_id,
           type: tx.transaction_type,
           date: tx.transaction_date,
           from: tx.from_account_id,
@@ -229,7 +285,17 @@ export default function PublicFinancialReport() {
             )
           ).then(allResults => {
             const allTxs = allResults.flat()
-            setAllTransactions(allTxs)
+            // Eliminar duplicados basándose en transaction_id
+            const uniqueTxs = allTxs.filter((tx: any, index: number, self: any[]) => {
+              const txId = tx.transaction_id || tx.id
+              return index === self.findIndex((t: any) => (t.transaction_id || t.id) === txId)
+            })
+            console.log('📊 Transacciones cargadas:', {
+              total: allTxs.length,
+              unicas: uniqueTxs.length,
+              duplicados: allTxs.length - uniqueTxs.length
+            })
+            setAllTransactions(uniqueTxs)
           })
         }
       }
