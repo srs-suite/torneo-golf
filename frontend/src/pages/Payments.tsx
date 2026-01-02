@@ -4021,17 +4021,23 @@ export default function Payments() {
                         to_account_id: ''
                       })
                       setEditingExchangeId(null)
-                      const data = await paymentsService.getCurrencyExchanges(clubIdNum, { from: from || undefined, to: to || undefined })
-                      setCurrencyExchanges(data)
-                      // Recargar balance, cuentas y transacciones
-                      const [balance, accountsData, transactionsData] = await Promise.all([
+                      // Recargar balance, cuentas y transacciones PRIMERO para asegurar que los datos estén actualizados
+                      const [balance, accountsData, transactionsData, exchangesData] = await Promise.all([
                         paymentsService.getCurrencyBalance(clubIdNum),
                         accountsService.getAccounts(clubIdNum),
-                        accountsService.getTransactions(clubIdNum, { from: from || undefined, to: to || undefined })
+                        accountsService.getTransactions(clubIdNum, { from: from || undefined, to: to || undefined }),
+                        paymentsService.getCurrencyExchanges(clubIdNum, { from: from || undefined, to: to || undefined })
                       ])
+                      console.log('🔄 Datos recargados después de editar conversión:', {
+                        balance,
+                        accounts: accountsData,
+                        transactionsCount: transactionsData.length,
+                        exchangesCount: exchangesData.length
+                      })
                       setCurrencyBalance(balance)
                       setAccounts(accountsData)
                       setTransactions(transactionsData)
+                      setCurrencyExchanges(exchangesData)
                     } catch (error: any) {
                       const errorMessage = error?.response?.data?.message || error?.message || 'Error al procesar conversión'
                       toast.error(errorMessage)
