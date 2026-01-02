@@ -245,6 +245,90 @@ export default function PublicFinancialReport() {
         }
       })
       
+      // Log más detallado con valores directos
+      console.log('📊 Desglose detallado Juan Castro Videla:')
+      console.log('  Ingresos ARS:', ingresosARS)
+      console.log('  Ingresos USD:', ingresosUSD)
+      console.log('  Egresos ARS:', egresosARS)
+      console.log('  Egresos USD:', egresosUSD)
+      console.log('  Neto ARS:', ingresosARS - egresosARS, '(debería ser:', balanceARS, ')')
+      console.log('  Neto USD:', ingresosUSD - egresosUSD, '(debería ser:', balanceUSD, ')')
+      
+      // Mostrar transacciones con cambios significativos
+      const transaccionesConCambio = sorted
+        .map((tx: any) => {
+          const isFromAccount = tx.from_account_id === accountId
+          const isToAccount = tx.to_account_id === accountId
+          let cambioARS = 0
+          let cambioUSD = 0
+          
+          if (tx.transaction_type === 'income_tournament' || tx.transaction_type === 'income_other') {
+            if (isToAccount) {
+              const currency = tx.currency || 'ARS'
+              const amount = Number(tx.amount || 0)
+              if (currency === 'ARS') cambioARS = amount
+              else cambioUSD = amount
+            }
+          } else if (tx.transaction_type === 'expense') {
+            if (isFromAccount) {
+              const currency = tx.currency || 'ARS'
+              const amount = Number(tx.amount || 0)
+              if (currency === 'ARS') cambioARS = -amount
+              else cambioUSD = -amount
+            }
+          } else if (tx.transaction_type === 'transfer') {
+            const currency = tx.currency || 'ARS'
+            const amount = Number(tx.amount || 0)
+            if (isFromAccount) {
+              if (currency === 'ARS') cambioARS = -amount
+              else cambioUSD = -amount
+            }
+            if (isToAccount) {
+              if (currency === 'ARS') cambioARS = amount
+              else cambioUSD = amount
+            }
+          } else if (tx.transaction_type === 'exchange') {
+            const fromCurrency = tx.from_currency || 'ARS'
+            const toCurrency = tx.to_currency || 'USD'
+            const fromAmount = Number(tx.from_amount || 0)
+            const toAmount = Number(tx.to_amount || 0)
+            if (isFromAccount) {
+              if (fromCurrency === 'ARS') cambioARS = -fromAmount
+              else cambioUSD = -fromAmount
+            }
+            if (isToAccount) {
+              if (toCurrency === 'ARS') cambioARS = toAmount
+              else cambioUSD = toAmount
+            }
+          }
+          
+          return { tx, cambioARS, cambioUSD, isFromAccount, isToAccount }
+        })
+        .filter(item => item.cambioARS !== 0 || item.cambioUSD !== 0)
+      
+      console.log('📋 Transacciones con cambio (solo las que afectan el saldo):', transaccionesConCambio.map((item: any) => ({
+        id: item.tx.transaction_id,
+        fecha: item.tx.transaction_date,
+        tipo: item.tx.transaction_type,
+        from: item.tx.from_account_id,
+        to: item.tx.to_account_id,
+        isFrom: item.isFromAccount,
+        isTo: item.isToAccount,
+        amount: item.tx.amount,
+        from_amount: item.tx.from_amount,
+        to_amount: item.tx.to_amount,
+        currency: item.tx.currency,
+        from_currency: item.tx.from_currency,
+        to_currency: item.tx.to_currency,
+        cambioARS: item.cambioARS,
+        cambioUSD: item.cambioUSD
+      })))
+      
+      // Sumar cambios para verificar
+      const sumaCambiosARS = transaccionesConCambio.reduce((sum: number, item: any) => sum + item.cambioARS, 0)
+      const sumaCambiosUSD = transaccionesConCambio.reduce((sum: number, item: any) => sum + item.cambioUSD, 0)
+      console.log('✅ Verificación: Suma de cambios ARS:', sumaCambiosARS, 'USD:', sumaCambiosUSD)
+      
       // Log detallado de cada transacción para identificar el problema
       console.log('📋 Transacciones detalladas Juan Castro Videla:', sorted.map((tx: any, idx: number) => {
         const isFromAccount = tx.from_account_id === accountId
