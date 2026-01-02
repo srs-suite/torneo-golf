@@ -107,42 +107,56 @@ export default function PublicFinancialReport() {
   // Función para calcular el saldo de una cuenta desde las transacciones
   const calculateAccountBalance = (accountId: number) => {
     if (!allTransactions || allTransactions.length === 0) {
-      return { ars: 0, usd: 0 }
+      // Si no hay transacciones cargadas aún, retornar null para usar el valor de la BD
+      return null
     }
     
     // Filtrar transacciones relacionadas con esta cuenta
-    const accountTransactions = allTransactions.filter((tx: any) => 
-      tx.from_account_id === accountId || tx.to_account_id === accountId
-    )
+    const accountTransactions = allTransactions.filter((tx: any) => {
+      const fromMatch = tx.from_account_id && Number(tx.from_account_id) === accountId
+      const toMatch = tx.to_account_id && Number(tx.to_account_id) === accountId
+      return fromMatch || toMatch
+    })
+    
+    if (accountTransactions.length === 0) {
+      return null
+    }
     
     // Ordenar por fecha ascendente
     const sorted = [...accountTransactions].sort((a, b) => {
       const dateA = new Date(a.transaction_date).getTime()
       const dateB = new Date(b.transaction_date).getTime()
       if (dateA !== dateB) return dateA - dateB
-      return (a.transaction_id || 0) - (b.transaction_id || 0)
+      // Para exchanges, usar el exchange_id si existe
+      const idA = a.transaction_id ? (typeof a.transaction_id === 'string' && a.transaction_id.startsWith('EX') ? parseInt(a.transaction_id.substring(2)) : parseInt(a.transaction_id)) : 0
+      const idB = b.transaction_id ? (typeof b.transaction_id === 'string' && b.transaction_id.startsWith('EX') ? parseInt(b.transaction_id.substring(2)) : parseInt(b.transaction_id)) : 0
+      return idA - idB
     })
     
     let balanceARS = 0
     let balanceUSD = 0
     
     sorted.forEach((tx: any) => {
-      const currency = tx.currency || 'ARS'
-      const amount = Number(tx.amount || 0)
-      const isFromAccount = tx.from_account_id === accountId
-      const isToAccount = tx.to_account_id === accountId
+      const isFromAccount = tx.from_account_id && Number(tx.from_account_id) === accountId
+      const isToAccount = tx.to_account_id && Number(tx.to_account_id) === accountId
       
       if (tx.transaction_type === 'income_tournament' || tx.transaction_type === 'income_other') {
         if (isToAccount) {
+          const currency = tx.currency || 'ARS'
+          const amount = Number(tx.amount || 0)
           if (currency === 'ARS') balanceARS += amount
           else balanceUSD += amount
         }
       } else if (tx.transaction_type === 'expense') {
         if (isFromAccount) {
+          const currency = tx.currency || 'ARS'
+          const amount = Number(tx.amount || 0)
           if (currency === 'ARS') balanceARS -= amount
           else balanceUSD -= amount
         }
       } else if (tx.transaction_type === 'transfer') {
+        const currency = tx.currency || 'ARS'
+        const amount = Number(tx.amount || 0)
         if (isFromAccount) {
           if (currency === 'ARS') balanceARS -= amount
           else balanceUSD -= amount
@@ -152,10 +166,11 @@ export default function PublicFinancialReport() {
           else balanceUSD += amount
         }
       } else if (tx.transaction_type === 'exchange') {
-        const fromCurrency = tx.from_currency || currency
-        const toCurrency = tx.to_currency || currency
-        const fromAmount = Number(tx.from_amount || amount)
-        const toAmount = Number(tx.to_amount || amount)
+        // Para exchanges, usar from_amount/to_amount y from_currency/to_currency
+        const fromCurrency = tx.from_currency || 'ARS'
+        const toCurrency = tx.to_currency || 'USD'
+        const fromAmount = Number(tx.from_amount || 0)
+        const toAmount = Number(tx.to_amount || 0)
         
         if (isFromAccount) {
           if (fromCurrency === 'ARS') balanceARS -= fromAmount
@@ -167,6 +182,28 @@ export default function PublicFinancialReport() {
         }
       }
     })
+    
+    // Debug para Juan Castro Videla
+    if (accountId === 2) {
+      console.log('💰 Cálculo saldo Juan Castro Videla:', {
+        accountId,
+        totalTransactions: accountTransactions.length,
+        balanceARS,
+        balanceUSD,
+        sampleTransactions: sorted.slice(0, 3).map((tx: any) => ({
+          type: tx.transaction_type,
+          date: tx.transaction_date,
+          from: tx.from_account_id,
+          to: tx.to_account_id,
+          amount: tx.amount,
+          from_amount: tx.from_amount,
+          to_amount: tx.to_amount,
+          currency: tx.currency,
+          from_currency: tx.from_currency,
+          to_currency: tx.to_currency
+        }))
+      })
+    }
     
     return { ars: balanceARS, usd: balanceUSD }
   }
@@ -447,12 +484,12 @@ export default function PublicFinancialReport() {
                     // Calcular balance neto sumando los saldos calculados de todas las cuentas
                     const totalBalanceARS = financialData.accounts?.reduce((sum: number, acc: any) => {
                       const balance = calculateAccountBalance(acc.account_id)
-                      return sum + (balance.ars !== 0 ? balance.ars : Number(acc.current_balance_ars || 0))
+                      return sum + (balance ? balance.ars : Number(acc.current_balance_ars || 0))
                     }, 0) || (financialData.summary.balanceARS || financialData.summary.balance)
                     
                     const totalBalanceUSD = financialData.accounts?.reduce((sum: number, acc: any) => {
                       const balance = calculateAccountBalance(acc.account_id)
-                      return sum + (balance.usd !== 0 ? balance.usd : Number(acc.current_balance_usd || 0))
+                      return sum + (balance ? balance.usd : Number(acc.current_balance_usd || 0))
                     }, 0) || (financialData.summary.balanceUSD || 0)
                     
                     return (
@@ -502,15 +539,16 @@ export default function PublicFinancialReport() {
                             {(() => {
                               // Calcular saldo desde transacciones (más preciso)
                               const calculatedBalance = calculateAccountBalance(account.account_id)
-                              const balanceARS = calculatedBalance.ars !== 0 ? calculatedBalance.ars : Number(account.current_balance_ars || 0)
-                              const balanceUSD = calculatedBalance.usd !== 0 ? calculatedBalance.usd : Number(account.current_balance_usd || 0)
+                              // Si hay saldo calculado, usarlo; sino usar el de la BD
+                              const balanceARS = calculatedBalance ? calculatedBalance.ars : Number(account.current_balance_ars || 0)
+                              const balanceUSD = calculatedBalance ? calculatedBalance.usd : Number(account.current_balance_usd || 0)
                               
                               return (
                                 <>
                                   <p className="text-sm font-bold text-green-600">
                                     {formatCurrency(balanceARS, 'ARS')}
                                   </p>
-                                  {balanceUSD > 0 && (
+                                  {balanceUSD !== 0 && (
                                     <p className="text-sm font-bold text-blue-600 mt-1">
                                       {formatCurrency(balanceUSD, 'USD')}
                                     </p>
