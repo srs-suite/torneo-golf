@@ -329,8 +329,9 @@ export default function PublicFinancialReport() {
       const sumaCambiosUSD = transaccionesConCambio.reduce((sum: number, item: any) => sum + item.cambioUSD, 0)
       console.log('✅ Verificación: Suma de cambios ARS:', sumaCambiosARS, 'USD:', sumaCambiosUSD)
       
-      // Log detallado de cada transacción para identificar el problema
-      console.log('📋 Transacciones detalladas Juan Castro Videla:', sorted.map((tx: any, idx: number) => {
+      // Log detallado de cada transacción para identificar el problema - mostrar valores directamente
+      console.log('📋 LISTA COMPLETA DE TRANSACCIONES Juan Castro Videla:')
+      sorted.forEach((tx: any, idx: number) => {
         const isFromAccount = tx.from_account_id === accountId
         const isToAccount = tx.to_account_id === accountId
         let cambioARS = 0
@@ -376,25 +377,9 @@ export default function PublicFinancialReport() {
           }
         }
         
-        return {
-          idx: idx + 1,
-          id: tx.transaction_id,
-          type: tx.transaction_type,
-          date: tx.transaction_date,
-          from: tx.from_account_id,
-          to: tx.to_account_id,
-          isFrom: isFromAccount,
-          isTo: isToAccount,
-          amount: tx.amount,
-          from_amount: tx.from_amount,
-          to_amount: tx.to_amount,
-          currency: tx.currency,
-          from_currency: tx.from_currency,
-          to_currency: tx.to_currency,
-          cambioARS,
-          cambioUSD
-        }
-      }))
+        // Mostrar cada transacción directamente en la consola
+        console.log(`  ${idx + 1}. [${tx.transaction_type}] ${tx.transaction_date} | From:${tx.from_account_id} To:${tx.to_account_id} | ARS:${cambioARS} USD:${cambioUSD} | Amount:${tx.amount} FromAmt:${tx.from_amount} ToAmt:${tx.to_amount}`)
+      })
     }
     
     return { ars: balanceARS, usd: balanceUSD }
