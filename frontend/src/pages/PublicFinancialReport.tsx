@@ -244,21 +244,75 @@ export default function PublicFinancialReport() {
           egresosUSD,
           netoARS: ingresosARS - egresosARS,
           netoUSD: ingresosUSD - egresosUSD
-        },
-        todasLasTransacciones: sorted.map((tx: any) => ({
+        }
+      })
+      
+      // Log detallado de cada transacción para identificar el problema
+      console.log('📋 Transacciones detalladas Juan Castro Videla:', sorted.map((tx: any, idx: number) => {
+        const isFromAccount = tx.from_account_id && Number(tx.from_account_id) === accountId
+        const isToAccount = tx.to_account_id && Number(tx.to_account_id) === accountId
+        let cambioARS = 0
+        let cambioUSD = 0
+        
+        if (tx.transaction_type === 'income_tournament' || tx.transaction_type === 'income_other') {
+          if (isToAccount) {
+            const currency = tx.currency || 'ARS'
+            const amount = Number(tx.amount || 0)
+            if (currency === 'ARS') cambioARS = amount
+            else cambioUSD = amount
+          }
+        } else if (tx.transaction_type === 'expense') {
+          if (isFromAccount) {
+            const currency = tx.currency || 'ARS'
+            const amount = Number(tx.amount || 0)
+            if (currency === 'ARS') cambioARS = -amount
+            else cambioUSD = -amount
+          }
+        } else if (tx.transaction_type === 'transfer') {
+          const currency = tx.currency || 'ARS'
+          const amount = Number(tx.amount || 0)
+          if (isFromAccount) {
+            if (currency === 'ARS') cambioARS = -amount
+            else cambioUSD = -amount
+          }
+          if (isToAccount) {
+            if (currency === 'ARS') cambioARS = amount
+            else cambioUSD = amount
+          }
+        } else if (tx.transaction_type === 'exchange') {
+          const fromCurrency = tx.from_currency || 'ARS'
+          const toCurrency = tx.to_currency || 'USD'
+          const fromAmount = Number(tx.from_amount || 0)
+          const toAmount = Number(tx.to_amount || 0)
+          if (isFromAccount) {
+            if (fromCurrency === 'ARS') cambioARS = -fromAmount
+            else cambioUSD = -fromAmount
+          }
+          if (isToAccount) {
+            if (toCurrency === 'ARS') cambioARS = toAmount
+            else cambioUSD = toAmount
+          }
+        }
+        
+        return {
+          idx: idx + 1,
           id: tx.transaction_id,
           type: tx.transaction_type,
           date: tx.transaction_date,
           from: tx.from_account_id,
           to: tx.to_account_id,
+          isFrom: isFromAccount,
+          isTo: isToAccount,
           amount: tx.amount,
           from_amount: tx.from_amount,
           to_amount: tx.to_amount,
           currency: tx.currency,
           from_currency: tx.from_currency,
-          to_currency: tx.to_currency
-        }))
-      })
+          to_currency: tx.to_currency,
+          cambioARS,
+          cambioUSD
+        }
+      }))
     }
     
     return { ars: balanceARS, usd: balanceUSD }
