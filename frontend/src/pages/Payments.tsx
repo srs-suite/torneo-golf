@@ -4023,11 +4023,15 @@ export default function Payments() {
                       setEditingExchangeId(null)
                       const data = await paymentsService.getCurrencyExchanges(clubIdNum, { from: from || undefined, to: to || undefined })
                       setCurrencyExchanges(data)
-                      // Recargar balance y cuentas
-                      const balance = await paymentsService.getCurrencyBalance(clubIdNum)
+                      // Recargar balance, cuentas y transacciones
+                      const [balance, accountsData, transactionsData] = await Promise.all([
+                        paymentsService.getCurrencyBalance(clubIdNum),
+                        accountsService.getAccounts(clubIdNum),
+                        accountsService.getTransactions(clubIdNum, { from: from || undefined, to: to || undefined })
+                      ])
                       setCurrencyBalance(balance)
-                      const accountsData = await accountsService.getAccounts(clubIdNum)
                       setAccounts(accountsData)
+                      setTransactions(transactionsData)
                     } catch (error: any) {
                       const errorMessage = error?.response?.data?.message || error?.message || 'Error al procesar conversión'
                       toast.error(errorMessage)
