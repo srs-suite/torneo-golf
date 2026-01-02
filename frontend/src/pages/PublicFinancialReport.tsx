@@ -165,9 +165,10 @@ export default function PublicFinancialReport() {
         }
       } else if (tx.transaction_type === 'exchange') {
         // Para exchanges, usar from_amount/to_amount y from_currency/to_currency
-        const fromCurrency = tx.from_currency || 'ARS'
+        // El backend envía from_amount como 'amount', así que usar amount si from_amount no está disponible
+        const fromCurrency = tx.from_currency || tx.currency || 'ARS'
         const toCurrency = tx.to_currency || 'USD'
-        const fromAmount = Number(tx.from_amount || 0)
+        const fromAmount = Number(tx.from_amount || tx.amount || 0)
         const toAmount = Number(tx.to_amount || 0)
         
         if (isFromAccount) {
@@ -215,9 +216,10 @@ export default function PublicFinancialReport() {
             else ingresosUSD += amount
           }
         } else if (tx.transaction_type === 'exchange') {
-          const fromCurrency = tx.from_currency || 'ARS'
+          // El backend envía from_amount como 'amount', así que usar amount si from_amount no está disponible
+          const fromCurrency = tx.from_currency || tx.currency || 'ARS'
           const toCurrency = tx.to_currency || 'USD'
-          const fromAmount = Number(tx.from_amount || 0)
+          const fromAmount = Number(tx.from_amount || tx.amount || 0)
           const toAmount = Number(tx.to_amount || 0)
           if (isFromAccount) {
             if (fromCurrency === 'ARS') egresosARS += fromAmount
@@ -288,9 +290,10 @@ export default function PublicFinancialReport() {
               else cambioUSD = amount
             }
           } else if (tx.transaction_type === 'exchange') {
-            const fromCurrency = tx.from_currency || 'ARS'
+            // El backend envía from_amount como 'amount', así que usar amount si from_amount no está disponible
+            const fromCurrency = tx.from_currency || tx.currency || 'ARS'
             const toCurrency = tx.to_currency || 'USD'
-            const fromAmount = Number(tx.from_amount || 0)
+            const fromAmount = Number(tx.from_amount || tx.amount || 0)
             const toAmount = Number(tx.to_amount || 0)
             if (isFromAccount) {
               if (fromCurrency === 'ARS') cambioARS = -fromAmount
@@ -363,9 +366,10 @@ export default function PublicFinancialReport() {
             else cambioUSD = amount
           }
         } else if (tx.transaction_type === 'exchange') {
-          const fromCurrency = tx.from_currency || 'ARS'
+          // El backend envía from_amount como 'amount', así que usar amount si from_amount no está disponible
+          const fromCurrency = tx.from_currency || tx.currency || 'ARS'
           const toCurrency = tx.to_currency || 'USD'
-          const fromAmount = Number(tx.from_amount || 0)
+          const fromAmount = Number(tx.from_amount || tx.amount || 0)
           const toAmount = Number(tx.to_amount || 0)
           if (isFromAccount) {
             if (fromCurrency === 'ARS') cambioARS = -fromAmount
