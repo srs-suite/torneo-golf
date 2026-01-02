@@ -2255,7 +2255,17 @@ export default function Payments() {
               <div>
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">Estado de Cuentas</h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {accounts.map(account => (
+                {accounts.map(account => {
+                  // Debug: log account balances
+                  if (account.account_name === 'Juan Castro Videla') {
+                    console.log('💳 Cuenta Juan Castro Videla:', {
+                      account_id: account.account_id,
+                      balance_ars: account.current_balance_ars,
+                      balance_usd: account.current_balance_usd,
+                      raw: account
+                    })
+                  }
+                  return (
                   <div key={account.account_id} className="bg-white rounded-lg border p-4 relative">
                     <h3 className="font-semibold text-gray-900 mb-2">{account.account_name}</h3>
                     <div className="space-y-1">
@@ -2276,7 +2286,7 @@ export default function Payments() {
                       <p className="text-xs text-gray-500 mt-2">{account.description}</p>
                     )}
                     {/* Botón eliminar - solo si saldo es 0 */}
-                    {permissions.canViewAccounting && parseFloat(account.current_balance_ars) === 0 && parseFloat(account.current_balance_usd) === 0 && (
+                    {permissions.canViewAccounting && parseFloat(account.current_balance_ars || 0) === 0 && parseFloat(account.current_balance_usd || 0) === 0 && (
                       <button
                         onClick={async () => {
                           if (confirm(`¿Eliminar la cuenta "${account.account_name}"?\n\nEsta acción no se puede deshacer.`)) {
