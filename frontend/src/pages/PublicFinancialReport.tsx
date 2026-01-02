@@ -54,6 +54,7 @@ export default function PublicFinancialReport() {
   const [expandedAccounts, setExpandedAccounts] = useState<Set<number>>(new Set());
   const [accountTransactions, setAccountTransactions] = useState<Record<number, any[]>>({});
   const [loadingTransactions, setLoadingTransactions] = useState<Record<number, boolean>>({});
+  const [allTransactions, setAllTransactions] = useState<any[]>([]);
   const [showPhotoModal, setShowPhotoModal] = useState(false);
   const [photoModalUrl, setPhotoModalUrl] = useState<string | null>(null);
   const [photoZoom, setPhotoZoom] = useState(1);
@@ -103,12 +104,97 @@ export default function PublicFinancialReport() {
     }
   };
 
+  // Función para calcular el saldo de una cuenta desde las transacciones
+  const calculateAccountBalance = (accountId: number) => {
+    if (!allTransactions || allTransactions.length === 0) {
+      return { ars: 0, usd: 0 }
+    }
+    
+    // Filtrar transacciones relacionadas con esta cuenta
+    const accountTransactions = allTransactions.filter((tx: any) => 
+      tx.from_account_id === accountId || tx.to_account_id === accountId
+    )
+    
+    // Ordenar por fecha ascendente
+    const sorted = [...accountTransactions].sort((a, b) => {
+      const dateA = new Date(a.transaction_date).getTime()
+      const dateB = new Date(b.transaction_date).getTime()
+      if (dateA !== dateB) return dateA - dateB
+      return (a.transaction_id || 0) - (b.transaction_id || 0)
+    })
+    
+    let balanceARS = 0
+    let balanceUSD = 0
+    
+    sorted.forEach((tx: any) => {
+      const currency = tx.currency || 'ARS'
+      const amount = Number(tx.amount || 0)
+      const isFromAccount = tx.from_account_id === accountId
+      const isToAccount = tx.to_account_id === accountId
+      
+      if (tx.transaction_type === 'income_tournament' || tx.transaction_type === 'income_other') {
+        if (isToAccount) {
+          if (currency === 'ARS') balanceARS += amount
+          else balanceUSD += amount
+        }
+      } else if (tx.transaction_type === 'expense') {
+        if (isFromAccount) {
+          if (currency === 'ARS') balanceARS -= amount
+          else balanceUSD -= amount
+        }
+      } else if (tx.transaction_type === 'transfer') {
+        if (isFromAccount) {
+          if (currency === 'ARS') balanceARS -= amount
+          else balanceUSD -= amount
+        }
+        if (isToAccount) {
+          if (currency === 'ARS') balanceARS += amount
+          else balanceUSD += amount
+        }
+      } else if (tx.transaction_type === 'exchange') {
+        const fromCurrency = tx.from_currency || currency
+        const toCurrency = tx.to_currency || currency
+        const fromAmount = Number(tx.from_amount || amount)
+        const toAmount = Number(tx.to_amount || amount)
+        
+        if (isFromAccount) {
+          if (fromCurrency === 'ARS') balanceARS -= fromAmount
+          else balanceUSD -= fromAmount
+        }
+        if (isToAccount) {
+          if (toCurrency === 'ARS') balanceARS += toAmount
+          else balanceUSD += toAmount
+        }
+      }
+    })
+    
+    return { ars: balanceARS, usd: balanceUSD }
+  }
+
   const loadFinancialData = async (authToken: string) => {
     try {
       const response = await axios.get(`/api/public/report/${clubId}/data?token=${authToken}`);
 
       if (response.data.success) {
         setFinancialData(response.data.data);
+        
+        // Cargar todas las transacciones de todas las cuentas de forma asíncrona para calcular saldos precisos
+        if (response.data.data.accounts && response.data.data.accounts.length > 0) {
+          // Cargar en paralelo sin bloquear
+          Promise.all(
+            response.data.data.accounts.map((account: any) =>
+              axios.get(`/api/public/report/${clubId}/account/${account.account_id}/transactions?token=${authToken}`)
+                .then(txResponse => txResponse.data.success && txResponse.data.data ? txResponse.data.data : [])
+                .catch(err => {
+                  console.error(`Error loading transactions for account ${account.account_id}:`, err)
+                  return []
+                })
+            )
+          ).then(allResults => {
+            const allTxs = allResults.flat()
+            setAllTransactions(allTxs)
+          })
+        }
       }
     } catch (err: any) {
       if (err.response?.status === 401) {
@@ -357,14 +443,31 @@ export default function PublicFinancialReport() {
               </div>
               <div className="flex items-center space-x-3 flex-shrink-0">
                 <div className="text-right">
-                  <p className={`text-xl font-bold ${(financialData.summary.balanceARS || financialData.summary.balance) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {formatCurrency(financialData.summary.balanceARS || financialData.summary.balance, 'ARS')}
-                  </p>
-                  {financialData.summary.balanceUSD !== undefined && financialData.summary.balanceUSD !== 0 && (
-                    <p className={`text-sm font-bold ${financialData.summary.balanceUSD >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {formatCurrency(financialData.summary.balanceUSD, 'USD')}
-                    </p>
-                  )}
+                  {(() => {
+                    // Calcular balance neto sumando los saldos calculados de todas las cuentas
+                    const totalBalanceARS = financialData.accounts?.reduce((sum: number, acc: any) => {
+                      const balance = calculateAccountBalance(acc.account_id)
+                      return sum + (balance.ars !== 0 ? balance.ars : Number(acc.current_balance_ars || 0))
+                    }, 0) || (financialData.summary.balanceARS || financialData.summary.balance)
+                    
+                    const totalBalanceUSD = financialData.accounts?.reduce((sum: number, acc: any) => {
+                      const balance = calculateAccountBalance(acc.account_id)
+                      return sum + (balance.usd !== 0 ? balance.usd : Number(acc.current_balance_usd || 0))
+                    }, 0) || (financialData.summary.balanceUSD || 0)
+                    
+                    return (
+                      <>
+                        <p className={`text-xl font-bold ${totalBalanceARS >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {formatCurrency(totalBalanceARS, 'ARS')}
+                        </p>
+                        {totalBalanceUSD !== 0 && (
+                          <p className={`text-sm font-bold ${totalBalanceUSD >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                            {formatCurrency(totalBalanceUSD, 'USD')}
+                          </p>
+                        )}
+                      </>
+                    )
+                  })()}
                 </div>
                 {expandedSections.accounts ? (
                   <ChevronUp className="w-5 h-5 text-gray-400 flex-shrink-0" />
@@ -396,14 +499,25 @@ export default function PublicFinancialReport() {
                         </div>
                         <div className="flex items-center space-x-4">
                           <div className="text-right">
-                            <p className="text-sm font-bold text-green-600">
-                              {formatCurrency(Number(account.current_balance_ars || 0), 'ARS')}
-                            </p>
-                            {Number(account.current_balance_usd || 0) > 0 && (
-                              <p className="text-sm font-bold text-blue-600 mt-1">
-                                {formatCurrency(Number(account.current_balance_usd || 0), 'USD')}
-                              </p>
-                            )}
+                            {(() => {
+                              // Calcular saldo desde transacciones (más preciso)
+                              const calculatedBalance = calculateAccountBalance(account.account_id)
+                              const balanceARS = calculatedBalance.ars !== 0 ? calculatedBalance.ars : Number(account.current_balance_ars || 0)
+                              const balanceUSD = calculatedBalance.usd !== 0 ? calculatedBalance.usd : Number(account.current_balance_usd || 0)
+                              
+                              return (
+                                <>
+                                  <p className="text-sm font-bold text-green-600">
+                                    {formatCurrency(balanceARS, 'ARS')}
+                                  </p>
+                                  {balanceUSD > 0 && (
+                                    <p className="text-sm font-bold text-blue-600 mt-1">
+                                      {formatCurrency(balanceUSD, 'USD')}
+                                    </p>
+                                  )}
+                                </>
+                              )
+                            })()}
                           </div>
                           {isAccountExpanded ? (
                             <ChevronUp className="w-5 h-5 text-gray-400" />
