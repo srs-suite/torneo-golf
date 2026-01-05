@@ -997,14 +997,16 @@ export default function Payments() {
   // Cargar transacciones cuando se selecciona la pestaña Cuentas
   useEffect(() => {
     const loadTransactions = async () => {
-      if (!clubIdNum || tab !== 'cuentas') return
+      // Cargar transacciones tanto para 'balance' como para 'cuentas' ya que ambas necesitan calcular saldos
+      if (!clubIdNum || (tab !== 'cuentas' && tab !== 'balance')) return
       try {
-        // Para la pestaña Cuentas, NO aplicar filtros de fecha
+        // Para las pestañas Balance y Cuentas, NO aplicar filtros de fecha
         // El historial de movimientos debe mostrar TODAS las transacciones para calcular balances correctamente
-        console.log('🔍 Cargando transacciones (sin filtros de fecha para pestaña Cuentas):', { 
+        console.log('🔍 Cargando transacciones (sin filtros de fecha para pestaña Balance/Cuentas):', { 
           clubId: clubIdNum,
+          tab,
           filtrosActivos: { from, to },
-          nota: 'Los filtros de fecha se ignoran en la pestaña Cuentas para mostrar todas las transacciones'
+          nota: 'Los filtros de fecha se ignoran en las pestañas Balance y Cuentas para mostrar todas las transacciones'
         })
         const transactionsData = await accountsService.getTransactions(clubIdNum, {})
         // Debug: verificar datos adicionales
