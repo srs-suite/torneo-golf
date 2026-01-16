@@ -565,6 +565,66 @@ async function handleClubAPI(req, res, pathParts) {
             }
         }
         
+        // QR Code generation for financial report
+        else if (resource === 'qr-code') {
+            if (method === 'GET') {
+                try {
+                    // Dynamic import for CommonJS module
+                    const QRCode = (await import('qrcode')).default;
+                    const url = new URL(req.url, `http://${req.headers.host}`);
+                    // Allow frontend to pass the URL via query parameter, or use env/default
+                    const frontendUrlParam = url.searchParams.get('url');
+                    let frontendUrl;
+                    
+                    if (frontendUrlParam) {
+                        // Use URL from query parameter (from frontend)
+                        frontendUrl = frontendUrlParam;
+                    } else if (process.env.FRONTEND_URL) {
+                        // Use FRONTEND_URL from env
+                        frontendUrl = process.env.FRONTEND_URL;
+                    } else {
+                        // Try to detect from referer header or use default
+                        const referer = req.headers.referer;
+                        if (referer) {
+                            try {
+                                const refererUrl = new URL(referer);
+                                frontendUrl = `${refererUrl.protocol}//${refererUrl.host}`;
+                            } catch (e) {
+                                frontendUrl = 'http://localhost:5173';
+                            }
+                        } else {
+                            frontendUrl = 'http://localhost:5173';
+                        }
+                    }
+                    
+                    const reportUrl = `${frontendUrl}/club/${clubId}/informe-contable`;
+                    console.log('📱 Generando QR code para:', reportUrl);
+                    
+                    const qrDataUrl = await QRCode.toDataURL(reportUrl, {
+                        width: 300,
+                        margin: 2,
+                        errorCorrectionLevel: 'M'
+                    });
+                    
+                    // Convertir data URL a buffer
+                    const base64Data = qrDataUrl.replace(/^data:image\/png;base64,/, '');
+                    const imageBuffer = Buffer.from(base64Data, 'base64');
+                    
+                    res.writeHead(200, {
+                        'Content-Type': 'image/png',
+                        'Cache-Control': 'public, max-age=3600',
+                        ...corsHeaders
+                    });
+                    res.end(imageBuffer);
+                } catch (error) {
+                    console.error('❌ Error generando QR code:', error);
+                    sendError(res, 'Error generando QR code', 500);
+                }
+            } else {
+                sendError(res, 'Método no permitido', 405);
+            }
+        }
+        
         // Accounting (expenses)
         else if (resource === 'accounting') {
             // pathParts después de filter: ['api', 'club', '1', 'accounting', 'transactions']

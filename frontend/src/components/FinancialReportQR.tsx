@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { QrCode, Copy, Check, Download } from 'lucide-react';
+import { QrCode, Copy, Check, Download, AlertCircle } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 
 export function FinancialReportQR() {
@@ -7,11 +7,27 @@ export function FinancialReportQR() {
   const [copied, setCopied] = useState(false);
   const [qrError, setQrError] = useState(false);
   
+  // Get the base URL - if localhost, try to use IP for mobile access
+  const getBaseUrl = () => {
+    const origin = window.location.origin;
+    // If using localhost, check if we can detect the local IP
+    if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
+      // In development, try to use the hostname from the URL if available
+      // Otherwise, keep localhost (user should access via IP manually)
+      return origin;
+    }
+    return origin;
+  };
+  
+  const baseUrl = getBaseUrl();
+  const isLocalhost = baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1');
+  
   // Generate the report URL
-  const reportUrl = `${window.location.origin}/club/${clubId}/informe-contable`;
+  const reportUrl = `${baseUrl}/club/${clubId}/informe-contable`;
   
   // Use backend endpoint to generate QR code (avoids CORS and external service issues)
-  const qrCodeUrl = `/api/club/${clubId}/qr-code`;
+  // Pass the frontend URL as query parameter so backend knows the correct URL
+  const qrCodeUrl = `/api/club/${clubId}/qr-code?url=${encodeURIComponent(baseUrl)}`;
   
   // Fallback services if backend fails
   const fallbackServices = [
@@ -99,6 +115,23 @@ export function FinancialReportQR() {
             )}
           </div>
         </div>
+        
+        {/* Localhost Warning */}
+        {isLocalhost && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+            <div className="flex items-start space-x-2">
+              <AlertCircle className="w-5 h-5 text-yellow-600 mt-0.5 flex-shrink-0" />
+              <div>
+                <h4 className="font-semibold text-yellow-900 mb-1">⚠️ Acceso desde móvil</h4>
+                <p className="text-sm text-yellow-800">
+                  Estás usando <code className="bg-yellow-100 px-1 rounded">localhost</code>. 
+                  Para que el QR funcione desde tu teléfono, accede a esta página usando la IP local de tu computadora 
+                  (ej: <code className="bg-yellow-100 px-1 rounded">http://192.168.1.24:5173</code>) en lugar de localhost.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
         
         {/* Instructions */}
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
