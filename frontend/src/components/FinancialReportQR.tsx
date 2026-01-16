@@ -1,16 +1,26 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { QrCode, Copy, Check, Download } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 
 export function FinancialReportQR() {
   const { clubId } = useParams();
   const [copied, setCopied] = useState(false);
+  const [qrError, setQrError] = useState(false);
   
   // Generate the report URL
   const reportUrl = `${window.location.origin}/club/${clubId}/informe-contable`;
   
-  // Generate QR code URL using public API
-  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(reportUrl)}`;
+  // Use backend endpoint to generate QR code (avoids CORS and external service issues)
+  const qrCodeUrl = `/api/club/${clubId}/qr-code`;
+  
+  // Fallback services if backend fails
+  const fallbackServices = [
+    `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(reportUrl)}`,
+    `https://chart.googleapis.com/chart?chs=300x300&cht=qr&chl=${encodeURIComponent(reportUrl)}`,
+  ];
+  
+  const [currentQrService, setCurrentQrService] = useState(-1); // -1 means using backend
+  const [useFallback, setUseFallback] = useState(false);
   
   const handleCopyLink = () => {
     navigator.clipboard.writeText(reportUrl);
@@ -19,13 +29,34 @@ export function FinancialReportQR() {
   };
   
   const handleDownloadQR = () => {
-    // Create a temporary link to download the QR code
     const link = document.createElement('a');
-    link.href = qrCodeUrl;
+    link.href = getQrUrl();
     link.download = `informe-contable-qr-club-${clubId}.png`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+  
+  const handleImageError = () => {
+    if (!useFallback) {
+      // Backend failed, try fallback services
+      setUseFallback(true);
+      setCurrentQrService(0);
+    } else if (currentQrService < fallbackServices.length - 1) {
+      // Try next fallback service
+      setCurrentQrService(currentQrService + 1);
+    } else {
+      // All services failed
+      setQrError(true);
+    }
+  };
+  
+  // Get the current QR URL
+  const getQrUrl = () => {
+    if (useFallback && currentQrService >= 0) {
+      return fallbackServices[currentQrService];
+    }
+    return qrCodeUrl;
   };
   
   return (
@@ -48,11 +79,24 @@ export function FinancialReportQR() {
         {/* QR Code Image */}
         <div className="flex justify-center py-4">
           <div className="bg-white p-4 rounded-lg border-2 border-gray-200">
-            <img 
-              src={qrCodeUrl} 
-              alt="QR Code para Informe Contable"
-              className="w-64 h-64"
-            />
+            {qrError ? (
+              <div className="w-64 h-64 flex flex-col items-center justify-center bg-gray-100 rounded border-2 border-dashed border-gray-300">
+                <QrCode className="w-16 h-16 text-gray-400 mb-2" />
+                <p className="text-sm text-gray-500 text-center px-4">
+                  No se pudo cargar el QR code.
+                  <br />
+                  Usa el enlace directo para compartir.
+                </p>
+              </div>
+            ) : (
+              <img 
+                src={getQrUrl()} 
+                alt="QR Code para Informe Contable"
+                className="w-64 h-64"
+                onError={handleImageError}
+                onLoad={() => setQrError(false)}
+              />
+            )}
           </div>
         </div>
         

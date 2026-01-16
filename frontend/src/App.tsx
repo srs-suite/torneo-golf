@@ -1,4 +1,4 @@
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, Navigate, useParams } from 'react-router-dom'
 import { Layout } from '@/components/Layout'
 import { DashboardSimple as Dashboard } from '@/pages/DashboardSimple'
 import { ClubsManagement } from '@/pages/ClubsManagement'
@@ -23,7 +23,18 @@ import TeesManagement from '@/pages/TeesManagement'
 import TournamentResults from '@/pages/TournamentResults'
 import Rankings from '@/pages/Rankings'
 import Payments from '@/pages/Payments'
+import PublicFinancialReport from '@/pages/PublicFinancialReport'
 
+// Componente para redirigir /club/:clubId a /club/:clubId/admin
+function ClubRedirect() {
+  const { clubId } = useParams<{ clubId: string }>()
+  console.log('ClubRedirect - clubId recibido:', clubId)
+  if (!clubId || clubId === ':clubId') {
+    console.error('ClubRedirect - clubId inválido, redirigiendo al login')
+    return <Navigate to="/login" replace />
+  }
+  return <Navigate to={`/club/${clubId}/admin`} replace />
+}
 
 function App() {
   return (
@@ -45,6 +56,7 @@ function App() {
       <Route path="/login" element={<Login />} />
       
       {/* Administración individual de clubes */}
+      <Route path="/club/:clubId" element={<ClubRedirect />} />
       <Route path="/club/:clubId/admin" element={<ClubAdmin />} />
       
       {/* Gestión de hoyos */}
@@ -85,6 +97,11 @@ function App() {
       {/* Compatibilidad: ruta anterior de cobros */}
       <Route path="/club/:clubId/payments" element={<Payments />} />
       
+      {/* Informe contable público para socios */}
+      <Route path="/club/:clubId/informe-contable" element={<PublicFinancialReport />} />
+      
+      {/* Ruta catch-all: redirigir al login si no hay ruta coincidente */}
+      <Route path="*" element={<Navigate to="/login" replace />} />
 
     </Routes>
   )
