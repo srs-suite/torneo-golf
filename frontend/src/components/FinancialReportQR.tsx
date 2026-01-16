@@ -6,6 +6,8 @@ export function FinancialReportQR() {
   const { clubId } = useParams();
   const [copied, setCopied] = useState(false);
   const [qrError, setQrError] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState<string>(''); // Store QR as data URL
+  const [loading, setLoading] = useState(true);
   
   // Get the base URL - if localhost, try to use IP for mobile access
   const getBaseUrl = () => {
@@ -37,6 +39,40 @@ export function FinancialReportQR() {
   
   const [currentQrService, setCurrentQrService] = useState(-1); // -1 means using backend
   const [useFallback, setUseFallback] = useState(false);
+  
+  // Try to fetch QR from backend first
+  useEffect(() => {
+    const fetchQrFromBackend = async () => {
+      if (!clubId) return;
+      
+      setLoading(true);
+      setQrError(false);
+      
+      try {
+        const response = await fetch(qrCodeUrl);
+        if (response.ok && response.headers.get('content-type')?.includes('image')) {
+          // Convert blob to data URL
+          const blob = await response.blob();
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            setQrDataUrl(reader.result as string);
+            setLoading(false);
+          };
+          reader.readAsDataURL(blob);
+          return;
+        } else {
+          console.error('❌ Backend QR endpoint failed:', response.status, response.statusText);
+          throw new Error(`Backend returned ${response.status}`);
+        }
+      } catch (error) {
+        console.error('❌ Error fetching QR from backend:', error);
+        // Fallback will be handled by img onError
+        setLoading(false);
+      }
+    };
+    
+    fetchQrFromBackend();
+  }, [clubId, qrCodeUrl]);
   
   const handleCopyLink = () => {
     navigator.clipboard.writeText(reportUrl);
@@ -104,6 +140,16 @@ export function FinancialReportQR() {
                   Usa el enlace directo para compartir.
                 </p>
               </div>
+            ) : loading ? (
+              <div className="w-64 h-64 flex items-center justify-center bg-gray-100 rounded">
+                <p className="text-gray-500">Cargando QR...</p>
+              </div>
+            ) : qrDataUrl ? (
+              <img 
+                src={qrDataUrl} 
+                alt="QR Code para Informe Contable"
+                className="w-64 h-64"
+              />
             ) : (
               <img 
                 src={getQrUrl()} 
