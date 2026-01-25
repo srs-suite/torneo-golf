@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Calendar, DollarSign, Users, Trophy, Settings, Award, Camera, ChevronDown, LogOut, Filter, X, User, Pencil, Download, MessageCircle } from 'lucide-react'
 import { paymentsService } from '@/services/paymentsService'
@@ -270,14 +270,14 @@ export default function Payments() {
       const currency = (income as any).currency || 'ARS'
       const amount = Number(income.amount || 0)
       
-      // Determinar "En posesión de": primero custodian, luego cuenta, luego socio
-      let enPosesionDe = '-'
+      // Determinar "Recibido por": primero custodian, luego cuenta, luego socio
+      let recibidoPor = '-'
       if ((income as any).custodian && (income as any).custodian.trim()) {
-        enPosesionDe = (income as any).custodian
+        recibidoPor = (income as any).custodian
       } else if ((income as any).account_name && (income as any).account_name.trim()) {
-        enPosesionDe = (income as any).account_name
+        recibidoPor = (income as any).account_name
       } else if ((income as any).member_name && (income as any).member_name.trim()) {
-        enPosesionDe = `Socio: ${(income as any).member_name}`
+        recibidoPor = `Socio: ${(income as any).member_name}`
       }
       
       return {
@@ -287,7 +287,7 @@ export default function Payments() {
         'Tipo de Pago': income.payment_type || '-',
         'Monto ARS': currency === 'ARS' ? amount : 0,
         'Monto USD': currency === 'USD' ? amount : 0,
-        'En posesión de': enPosesionDe
+        'Recibido por': recibidoPor
       }
     })
 
@@ -303,7 +303,7 @@ export default function Payments() {
       'Monto USD': filteredOtherIncomes
         .filter(i => (i as any).currency === 'USD')
         .reduce((sum, i) => sum + Number(i.amount || 0), 0),
-      'En posesión de': ''
+      'Recibido por': ''
     }
     dataToExport.push(totals as any)
 
@@ -319,7 +319,7 @@ export default function Payments() {
       { wch: 15 },  // Tipo de Pago
       { wch: 15 },  // Monto ARS
       { wch: 15 },  // Monto USD
-      { wch: 20 }   // En posesión de
+      { wch: 20 }   // Recibido por
     ]
 
     // Formatear la última fila (totales) en negrita
@@ -803,7 +803,7 @@ export default function Payments() {
     return descriptions.sort()
   }, [otherIncomes])
 
-  // Obtener lista única de "En posesión de" (custodian, cuenta o socio)
+  // Obtener lista única de "Recibido por" (custodian, cuenta o socio)
   const uniqueCustodians = useMemo(() => {
     const custodiansList: string[] = []
     otherIncomes.forEach(income => {
@@ -923,7 +923,7 @@ export default function Payments() {
       const matchesCurrency = !incomeFilters.currency || 
         (income as any).currency === incomeFilters.currency
       
-      // Filtrar por "En posesión de": custodian, cuenta o socio
+      // Filtrar por "Recibido por": custodian, cuenta o socio
       const matchesCustodian = !incomeFilters.custodian || (() => {
         const filterLower = incomeFilters.custodian.toLowerCase()
         const custodian = ((income as any).custodian || '').toLowerCase()
@@ -1104,6 +1104,33 @@ export default function Payments() {
 
   // Suprimir warnings TS6133 de variables no usadas temporalmente
   if (false) { console.log(custodians, showCustodianDropdown, totalAllIncomes, totalExpenses) }
+
+  // Verificar si el usuario tiene al menos un permiso de contabilidad
+  const hasAnyAccountingPermission = 
+    permissions.canViewBalance || 
+    permissions.canViewFinancialTotals || 
+    permissions.canViewTournamentIncomes || 
+    permissions.canViewOtherIncomes || 
+    permissions.canViewExpenses || 
+    permissions.canViewCurrencyExchanges || 
+    permissions.canViewAccounting
+
+  if (!hasAnyAccountingPermission) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">Acceso Denegado</h2>
+          <p className="text-gray-600 mb-4">No tienes permisos para acceder a la sección de contabilidad.</p>
+          <button
+            onClick={() => navigate(`/club/${clubId}/admin`)}
+            className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800"
+          >
+            Volver al Panel
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1594,7 +1621,7 @@ export default function Payments() {
                   <thead className="bg-gray-50">
                     <tr>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Torneo</th>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">En posesión de</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Recibido por</th>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Cobrado</th>
                       <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Acciones</th>
                     </tr>
@@ -1826,7 +1853,7 @@ export default function Payments() {
                 </select>
               </div>
               <div className="relative filter-custodian-dropdown">
-                <label className="block text-sm font-medium text-gray-700 mb-1">En posesión de</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Recibido por</label>
                 <div className="relative">
                   <input
                     type="text"
@@ -1862,7 +1889,7 @@ export default function Payments() {
                   return (
                     <div className="absolute z-50 mt-1 w-full bg-white border border-blue-300 rounded-lg shadow-lg max-h-48 overflow-y-auto">
                       <div className="px-3 py-2 bg-blue-50 border-b">
-                        <p className="text-xs text-blue-700 font-medium">💡 En posesión de:</p>
+                        <p className="text-xs text-blue-700 font-medium">💡 Recibido por:</p>
                       </div>
                       {filteredCustodians.map((custodian, idx) => (
                         <button
@@ -1911,7 +1938,7 @@ export default function Payments() {
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Monto</th>
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Tipo Pago</th>
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Descripción</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">En posesión de</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Recibido por</th>
                     <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Acciones</th>
                   </tr>
                 </thead>
