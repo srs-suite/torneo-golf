@@ -1664,9 +1664,22 @@ async function deleteExpense(clubId, expenseId) {
 
 /**
  * Update an expense
+ * Also updates the linked account_transaction and account balance so Cuentas/Historial stays in sync.
  */
 async function updateExpense(clubId, expenseId, expenseData) {
     try {
+        // Obtener el gasto anterior para sincronizar transacción y saldo
+        const getOldQuery = `SELECT amount, currency, account_id FROM club_expenses WHERE club_id = ? AND expense_id = ?`;
+        const { rows: oldRows } = await executeQuery(getOldQuery, [clubId, expenseId]);
+        const oldExpense = oldRows.length > 0 ? oldRows[0] : null;
+        const oldAmount = oldExpense ? Number(oldExpense.amount) : 0;
+        const oldCurrency = (oldExpense && oldExpense.currency) || 'ARS';
+        const oldAccountId = oldExpense && oldExpense.account_id ? oldExpense.account_id : null;
+
+        const newAmount = Number(expenseData.amount) || 0;
+        const newCurrency = expenseData.currency || 'ARS';
+        const newAccountId = expenseData.account_id ? expenseData.account_id : null;
+
         // Si hay una foto en base64, guardarla como archivo
         let receiptPhotoPath = expenseData.receipt_photo_path;
         if (expenseData.receipt_photo_base64) {
@@ -1683,7 +1696,7 @@ async function updateExpense(clubId, expenseId, expenseData) {
             }
             receiptPhotoPath = await saveExpensePhoto(clubId, expenseData.receipt_photo_base64, expenseId);
         }
-        
+
         // Actualizar el gasto
         const query = `
             UPDATE club_expenses 
@@ -1698,7 +1711,7 @@ async function updateExpense(clubId, expenseId, expenseData) {
                 receipt_photo_path = ?
             WHERE club_id = ? AND expense_id = ?
         `;
-        
+
         const params = [
             expenseData.expense_date,
             expenseData.amount,
@@ -1711,10 +1724,54 @@ async function updateExpense(clubId, expenseId, expenseData) {
             clubId,
             expenseId
         ];
-        
-        const { rows } = await executeQuery(query, params);
-        
-        return { success: true, affectedRows: rows.affectedRows };
+
+        await executeQuery(query, params);
+
+        // Sincronizar account_transactions y saldos con el nuevo monto/cuenta
+        const txQuery = `SELECT transaction_id, from_account_id, amount, currency FROM account_transactions WHERE club_id = ? AND reference_type = 'expense' AND reference_id = ?`;
+        const { rows: txRows } = await executeQuery(txQuery, [clubId, expenseId]);
+        const existingTx = txRows.length > 0 ? txRows[0] : null;
+
+        if (oldAccountId && oldAmount > 0) {
+            // Revertir el monto anterior en la cuenta (sumar de vuelta)
+            await updateAccountBalance(oldAccountId, oldAmount, oldCurrency, 'add');
+        }
+
+        if (existingTx) {
+            if (newAccountId && newAmount > 0) {
+                // Actualizar la transacción con el nuevo monto y cuenta
+                await executeQuery(
+                    `UPDATE account_transactions SET transaction_date = ?, from_account_id = ?, amount = ?, currency = ?, description = ? WHERE transaction_id = ?`,
+                    [
+                        expenseData.expense_date,
+                        newAccountId,
+                        newAmount,
+                        newCurrency,
+                        expenseData.detail || 'Gasto registrado',
+                        existingTx.transaction_id
+                    ]
+                );
+                await updateAccountBalance(newAccountId, newAmount, newCurrency, 'subtract');
+            } else {
+                // El gasto ya no tiene cuenta: eliminar la transacción (el saldo ya se revirtió arriba)
+                await executeQuery(`DELETE FROM account_transactions WHERE transaction_id = ?`, [existingTx.transaction_id]);
+            }
+        } else if (newAccountId && newAmount > 0) {
+            // No había transacción pero ahora tiene cuenta: crear la transacción
+            await createTransaction(clubId, {
+                transaction_type: 'expense',
+                transaction_date: expenseData.expense_date,
+                from_account_id: newAccountId,
+                to_account_id: null,
+                amount: newAmount,
+                currency: newCurrency,
+                description: expenseData.detail || 'Gasto registrado',
+                reference_type: 'expense',
+                reference_id: expenseId
+            });
+        }
+
+        return { success: true };
     } catch (error) {
         console.error('❌ Error updating expense:', error);
         throw error;

@@ -1336,11 +1336,20 @@ const server = http.createServer(async (req, res) => {
         }
     }
 
-    // Redirect root to frontend
+    // Redirect root to frontend (only in development)
+    // In production, Nginx serves the frontend directly, so we don't redirect
     if (pathname === '/' || pathname === '/index.html') {
-        res.writeHead(302, { Location: 'http://localhost:5173' });
-        res.end();
-        return;
+        if (process.env.NODE_ENV === 'production') {
+            // In production, Nginx handles frontend, so return 404
+            res.writeHead(404, { 'Content-Type': 'text/plain' });
+            res.end('Not Found - Frontend should be served by Nginx');
+            return;
+        } else {
+            // In development, redirect to Vite dev server
+            res.writeHead(302, { Location: 'http://localhost:5173' });
+            res.end();
+            return;
+        }
     }
 
     // 404 for everything else
