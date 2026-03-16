@@ -1,24 +1,47 @@
 # 🏌️ TeeTracker Pro - Sistema de Gestión de Torneos
 
+## 📁 Estructura del proyecto
+
+```
+Torneogolf/
+├── backend/          # API Node.js
+│   ├── src/         # Servidor y lógica
+│   ├── database/    # Esquemas y migraciones SQL
+│   └── migrations/   # Migraciones adicionales
+├── frontend/        # App React (src/, public/, dist al hacer build)
+├── docs/            # Documentación (flujos, arquitectura)
+├── config/          # Configuración (ej. nginx-production.conf)
+├── ecosystem.config.cjs   # PM2
+├── package.json     # npm run build, start, etc.
+├── env.example      # Plantilla de variables de entorno
+└── README.md
+```
+
 ## 📋 Requisitos
 
 - Node.js v18+
 - MySQL v8.0+
 - PM2 (`npm install -g pm2`)
 
-## ⚙️ Configuración - Archivo .env
+## ⚙️ Configuración - Archivos .env
 
-Crear archivo `.env` en la **raíz del proyecto**:
+En la **raíz del proyecto**:
+
+- **`.env`** – Configuración por defecto (producción o la que uses al desplegar).
+- **`.env.development`** – Solo para desarrollo local. Si existe y no estás en producción, el backend usa este archivo y se conecta a una **base local** (no a la de producción).
 
 ```
-torneo-golf/
-├── .env          ← AQUÍ
+Torneogolf/
+├── .env                  ← Producción / por defecto
+├── .env.development      ← Opcional: dev con BD local (copia env.development.example)
 ├── backend/
 ├── frontend/
 └── ecosystem.config.cjs
 ```
 
-**Contenido del .env:**
+**Para desarrollo con MySQL local:** copiá `env.development.example` a `.env.development` y poné tu usuario/contraseña de MySQL local. El backend usará esa base cuando ejecutes `npm run dev` (NODE_ENV no es production).
+
+**Contenido típico del .env (producción o por defecto):**
 
 ```bash
 # Base de Datos

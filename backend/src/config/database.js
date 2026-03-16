@@ -9,7 +9,7 @@ import dotenv from 'dotenv';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load environment variables from root directory
+// Cargar .env desde la raíz del proyecto (igual que antes)
 dotenv.config({ path: path.join(__dirname, '../../../.env') });
 
 // Database configuration
@@ -22,10 +22,7 @@ const DB_CONFIG = {
     charset: 'utf8mb4',
     waitForConnections: true,
     connectionLimit: 10,
-    queueLimit: 0,
-    acquireTimeout: 60000,
-    timeout: 60000,
-    reconnect: true
+    queueLimit: 0
 };
 
 // Create connection pool

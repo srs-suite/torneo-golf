@@ -26,7 +26,8 @@ import {
   Award,
   Camera,
   QrCode,
-  DollarSign
+  DollarSign,
+  Link2
 
 } from 'lucide-react'
 import { useMembers, useClearClubMembers, useUpdateMember, useDeleteMember, useUpdateMemberStatus } from '@/hooks/useMembers'
@@ -45,6 +46,7 @@ import { UserManagement } from '@/components/UserManagement'
 import { FinancialReportQR } from '@/components/FinancialReportQR'
 import { Member } from '@/types/member'
 import { Tournament } from '@/types/tournament'
+import { toast } from 'react-hot-toast'
 
 interface ClubData {
   course_id: number
@@ -896,7 +898,7 @@ export function ClubAdmin() {
                               </div>
                               {tournament.start_time && (
                                 <div className="text-sm text-gray-500">
-                                  {tournament.start_time}
+                                  {String(tournament.start_time).match(/^\d{1,2}:\d{2}/)?.[0] ?? tournament.start_time}
                                 </div>
                               )}
                             </td>
@@ -920,6 +922,21 @@ export function ClubAdmin() {
                               <div className="flex items-center justify-end space-x-1">
                                 {/* Grupo principal: gestión */}
                                 <div className="flex items-center space-x-1 mr-2">
+                                  {(tournament as any)?.public_inscription === 1 || (tournament as any)?.public_inscription === true ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const url = `${window.location.origin}/club/${clubId}/torneo/${tournament.tournament_id}/inscribirse`
+                                        navigator.clipboard.writeText(url).then(() => {
+                                          toast.success('Enlace de inscripción copiado')
+                                        }).catch(() => toast.error('No se pudo copiar. Enlace: ' + url))
+                                      }}
+                                      className="p-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded transition-colors"
+                                      title="Copiar enlace de inscripción para jugadores"
+                                    >
+                                      <Link2 className="w-4 h-4" />
+                                    </button>
+                                  ) : null}
                                   <button 
                                     onClick={() => handleManageParticipants(tournament)}
                                     className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"

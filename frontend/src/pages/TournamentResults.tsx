@@ -281,10 +281,10 @@ export default function TournamentResults() {
       icon: Crown,
       filter: (s: any) => s.gender === 'F'
     } as Category] : []),
-    // Bandas de HCP: -5–7.9, 8–15.8, 15.9–54 (excluir damas si se separan)
+    // Bandas de HCP: 5–7.9, 8–15.8, 15.9–54 (excluir damas si se separan)
     {
       id: 'band_1',
-      name: 'HCP -5 a 7.9',
+      name: 'HCP 5 a 7.9',
       description: 'Clasificación por neto dentro de banda',
       color: 'bg-blue-50 border-blue-200',
       icon: Trophy,
@@ -292,7 +292,7 @@ export default function TournamentResults() {
         if (separateLadies && s.gender === 'F') return false
         const hl = s.handicap_local, hi = s.handicap_index
         const val = hl !== null && hl !== undefined && hl !== '' ? parseFloat(hl) : (hi !== null && hi !== undefined && hi !== '' ? parseFloat(hi) : NaN)
-        return !isNaN(val) && val >= -5 && val <= 7.9
+        return !isNaN(val) && val >= 5 && val <= 7.9
       }
     },
     {
@@ -325,7 +325,7 @@ export default function TournamentResults() {
     ...(separateLadies && ladiesByHcp ? [
       {
         id: 'damas_band_1',
-        name: 'Damas HCP -5 a 7.9',
+        name: 'Damas HCP 5 a 7.9',
         description: 'Femenino por neto',
         color: 'bg-pink-50 border-pink-200',
         icon: Trophy,
@@ -333,7 +333,7 @@ export default function TournamentResults() {
           if (s.gender !== 'F') return false
           const hl = s.handicap_local, hi = s.handicap_index
           const val = hl !== null && hl !== undefined && hl !== '' ? parseFloat(hl) : (hi !== null && hi !== undefined && hi !== '' ? parseFloat(hi) : NaN)
-          return !isNaN(val) && val >= -5 && val <= 7.9
+          return !isNaN(val) && val >= 5 && val <= 7.9
         }
       } as Category,
       {
@@ -622,7 +622,7 @@ export default function TournamentResults() {
         {/* Nota al pie */}
         <div className="mt-8 text-center text-sm text-gray-500 print:mt-12">
           <p>Resultados ordenados por score neto (Total Gross - HCP)</p>
-          <p className="mt-1">Generado el {new Date().toLocaleDateString('es-ES')} a las {new Date().toLocaleTimeString('es-ES')}</p>
+          <p className="mt-1">Generado el {new Date().toLocaleDateString('es-ES')} a las {new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false })}</p>
         </div>
       </div>
 

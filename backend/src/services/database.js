@@ -1570,12 +1570,20 @@ async function addExpense(clubId, expenseData) {
             
             const account = accountRows[0];
             const currency = expenseData.currency || 'ARS';
-            const availableAmount = currency === 'USD' ? account.current_balance_usd : account.current_balance_ars;
-            const expenseAmount = Number(expenseData.amount);
-            
+            const availableAmount = Number(currency === 'USD' ? account.current_balance_usd : account.current_balance_ars) || 0;
+            const expenseAmount = Number(expenseData.amount) || 0;
+            if (isNaN(expenseAmount) || expenseAmount <= 0) {
+                throw new Error('El monto del gasto debe ser un número mayor a 0');
+            }
             if (availableAmount < expenseAmount) {
                 throw new Error(`Fondos insuficientes en la cuenta. Disponible: ${availableAmount.toFixed(2)} ${currency}, Requerido: ${expenseAmount.toFixed(2)} ${currency}`);
             }
+        }
+        
+        // Normalizar monto a número para INSERT y transacción
+        const amountNum = Number(expenseData.amount);
+        if (isNaN(amountNum) || amountNum <= 0) {
+            throw new Error('El monto del gasto debe ser un número mayor a 0');
         }
         
         // Primero insertamos el gasto para obtener el ID
@@ -1590,7 +1598,7 @@ async function addExpense(clubId, expenseData) {
         const params = [
             clubId,
             expenseData.expense_date,
-            expenseData.amount,
+            amountNum,
             expenseData.currency || 'ARS',
             expenseData.receipt_number || null,
             expenseData.detail || null,
@@ -1617,7 +1625,7 @@ async function addExpense(clubId, expenseData) {
                 transaction_date: expenseData.expense_date,
                 from_account_id: expenseData.account_id,
                 to_account_id: null,
-                amount: expenseData.amount,
+                amount: amountNum,
                 currency: expenseData.currency || 'ARS',
                 description: expenseData.detail || 'Gasto registrado',
                 reference_type: 'expense',
@@ -2685,54 +2693,49 @@ async function getMemberByPhone(phone, courseId) {
 }
 
 /**
- * Verify member phone for public financial report
+ * Verify member phone for public financial report / inscription
+ * Acepta varios formatos: solo dígitos, con/sin espacios, con/sin código de país (ej. 54 9 11...)
  */
 async function verifyMemberPhone(clubId, phone) {
     console.log('🔍 verifyMemberPhone - clubId:', clubId, 'phone:', phone);
     
-    // Normalize phone (remove spaces, dashes, etc.)
-    const normalizedPhone = phone.replace(/[\s\-\(\)]/g, '');
-    console.log('📞 Normalized phone:', normalizedPhone);
+    const digitsOnly = (str) => (str || '').replace(/\D/g, '');
+    const normalizedInput = digitsOnly(phone);
+    if (!normalizedInput.length) {
+        return { success: false, message: 'Ingresá un número de teléfono válido' };
+    }
+    console.log('📞 Dígitos ingresados:', normalizedInput);
     
     const query = `
-        SELECT 
-            member_id,
-            first_name,
-            last_name,
-            phone,
-            membership_status
+        SELECT member_id, first_name, last_name, phone, membership_status
         FROM members 
-        WHERE course_id = ? 
-        AND (
-            REPLACE(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '(', ''), ')', '') = ?
-        )
-        AND membership_status = 'active'
+        WHERE course_id = ? AND membership_status = 'active'
     `;
+    const { rows } = await executeQuery(query, [clubId]);
     
-    console.log('📋 Executing query with params:', [clubId, normalizedPhone]);
-    const { rows } = await executeQuery(query, [clubId, normalizedPhone]);
-    console.log('📊 Query returned', rows.length, 'rows');
-    
-    if (rows.length > 0) {
-        const member = rows[0];
-        console.log('✅ Member found:', member.first_name, member.last_name);
-        
-        // Generate a simple token (hash of phone + member_id + secret)
-        const secret = 'torneogolf2024secret';
-        const tokenData = `${member.phone}-${member.member_id}-${secret}`;
-        const token = crypto.createHash('sha256').update(tokenData).digest('hex');
-        
-        return {
-            success: true,
-            token,
-            memberName: `${member.first_name} ${member.last_name}`
-        };
+    for (const member of rows) {
+        const dbDigits = digitsOnly(member.phone);
+        if (!dbDigits.length) continue;
+        const match = dbDigits === normalizedInput
+            || dbDigits.endsWith(normalizedInput)
+            || normalizedInput.endsWith(dbDigits);
+        if (match) {
+            console.log('✅ Member found:', member.first_name, member.last_name);
+            const secret = 'torneogolf2024secret';
+            const tokenData = `${member.phone}-${member.member_id}-${secret}`;
+            const token = crypto.createHash('sha256').update(tokenData).digest('hex');
+            return {
+                success: true,
+                token,
+                memberName: `${member.first_name} ${member.last_name}`
+            };
+        }
     }
     
     console.log('❌ No member found with that phone');
     return {
         success: false,
-        message: 'Teléfono no encontrado o socio inactivo'
+        message: 'Teléfono no encontrado o socio inactivo. Revisá que el número esté cargado en el club y que seas socio activo.'
     };
 }
 
@@ -2761,6 +2764,7 @@ async function verifyReportToken(clubId, token) {
         if (expectedToken === token) {
             return {
                 success: true,
+                member_id: member.member_id,
                 memberName: `${member.first_name} ${member.last_name}`
             };
         }
@@ -2770,6 +2774,198 @@ async function verifyReportToken(clubId, token) {
         success: false,
         message: 'Token inválido o expirado'
     };
+}
+
+/**
+ * Inscripción pública: datos del torneo para mostrar (nombre, fecha).
+ * Si el torneo tiene fecha límite de inscripción (registration_deadline), la web queda inhabilitada después de esa fecha/hora.
+ */
+async function getTournamentForPublicInscription(clubId, tournamentId) {
+    const baseWhere = `WHERE t.course_id = ? AND t.tournament_id = ? AND t.status IN ('draft', 'open')
+          AND t.public_inscription = 1
+          AND (t.registration_deadline IS NULL OR NOW() <= t.registration_deadline)`;
+    const query = `
+        SELECT t.tournament_id, t.tournament_name, t.tournament_date, t.registration_deadline, t.max_participants,
+               COALESCE(t.public_inscription_allow_groups, 1) AS public_inscription_allow_groups,
+               t.flyer_url
+        FROM tournaments t
+        ${baseWhere}`;
+    const { rows } = await executeQuery(query, [clubId, tournamentId]);
+    const row = rows[0] || null;
+    if (row) {
+        row.public_inscription_allow_groups = row.public_inscription_allow_groups ?? 1;
+        row.flyer_url = row.flyer_url ?? null;
+    }
+    return row;
+}
+
+/**
+ * Mismo torneo para inscripción pública pero sin filtrar por fecha límite (para distinguir "no encontrado" de "inscripciones cerradas").
+ */
+async function getTournamentForPublicInscriptionUnfiltered(clubId, tournamentId) {
+    const baseWhere = `WHERE t.course_id = ? AND t.tournament_id = ? AND t.status IN ('draft', 'open') AND t.public_inscription = 1`;
+    const query = `
+        SELECT t.tournament_id, t.tournament_name, t.tournament_date, t.registration_deadline, t.max_participants,
+               COALESCE(t.public_inscription_allow_groups, 1) AS public_inscription_allow_groups,
+               t.flyer_url
+        FROM tournaments t
+        ${baseWhere}`;
+    const { rows } = await executeQuery(query, [clubId, tournamentId]);
+    const row = rows[0] || null;
+    if (row) {
+        row.public_inscription_allow_groups = row.public_inscription_allow_groups ?? 1;
+        row.flyer_url = row.flyer_url ?? null;
+    }
+    return row;
+}
+
+/**
+ * Inscripción pública: grupos del torneo con menos de 4 jugadores (para unirse)
+ * Cuenta todos los participantes (socios y externos) por grupo.
+ */
+async function getTournamentGroupsForInscription(tournamentId) {
+    const query = `
+        SELECT tp.group_number,
+               COUNT(*) as count,
+               GROUP_CONCAT(
+                   COALESCE(
+                       TRIM(CONCAT(m.first_name, ' ', m.last_name)),
+                       tp.player_name,
+                       'Jugador'
+                   ) ORDER BY tp.participation_id
+               ) as player_names
+        FROM tournament_participants tp
+        LEFT JOIN members m ON tp.member_id = m.member_id AND tp.member_id IS NOT NULL
+        WHERE tp.tournament_id = ? AND tp.group_number IS NOT NULL
+        GROUP BY tp.group_number
+        HAVING count < 4
+        ORDER BY tp.group_number
+    `;
+    const { rows } = await executeQuery(query, [tournamentId]);
+    return rows;
+}
+
+/**
+ * Lista inscriptos al torneo que aún no tienen grupo (para que quien crea grupo pueda sumarlos).
+ * Excluye al memberId indicado (el que está creando el grupo).
+ */
+async function getTournamentParticipantsWithoutGroup(tournamentId, excludeMemberId) {
+    const query = `
+        SELECT tp.participation_id,
+               COALESCE(
+                   TRIM(CONCAT(m.first_name, ' ', m.last_name)),
+                   tp.player_name,
+                   'Jugador'
+               ) as player_name
+        FROM tournament_participants tp
+        LEFT JOIN members m ON tp.member_id = m.member_id AND tp.member_id IS NOT NULL
+        WHERE tp.tournament_id = ? AND (tp.group_number IS NULL OR tp.group_number = 0)
+          AND (tp.member_id IS NULL OR tp.member_id != ?)
+        ORDER BY player_name
+    `;
+    const { rows } = await executeQuery(query, [tournamentId, excludeMemberId || 0]);
+    return rows;
+}
+
+/**
+ * Inscripción pública: inscribir socio (por teléfono/token). Opcional: crear grupo, unirse a grupo, preferencia mañana/tarde.
+ */
+async function addPublicInscription(clubId, tournamentId, memberId, options = {}) {
+    const { groupNumber, createGroup, teeTimePreference, addToGroup } = options;
+    const clubIdNum = parseInt(clubId);
+    const tournamentIdNum = parseInt(tournamentId);
+
+    const tournament = await getTournamentForPublicInscription(clubIdNum, tournamentIdNum);
+    if (!tournament) {
+        const unfiltered = await getTournamentForPublicInscriptionUnfiltered(clubIdNum, tournamentIdNum);
+        if (unfiltered) {
+            const err = new Error('El plazo de inscripción ha finalizado');
+            err.statusCode = 403;
+            throw err;
+        }
+        throw new Error('Torneo no encontrado o no admite inscripciones');
+    }
+
+    const dupCheck = await executeQuery(
+        'SELECT participation_id FROM tournament_participants WHERE tournament_id = ? AND member_id = ? LIMIT 1',
+        [tournamentIdNum, memberId]
+    );
+    if (dupCheck.rows && dupCheck.rows.length > 0) {
+        throw new Error('Ya estás inscripto en este torneo');
+    }
+
+    let finalGroupNumber = null;
+    if (createGroup) {
+        const maxGroup = await executeQuery(
+            'SELECT COALESCE(MAX(group_number), 0) as mx FROM tournament_participants WHERE tournament_id = ?',
+            [tournamentIdNum]
+        );
+        finalGroupNumber = (maxGroup.rows[0]?.mx || 0) + 1;
+    } else if (groupNumber != null) {
+        const groupCount = await executeQuery(
+            'SELECT COUNT(*) as c FROM tournament_participants WHERE tournament_id = ? AND group_number = ?',
+            [tournamentIdNum, groupNumber]
+        );
+        if ((groupCount.rows[0]?.c || 0) >= 4) {
+            throw new Error('Ese grupo ya está completo');
+        }
+        finalGroupNumber = parseInt(groupNumber);
+    }
+
+    // Si se une a un grupo existente, usar el turno del grupo; si no, el que eligió
+    let teeToUse = teeTimePreference && (teeTimePreference === 'morning' || teeTimePreference === 'afternoon') ? teeTimePreference : null;
+    if (groupNumber != null && finalGroupNumber != null) {
+        const groupTee = await executeQuery(
+            'SELECT tee_time_preference FROM tournament_participants WHERE tournament_id = ? AND group_number = ? AND tee_time_preference IS NOT NULL LIMIT 1',
+            [tournamentIdNum, finalGroupNumber]
+        );
+        if (groupTee.rows && groupTee.rows[0] && groupTee.rows[0].tee_time_preference) {
+            teeToUse = groupTee.rows[0].tee_time_preference;
+        }
+    }
+
+    const memberHandicapQuery = `SELECT handicap_local, handicap_index FROM members WHERE member_id = ? AND course_id = ?`;
+    const { rows: memberData } = await executeQuery(memberHandicapQuery, [memberId, clubIdNum]);
+    const currentHandicap = memberData.length > 0 ? (memberData[0].handicap_local || memberData[0].handicap_index) : null;
+
+    const insertQuery = `
+        INSERT INTO tournament_participants (
+            tournament_id, member_id, handicap_used, player_type, status, payment_status,
+            group_number, tee_time_preference
+        ) VALUES (?, ?, ?, 'member', 'registered', 'pending', ?, ?)
+    `;
+    await executeQuery(insertQuery, [
+        tournamentIdNum,
+        memberId,
+        currentHandicap,
+        finalGroupNumber,
+        teeToUse
+    ]);
+
+    // Si creó grupo y eligió inscriptos para sumar, asignarlos al nuevo grupo (máx 3 para no superar 4)
+    if (createGroup && finalGroupNumber != null && Array.isArray(addToGroup) && addToGroup.length > 0) {
+        const ids = addToGroup.slice(0, 3).map(id => parseInt(id)).filter(id => !isNaN(id));
+        for (const participationId of ids) {
+            await executeQuery(
+                'UPDATE tournament_participants SET group_number = ? WHERE participation_id = ? AND tournament_id = ? AND (group_number IS NULL OR group_number = 0)',
+                [finalGroupNumber, participationId, tournamentIdNum]
+            );
+        }
+    }
+
+    return { success: true, group_number: finalGroupNumber };
+}
+
+/**
+ * Comprueba si el socio ya está inscripto en el torneo (para mostrar "Ya estás inscripto" al recargar).
+ */
+async function checkPublicInscriptionStatus(clubId, tournamentId, memberId) {
+    const tournamentIdNum = parseInt(tournamentId);
+    const { rows } = await executeQuery(
+        'SELECT participation_id FROM tournament_participants WHERE tournament_id = ? AND member_id = ? LIMIT 1',
+        [tournamentIdNum, memberId]
+    );
+    return { alreadyInscribed: rows && rows.length > 0 };
 }
 
 /**
@@ -3052,8 +3248,8 @@ async function createTournament(courseId, tournamentData) {
         INSERT INTO tournaments (
             course_id, tournament_name, tournament_date, start_time, end_time,
             tournament_type, max_participants, registration_deadline, entry_fee,
-            custodian, prize_pool, description, rules, status, created_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?)
+            custodian, prize_pool, description, rules, status, public_inscription, created_by
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
     `;
     const params = [
         courseId,
@@ -3069,10 +3265,39 @@ async function createTournament(courseId, tournamentData) {
         tournamentData.prize_pool || 0,
         tournamentData.description || null,
         tournamentData.rules || null,
+        tournamentData.public_inscription ? 1 : 0,
         tournamentData.created_by || null
     ];
     const { rows } = await executeQuery(query, params);
-    
+    const newId = rows.insertId;
+
+    // Persistir configuración de salidas, allow_groups y flyer_url si se envió (columnas opcionales)
+    try {
+        const sim = (tournamentData.enable_simultaneous_starts === true || tournamentData.enable_simultaneous_starts === 1) ? 1 : 0;
+        const two = (tournamentData.enable_two_sessions === true || tournamentData.enable_two_sessions === 1) ? 1 : 0;
+        const allowGroups = (tournamentData.public_inscription_allow_groups !== false && tournamentData.public_inscription_allow_groups !== 0) ? 1 : 0;
+        const flyerUrl = (tournamentData.flyer_url && String(tournamentData.flyer_url).trim()) || null;
+        await executeQuery(
+            `UPDATE tournaments SET
+                enable_simultaneous_starts = ?, afternoon_start_time = ?, preferred_session = ?, tee_interval_minutes = ?, enable_two_sessions = ?,
+                public_inscription_allow_groups = ?, flyer_url = ?
+                WHERE tournament_id = ? AND course_id = ?`,
+            [
+                sim,
+                tournamentData.afternoon_start_time || '14:00',
+                (tournamentData.preferred_session === 'afternoon') ? 'afternoon' : 'morning',
+                tournamentData.tee_interval_minutes != null ? Number(tournamentData.tee_interval_minutes) : 10,
+                two,
+                allowGroups,
+                flyerUrl,
+                newId,
+                courseId
+            ]
+        );
+    } catch (e) {
+        if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+    }
+
     // Log activity
     try {
         await logActivity(
@@ -3090,19 +3315,14 @@ async function createTournament(courseId, tournamentData) {
         console.warn('Error logging activity:', logError);
     }
     
-    return { tournament_id: rows.insertId, ...tournamentData, course_id: courseId };
+    return { tournament_id: newId, ...tournamentData, course_id: courseId };
 }
 
 async function updateTournament(courseId, tournamentId, tournamentData) {
-    const query = `
-        UPDATE tournaments SET
-            tournament_name = ?, tournament_date = ?, start_time = ?, end_time = ?,
-            tournament_type = ?, max_participants = ?, registration_deadline = ?,
-            entry_fee = ?, custodian = ?, account_id = ?, prize_pool = ?, description = ?, rules = ?,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE course_id = ? AND tournament_id = ?
-    `;
-    const params = [
+    const whereParams = [courseId, tournamentId];
+
+    // Parámetros que suelen existir en todas las instalaciones
+    const minimalParams = [
         tournamentData.tournament_name,
         tournamentData.tournament_date,
         tournamentData.start_time || null,
@@ -3111,22 +3331,129 @@ async function updateTournament(courseId, tournamentId, tournamentData) {
         tournamentData.max_participants || null,
         tournamentData.registration_deadline || null,
         tournamentData.entry_fee || 0,
-        tournamentData.custodian || null,
-        tournamentData.account_id || null,
         tournamentData.prize_pool || 0,
         tournamentData.description || null,
-        tournamentData.rules || null,
-        courseId,
-        tournamentId
+        tournamentData.rules || null
     ];
-    
-    const { rows } = await executeQuery(query, params);
-    
-    if (rows.affectedRows > 0) {
-        await logActivity('tournament_updated', courseId, null, 
-                         `Torneo actualizado`);
-        return await getTournamentById(courseId, tournamentId);
+
+    const runUpdate = async (sql, params) => {
+        const { rows } = await executeQuery(sql, params);
+        if (rows.affectedRows > 0) {
+            try {
+                await logActivity(courseId, null, 'club_admin', 'tournament_updated', 'tournament', tournamentId, 'Torneo actualizado', null, null);
+            } catch (e) {}
+            return await getTournamentById(courseId, tournamentId);
+        }
+        return null;
+    };
+
+    // Intentar UPDATE completo (+ results_mode, tee config: enable_simultaneous_starts, afternoon_start_time, preferred_session, tee_interval_minutes, enable_two_sessions)
+    const resultsMode = (tournamentData.results_mode === 'scratch_bands') ? 'scratch_bands' : 'standard';
+    const teeSimultaneous = (tournamentData.enable_simultaneous_starts === true || tournamentData.enable_simultaneous_starts === 1) ? 1 : 0;
+    const teeTwoSessions = (tournamentData.enable_two_sessions === true || tournamentData.enable_two_sessions === 1) ? 1 : 0;
+    const allowGroups = (tournamentData.public_inscription_allow_groups !== false && tournamentData.public_inscription_allow_groups !== 0) ? 1 : 0;
+    const flyerUrl = (tournamentData.flyer_url && String(tournamentData.flyer_url).trim()) || null;
+    const fullParams = [
+        ...minimalParams.slice(0, 8),
+        tournamentData.custodian || null,
+        tournamentData.account_id || null,
+        ...minimalParams.slice(8),
+        (tournamentData.public_inscription === true || tournamentData.public_inscription === 1) ? 1 : 0,
+        allowGroups,
+        flyerUrl,
+        resultsMode,
+        (tournamentData.separate_ladies === true || tournamentData.separate_ladies === 1) ? 1 : 0,
+        (tournamentData.ladies_by_hcp === true || tournamentData.ladies_by_hcp === 1) ? 1 : 0,
+        (tournamentData.is_ranking_event === true || tournamentData.is_ranking_event === 1) ? 1 : 0,
+        teeSimultaneous,
+        tournamentData.afternoon_start_time || '14:00',
+        (tournamentData.preferred_session === 'afternoon') ? 'afternoon' : 'morning',
+        tournamentData.tee_interval_minutes != null ? Number(tournamentData.tee_interval_minutes) : 10,
+        teeTwoSessions,
+        ...whereParams
+    ];
+    const fullQuery = `
+        UPDATE tournaments SET
+            tournament_name = ?, tournament_date = ?, start_time = ?, end_time = ?,
+            tournament_type = ?, max_participants = ?, registration_deadline = ?,
+            entry_fee = ?, custodian = ?, account_id = ?, prize_pool = ?, description = ?, rules = ?,
+            public_inscription = ?, public_inscription_allow_groups = ?, flyer_url = ?, results_mode = ?, separate_ladies = ?, ladies_by_hcp = ?, is_ranking_event = ?,
+            enable_simultaneous_starts = ?, afternoon_start_time = ?, preferred_session = ?, tee_interval_minutes = ?, enable_two_sessions = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE course_id = ? AND tournament_id = ?
+    `;
+
+    try {
+        const result = await runUpdate(fullQuery, fullParams);
+        if (result !== null) return result;
+    } catch (err) {
+        if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
+        // Reintentar CON results_mode y tee config pero SIN custodian/account_id
+        try {
+            const withResultsModeParams = [
+                ...minimalParams,
+                (tournamentData.public_inscription === true || tournamentData.public_inscription === 1) ? 1 : 0,
+                allowGroups,
+                flyerUrl,
+                resultsMode,
+                (tournamentData.separate_ladies === true || tournamentData.separate_ladies === 1) ? 1 : 0,
+                (tournamentData.ladies_by_hcp === true || tournamentData.ladies_by_hcp === 1) ? 1 : 0,
+                (tournamentData.is_ranking_event === true || tournamentData.is_ranking_event === 1) ? 1 : 0,
+                teeSimultaneous,
+                tournamentData.afternoon_start_time || '14:00',
+                (tournamentData.preferred_session === 'afternoon') ? 'afternoon' : 'morning',
+                tournamentData.tee_interval_minutes != null ? Number(tournamentData.tee_interval_minutes) : 10,
+                teeTwoSessions,
+                ...whereParams
+            ];
+            const withResultsModeQuery = `
+                UPDATE tournaments SET
+                    tournament_name = ?, tournament_date = ?, start_time = ?, end_time = ?,
+                    tournament_type = ?, max_participants = ?, registration_deadline = ?,
+                    entry_fee = ?, prize_pool = ?, description = ?, rules = ?,
+                    public_inscription = ?, public_inscription_allow_groups = ?, flyer_url = ?, results_mode = ?, separate_ladies = ?, ladies_by_hcp = ?, is_ranking_event = ?,
+                    enable_simultaneous_starts = ?, afternoon_start_time = ?, preferred_session = ?, tee_interval_minutes = ?, enable_two_sessions = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE course_id = ? AND tournament_id = ?
+            `;
+            const result = await runUpdate(withResultsModeQuery, withResultsModeParams);
+            if (result !== null) return result;
+        } catch (e) {
+            if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+        }
+        // Reintentar sin results_mode ni custodian/account_id
+        try {
+            const fallbackParams = [
+                ...minimalParams,
+                (tournamentData.public_inscription === true || tournamentData.public_inscription === 1) ? 1 : 0,
+                ...whereParams
+            ];
+            const fallbackQuery = `
+                UPDATE tournaments SET
+                    tournament_name = ?, tournament_date = ?, start_time = ?, end_time = ?,
+                    tournament_type = ?, max_participants = ?, registration_deadline = ?,
+                    entry_fee = ?, prize_pool = ?, description = ?, rules = ?,
+                    public_inscription = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE course_id = ? AND tournament_id = ?
+            `;
+            const result = await runUpdate(fallbackQuery, fallbackParams);
+            if (result !== null) return result;
+        } catch (e) {
+            if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+        }
+        const minimalQuery = `
+            UPDATE tournaments SET
+                tournament_name = ?, tournament_date = ?, start_time = ?, end_time = ?,
+                tournament_type = ?, max_participants = ?, registration_deadline = ?,
+                entry_fee = ?, prize_pool = ?, description = ?, rules = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE course_id = ? AND tournament_id = ?
+        `;
+        const result = await runUpdate(minimalQuery, [...minimalParams, ...whereParams]);
+        if (result !== null) return result;
+        throw err;
     }
+
     return null;
 }
 
@@ -4023,6 +4350,7 @@ async function getTournamentGroups(courseId, tournamentId) {
         SELECT tp.group_number,
                tp.tee_time,
                tp.starting_hole,
+               MAX(tp.tee_time_preference) as group_tee_preference,
                COUNT(*) as participants_count,
                AVG(CASE 
                    WHEN tp.player_type = 'external' THEN 
@@ -4121,7 +4449,9 @@ async function getTournamentGroups(courseId, tournamentId) {
         }
         return {
             ...group,
-            participants: parsedParticipants
+            participants: parsedParticipants,
+            group_tee_preference: group.group_tee_preference || null,
+            starting_hole: (group.starting_hole === null || group.starting_hole === undefined) ? null : group.starting_hole
         };
     });
     
@@ -4173,7 +4503,8 @@ async function generateTournamentGroups(courseId, tournamentId, options = {}) {
         groupSize = 4, 
         startingHole = 1,
         autoAssignByHandicap = true,
-        preserveExistingGroups = false
+        preserveExistingGroups = false,
+        byHcp = true
     } = options;
     
     console.log('🎯 Generating groups for tournament:', tournamentId);
@@ -4250,15 +4581,14 @@ async function generateTournamentGroups(courseId, tournamentId, options = {}) {
         return null;
     }
 
-    // Construye el handicap efectivo con prioridad used > local > index.
+    // Construye el handicap efectivo para ordenar: used > local > index (para que ningún jugador quede sin valor al reorganizar).
     function getEffectiveHcp(p) {
         const used = normalizeHcp(p.handicap_used);
         const local = normalizeHcp(p.handicap_local);
         const index = normalizeHcp(p.handicap_index_original);
-        
-        // SOLO usar handicap_local para la clasificación
-        // used e index son solo para referencia
-        return local; // puede ser 0, o null si no hay handicap local
+        if (used !== null) return used;
+        if (local !== null) return local;
+        return index; // puede ser null si no hay ninguno
     }
 
     // Clasificación robusta: 0 es válido (scratch), null es sin HCP.
@@ -4463,29 +4793,118 @@ async function generateTournamentGroups(courseId, tournamentId, options = {}) {
         return await getTournamentGroups(courseId, tournamentId);
         
     } else {
-        // Modo: Regenerar todo desde cero
-        console.log('🔄 Regenerating all groups from scratch');
-        let currentGroup = 1;
-        
-        for (let i = 0; i < sortedParticipants.length; i += groupSize) {
-            const groupParticipants = sortedParticipants.slice(i, i + groupSize);
-            
-            // Actualizar base de datos con número de grupo
-            for (const participant of groupParticipants) {
-                await executeQuery(
-                    'UPDATE tournament_participants SET group_number = ?, starting_hole = ? WHERE participation_id = ?',
-                    [currentGroup, startingHole, participant.participation_id]
-                );
+        let orderedForGroups;
+        const tournament = await getTournamentById(courseId, tournamentId);
+        const resultsMode = (tournament && tournament.results_mode === 'scratch_bands') ? 'scratch_bands' : 'standard';
+
+        if (byHcp && resultsMode === 'scratch_bands') {
+            // Modalidad Scratch + Bandas: no mezclar bandas. Scratch (HCP < 5) solo entre sí; banda 5–7.9, 8–15.8, 15.9–54 por separado.
+            // Así un jugador HCP 0 no queda con jugadores de banda 2 (ej. 13, 15).
+            console.log('🔄 Regenerating groups by scratch_bands (no mixing bands)');
+            const scratchBand = [];   // HCP < 5
+            const band1 = [];         // 5 <= HCP <= 7.9
+            const band2 = [];         // 8 <= HCP <= 15.8
+            const band3 = [];         // 15.9 <= HCP <= 54
+            const noHcpBand = [];     // sin HCP
+
+            for (const p of sortedParticipants) {
+                const h = getEffectiveHcp(p);
+                if (h === null) noHcpBand.push(p);
+                else if (h < 5) scratchBand.push(p);
+                else if (h <= 7.9) band1.push(p);
+                else if (h <= 15.8) band2.push(p);
+                else if (h <= 54) band3.push(p);
+                else noHcpBand.push(p);
             }
-            
-            groups.push({
-                group_number: currentGroup,
-                participants: groupParticipants,
-                tee_time: null,
-                starting_hole: startingHole
-            });
-            
-            currentGroup++;
+
+            const bandOrder = [scratchBand, band1, band2, band3, noHcpBand];
+            let nextGroupNumber = 1;
+
+            for (const bandParticipants of bandOrder) {
+                if (bandParticipants.length === 0) continue;
+                const numGroupsInBand = Math.ceil(bandParticipants.length / groupSize) || 1;
+                const groupListsBand = Array.from({ length: numGroupsInBand }, () => []);
+
+                for (let i = 0; i < bandParticipants.length; i++) {
+                    const round = Math.floor(i / numGroupsInBand);
+                    const posInRound = i % numGroupsInBand;
+                    const groupIndex = round % 2 === 0 ? posInRound : numGroupsInBand - 1 - posInRound;
+                    groupListsBand[groupIndex].push(bandParticipants[i]);
+                }
+
+                for (const g of groupListsBand) {
+                    for (const participant of g) {
+                        await executeQuery(
+                            'UPDATE tournament_participants SET group_number = ?, starting_hole = ? WHERE participation_id = ?',
+                            [nextGroupNumber, startingHole, participant.participation_id]
+                        );
+                    }
+                    groups.push({
+                        group_number: nextGroupNumber,
+                        participants: g,
+                        tee_time: null,
+                        starting_hole: startingHole
+                    });
+                    nextGroupNumber++;
+                }
+            }
+        } else {
+            if (byHcp) {
+                orderedForGroups = sortedParticipants;
+                console.log('🔄 Regenerating all groups from scratch (HCP spread / serpentina)');
+            } else {
+                orderedForGroups = [...participants].sort((a, b) => {
+                    const da = a.registration_date ? new Date(a.registration_date).getTime() : 0;
+                    const db = b.registration_date ? new Date(b.registration_date).getTime() : 0;
+                    if (da !== db) return da - db;
+                    return (a.participation_id || 0) - (b.participation_id || 0);
+                });
+                console.log('🔄 Regenerating all groups from scratch (by registration order)');
+            }
+
+            const numGroups = Math.ceil(orderedForGroups.length / groupSize) || 1;
+            const groupLists = Array.from({ length: numGroups }, () => []);
+
+            if (byHcp) {
+                for (let i = 0; i < orderedForGroups.length; i++) {
+                    const round = Math.floor(i / numGroups);
+                    const posInRound = i % numGroups;
+                    const groupIndex = round % 2 === 0 ? posInRound : numGroups - 1 - posInRound;
+                    groupLists[groupIndex].push(orderedForGroups[i]);
+                }
+            } else {
+                for (let i = 0; i < orderedForGroups.length; i += groupSize) {
+                    const chunk = orderedForGroups.slice(i, i + groupSize);
+                    const g = Math.floor(i / groupSize);
+                    if (g < numGroups) groupLists[g].push(...chunk);
+                }
+            }
+
+            for (let g = 0; g < numGroups; g++) {
+                const groupNumber = g + 1;
+                const groupParticipants = groupLists[g];
+                for (const participant of groupParticipants) {
+                    await executeQuery(
+                        'UPDATE tournament_participants SET group_number = ?, starting_hole = ? WHERE participation_id = ?',
+                        [groupNumber, startingHole, participant.participation_id]
+                    );
+                }
+                groups.push({
+                    group_number: groupNumber,
+                    participants: groupParticipants,
+                    tee_time: null,
+                    starting_hole: startingHole
+                });
+            }
+        }
+
+        try {
+            await executeQuery(
+                'UPDATE tournaments SET groups_by_hcp = ? WHERE tournament_id = ? AND course_id = ?',
+                [byHcp ? 1 : 0, tournamentId, courseId]
+            );
+        } catch (e) {
+            if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
         }
     }
     
@@ -4501,20 +4920,36 @@ function addMinutesToTime(timeString, minutes) {
     return date.toTimeString().slice(0, 5); // Format HH:MM
 }
 
+// Normalizar hora a HH:MM (24h) para uso interno
+function toHHMM(v) {
+    if (v == null || v === '') return null;
+    const s = String(v).trim();
+    const match = s.match(/^(\d{1,2}):(\d{2})/);
+    if (match) return `${match[1].padStart(2, '0')}:${match[2]}`;
+    return s.length >= 5 ? s.slice(0, 5) : s;
+}
+
 // Función para asignar tee times a los grupos
 async function assignTeeTimesToGroups(courseId, tournamentId, teeTimeData) {
-    const { 
-        start_time = '08:00',
-        interval_minutes = 12,
-        course_holes = 18,
-        enable_two_sessions = false,
-        enable_simultaneous_starts = false,
-        morning_end_time = '12:00',
-        afternoon_start_time = '14:00',
-        preferred_session = 'morning'
-    } = teeTimeData;
-    
-    console.log('🕐 Assigning tee times for tournament:', tournamentId, 'with data:', teeTimeData);
+    const raw = {
+        start_time: teeTimeData.start_time ?? '08:00',
+        interval_minutes: teeTimeData.interval_minutes ?? 12,
+        course_holes: teeTimeData.course_holes ?? 18,
+        enable_two_sessions: teeTimeData.enable_two_sessions ?? false,
+        enable_simultaneous_starts: teeTimeData.enable_simultaneous_starts ?? false,
+        morning_end_time: teeTimeData.morning_end_time ?? '12:00',
+        afternoon_start_time: teeTimeData.afternoon_start_time ?? '14:00',
+        preferred_session: teeTimeData.preferred_session ?? 'morning'
+    };
+    const start_time = toHHMM(raw.start_time) || '08:00';
+    const afternoon_start_time = toHHMM(raw.afternoon_start_time) || '14:00';
+    const interval_minutes = Number(raw.interval_minutes) || 12;
+    const course_holes = Number(raw.course_holes) || 18;
+    const enable_two_sessions = !!raw.enable_two_sessions;
+    const enable_simultaneous_starts = !!raw.enable_simultaneous_starts;
+    const preferred_session = (raw.preferred_session || 'morning').toLowerCase();
+
+    console.log('🕐 Assigning tee times for tournament:', tournamentId, 'morning start:', start_time, 'afternoon start:', afternoon_start_time);
     console.log('🔍 DEBUG enable_simultaneous_starts:', enable_simultaneous_starts, typeof enable_simultaneous_starts);
     console.log('🔍 DEBUG enable_two_sessions:', enable_two_sessions, typeof enable_two_sessions);
     
@@ -4555,7 +4990,11 @@ async function assignTeeTimesToGroups(courseId, tournamentId, teeTimeData) {
                            COALESCE(tp.handicap_used, m.handicap_local, m.handicap_index, 999)
                    END ASC 
                    SEPARATOR ', '
-               ) as player_names
+               ) as player_names,
+               (SELECT tp2.tee_time_preference FROM tournament_participants tp2
+                WHERE tp2.tournament_id = tp.tournament_id AND tp2.group_number = tp.group_number
+                  AND tp2.tee_time_preference IS NOT NULL AND tp2.tee_time_preference = 'afternoon'
+                LIMIT 1) as group_tee_preference
         FROM tournament_participants tp
         LEFT JOIN members m ON tp.member_id = m.member_id AND tp.player_type IN ('member', 'visitor')
         LEFT JOIN external_players ep ON tp.external_player_id = ep.external_id AND tp.player_type = 'external'
@@ -4570,62 +5009,6 @@ async function assignTeeTimesToGroups(courseId, tournamentId, teeTimeData) {
         throw new Error('No hay grupos generados. Primero genera los grupos.');
     }
     
-    // REGLAS PROFESIONALES DE GOLF: Asignación por handicap
-    console.log('🏌️‍♂️ Aplicando reglas profesionales de golf para asignación de tee times');
-    
-    // Separar grupos por handicap
-    const lowHandicapGroups = [];  // Handicap bajo (experienced players)
-    const highHandicapGroups = []; // Handicap alto y principiantes
-    
-    groups.forEach(group => {
-        const avgHandicap = parseFloat(group.avg_handicap);
-        const minHandicap = parseFloat(group.min_handicap);
-        
-        console.log(`🔍 DEBUG Group ${group.group_number}: avg=${avgHandicap}, min=${minHandicap}`);
-        
-        // Consideramos handicap bajo si el promedio es <= 15 o si hay algún jugador con handicap <= 10
-        // IMPORTANTE: handicap 0.0 (scratch) es el MÁS BAJO posible
-        const isLowHandicapGroup = (!isNaN(avgHandicap) && avgHandicap <= 15) || 
-                                   (!isNaN(minHandicap) && minHandicap <= 10) || 
-                                   (!isNaN(minHandicap) && minHandicap === 0);
-        
-        if (isLowHandicapGroup) {
-            lowHandicapGroups.push(group);
-        } else {
-            highHandicapGroups.push(group);
-        }
-    });
-    
-    console.log(`🎯 Grupos de handicap bajo: ${lowHandicapGroups.length} (siempre desde hoyo 1)`);
-    console.log(`🎯 Grupos de handicap alto/principiantes: ${highHandicapGroups.length} (hoyo 10 o mañana)`);
-    
-    // Variables para asignación - RESPETAR SESIÓN PREFERIDA
-    let lowHandicapTime = preferred_session === 'afternoon' ? afternoon_start_time : start_time;
-    let assignedGroups = 0;
-    
-    console.log(`⏰ Sesión preferida: ${preferred_session}`);
-    console.log(`⏰ Handicap bajo iniciará a las: ${lowHandicapTime}`);
-    
-    // FASE 1: Asignar grupos de handicap bajo (SIEMPRE desde hoyo 1)
-    console.log('🏌️‍♂️ FASE 1: Asignando grupos de handicap bajo desde hoyo 1');
-    for (const group of lowHandicapGroups) {
-        const teeTime = addMinutesToTime(lowHandicapTime, assignedGroups * interval_minutes);
-        
-        await executeQuery(
-            'UPDATE tournament_participants SET tee_time = ?, starting_hole = 1 WHERE tournament_id = ? AND group_number = ?',
-            [teeTime, tournamentId, group.group_number]
-        );
-        
-        console.log(`⛳ Grupo ${group.group_number}: Hoyo 1, ${teeTime} (handicap promedio: ${group.avg_handicap})`);
-        assignedGroups++;
-    }
-    
-    // FASE 2: Asignar grupos de handicap alto/principiantes
-    console.log('🏌️‍♂️ FASE 2: Asignando grupos de handicap alto/principiantes');
-    
-    let highHandicapStartHole = 1;
-    let highHandicapTime = lowHandicapTime;
-    
     // PRIORIDAD 1: SALIDAS SIMULTÁNEAS (tiene prioridad máxima)
     console.log(`🔍 VERIFICANDO SALIDAS SIMULTÁNEAS: enable_simultaneous_starts=${enable_simultaneous_starts}, groups.length=${groups.length}`);
     if (enable_simultaneous_starts && groups.length > 0) {
@@ -4633,81 +5016,80 @@ async function assignTeeTimesToGroups(courseId, tournamentId, teeTimeData) {
         console.log('⛳ SALIDAS SIMULTÁNEAS: Asignando un grupo por hoyo');
         
         let currentTime = start_time;
-        let currentRound = 1; // Para tracking de tandas
+        let currentRound = 1;
         
-        // En salidas simultáneas, ordenar por número de grupo (secuencial), NO por handicap
         const allGroupsSorted = groups.sort((a, b) => a.group_number - b.group_number);
         
         for (let i = 0; i < allGroupsSorted.length; i++) {
             const group = allGroupsSorted[i];
-            
-            // Calcular hoyo: 1-18 para la primera tanda, luego 1-18 para segunda tanda, etc.
-            const holeNumber = (i % course_holes) + 1;
-            
-            // Si completamos una vuelta de hoyos, cambiar a la siguiente tanda
             if (i > 0 && i % course_holes === 0) {
                 currentRound++;
-                // Avanzar el horario para la siguiente tanda (ejemplo: 30 minutos después)
                 currentTime = addMinutesToTime(start_time, (currentRound - 1) * 30);
                 console.log(`🔄 Nueva tanda ${currentRound}: horario ${currentTime}`);
             }
-            
             await executeQuery(
-                'UPDATE tournament_participants SET tee_time = ?, starting_hole = ? WHERE tournament_id = ? AND group_number = ?',
-                [currentTime, holeNumber, tournamentId, group.group_number]
+                'UPDATE tournament_participants SET tee_time = ?, starting_hole = NULL WHERE tournament_id = ? AND group_number = ?',
+                [currentTime, tournamentId, group.group_number]
             );
-            
-            console.log(`⛳ Grupo ${group.group_number}: Hoyo ${holeNumber}, ${currentTime} (Tanda ${currentRound})`);
+            console.log(`⛳ Grupo ${group.group_number}: ${currentTime} (Tanda ${currentRound}, hoyo sin asignar)`);
         }
-        
         console.log(`✅ Asignados ${allGroupsSorted.length} grupos en salidas simultáneas`);
-        console.log(`🚀 SALIDAS SIMULTÁNEAS COMPLETADAS - HACIENDO RETURN (NO debe continuar con lógica normal)`);
-        
-        // Retornar grupos actualizados
         const { rows: updatedGroups } = await executeQuery(groupsQuery, [tournamentId]);
-        console.log(`📊 Retornando ${updatedGroups.length} grupos actualizados`);
         return updatedGroups;
-        
-    } else if (enable_two_sessions && highHandicapGroups.length > 0) {
-        // PRIORIDAD 2: REGLAS PROFESIONALES con dos sesiones
-        if (preferred_session === 'afternoon') {
-            // Tarde preferida: handicap bajo en tarde, handicap alto en mañana
-            highHandicapTime = start_time; // Por la mañana (start_time es mañana)
-            highHandicapStartHole = 1; // Desde hoyo 1
-            console.log('🌅 REGLA PROFESIONAL: Handicap alto por la mañana (tarde ocupada por handicap bajo)');
+    }
+
+    // RESPETAR PREFERENCIA MAÑANA/TARDE de cada grupo (inscripción pública)
+    const morningPreferGroups = [];
+    const afternoonPreferGroups = [];
+    groups.forEach(group => {
+        const pref = (group.group_tee_preference || '').toString().toLowerCase().trim();
+        if (pref === 'afternoon') {
+            afternoonPreferGroups.push(group);
         } else {
-            // Mañana preferida: handicap bajo en mañana, handicap alto en tarde
-            highHandicapTime = afternoon_start_time; // Por la tarde
-            highHandicapStartHole = 1; // Desde hoyo 1
-            console.log('🌇 REGLA PROFESIONAL: Handicap alto por la tarde (mañana ocupada por handicap bajo)');
+            morningPreferGroups.push(group);
         }
-    } else {
-        // Continuación normal: handicap alto continúa después del bajo
-        highHandicapTime = addMinutesToTime(lowHandicapTime, assignedGroups * interval_minutes);
-        console.log('⏰ Handicap alto continúa secuencialmente (una sola sesión)');
-    }
-    
-    let highHandicapCounter = 0;
-    for (const group of highHandicapGroups) {
-        const teeTime = addMinutesToTime(highHandicapTime, highHandicapCounter * interval_minutes);
-        
+    });
+
+    const sortByHandicap = (a, b) => {
+        const avgA = parseFloat(a.avg_handicap);
+        const avgB = parseFloat(b.avg_handicap);
+        const minA = parseFloat(a.min_handicap);
+        const minB = parseFloat(b.min_handicap);
+        const lowA = (!isNaN(avgA) && avgA <= 15) || (!isNaN(minA) && (minA <= 10 || minA === 0));
+        const lowB = (!isNaN(avgB) && avgB <= 15) || (!isNaN(minB) && (minB <= 10 || minB === 0));
+        if (lowA && !lowB) return -1;
+        if (!lowA && lowB) return 1;
+        return (avgA - avgB) || (a.group_number - b.group_number);
+    };
+    morningPreferGroups.sort(sortByHandicap);
+    afternoonPreferGroups.sort(sortByHandicap);
+
+    console.log(`⏰ Grupos que eligieron mañana: ${morningPreferGroups.length}`);
+    console.log(`⏰ Grupos que eligieron tarde: ${afternoonPreferGroups.length}`);
+
+    let slotIndex = 0;
+    for (const group of morningPreferGroups) {
+        const teeTime = addMinutesToTime(start_time, slotIndex * interval_minutes);
         await executeQuery(
-            'UPDATE tournament_participants SET tee_time = ?, starting_hole = ? WHERE tournament_id = ? AND group_number = ?',
-            [teeTime, highHandicapStartHole, tournamentId, group.group_number]
+            'UPDATE tournament_participants SET tee_time = ?, starting_hole = NULL WHERE tournament_id = ? AND group_number = ?',
+            [teeTime, tournamentId, group.group_number]
         );
-        
-        console.log(`⛳ Grupo ${group.group_number}: Hoyo ${highHandicapStartHole}, ${teeTime} (handicap promedio: ${group.avg_handicap})`);
-        highHandicapCounter++;
+        console.log(`⛳ Grupo ${group.group_number}: Mañana, ${teeTime} (hoyo sin asignar)`);
+        slotIndex++;
     }
-    
-    // Obtener grupos actualizados para retornar
+    slotIndex = 0;
+    for (const group of afternoonPreferGroups) {
+        const teeTime = addMinutesToTime(afternoon_start_time, slotIndex * interval_minutes);
+        await executeQuery(
+            'UPDATE tournament_participants SET tee_time = ?, starting_hole = NULL WHERE tournament_id = ? AND group_number = ?',
+            [teeTime, tournamentId, group.group_number]
+        );
+        console.log(`⛳ Grupo ${group.group_number}: Tarde, ${teeTime} (hoyo sin asignar)`);
+        slotIndex++;
+    }
+
     const { rows: updatedGroups } = await executeQuery(groupsQuery, [tournamentId]);
-    
-    console.log(`✅ Asignados tee times a ${groups.length} grupos con reglas profesionales de golf`);
-    console.log(`🏌️‍♂️ Handicap bajo: ${lowHandicapGroups.length} grupos desde hoyo 1`);
-    console.log(`🏌️‍♂️ Handicap alto/principiantes: ${highHandicapGroups.length} grupos desde hoyo ${highHandicapStartHole}`);
-    console.log(`🔚 FINALIZANDO FUNCIÓN assignTeeTimesToGroups - MODO: ${enable_simultaneous_starts ? 'SALIDAS SIMULTÁNEAS' : 'REGLAS PROFESIONALES'}`);
-    
+    console.log(`✅ Asignados tee times respetando preferencia: ${morningPreferGroups.length} mañana, ${afternoonPreferGroups.length} tarde`);
     return updatedGroups;
 }
 
@@ -5938,6 +6320,10 @@ async function deleteAccount(clubId, accountId) {
  */
 async function updateAccountBalance(accountId, amount, currency, operation = 'add') {
     try {
+        const amountNum = Number(amount);
+        if (isNaN(amountNum) || amountNum < 0) {
+            throw new Error(`Monto inválido para actualizar saldo: ${amount}`);
+        }
         const field = currency === 'USD' ? 'current_balance_usd' : 'current_balance_ars';
         const operator = operation === 'add' ? '+' : '-';
         
@@ -5946,7 +6332,7 @@ async function updateAccountBalance(accountId, amount, currency, operation = 'ad
             SET ${field} = ${field} ${operator} ?
             WHERE account_id = ?
         `;
-        await executeQuery(query, [Math.abs(amount), accountId]);
+        await executeQuery(query, [amountNum, accountId]);
         return { success: true };
     } catch (error) {
         console.error('❌ Error updating account balance:', error);
@@ -6213,10 +6599,11 @@ async function createTransaction(clubId, transactionData) {
             // Validate that there are sufficient funds in the source account
             const fromAccount = fromAccountRows[0];
             const currency = transactionData.currency || 'ARS';
-            const availableAmount = currency === 'USD' ? fromAccount.current_balance_usd : fromAccount.current_balance_ars;
+            const availableAmount = Number(currency === 'USD' ? fromAccount.current_balance_usd : fromAccount.current_balance_ars) || 0;
+            const amountNum = Number(transactionData.amount) || 0;
             
-            if (availableAmount < transactionData.amount) {
-                throw new Error(`Fondos insuficientes en la cuenta de origen. Disponible: ${availableAmount.toFixed(2)} ${currency}, Requerido: ${transactionData.amount.toFixed(2)} ${currency}`);
+            if (availableAmount < amountNum) {
+                throw new Error(`Fondos insuficientes en la cuenta de origen. Disponible: ${availableAmount.toFixed(2)} ${currency}, Requerido: ${amountNum.toFixed(2)} ${currency}`);
             }
         }
         
@@ -6460,6 +6847,7 @@ export {
     // Member functions
     getAllMembers, getMemberById, createMember, updateMember, deleteMember, updateMemberStatus,
     verifyMemberPhone, verifyReportToken,
+    getTournamentForPublicInscription, getTournamentForPublicInscriptionUnfiltered, getTournamentGroupsForInscription, getTournamentParticipantsWithoutGroup, addPublicInscription, checkPublicInscriptionStatus,
     
     // Tournament functions
     getAllTournaments, getTournamentById, createTournament, updateTournament, deleteTournament,

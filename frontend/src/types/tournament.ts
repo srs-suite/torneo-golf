@@ -17,6 +17,20 @@ export interface Tournament {
   separate_ladies?: boolean
   ladies_by_hcp?: boolean
   status: 'draft' | 'open' | 'closed' | 'in_progress' | 'completed' | 'cancelled'
+  /** Inscripción por web: si es true, hay URL pública para que los jugadores se anoten */
+  public_inscription?: boolean
+  /** Si false, en inscripción web no se puede crear/unir grupos (solo individual, club asigna por HCP) */
+  public_inscription_allow_groups?: boolean | number
+  /** URL de la imagen del flyer para la página de inscripción pública */
+  flyer_url?: string | null
+  /** 1 = últimos grupos generados por HCP (serpentina); 0 = por inscripción/grupos */
+  groups_by_hcp?: number | boolean
+  /** 0 = consecutivas, 1 = simultáneas (shotgun) */
+  enable_simultaneous_starts?: number | boolean
+  afternoon_start_time?: string
+  preferred_session?: 'morning' | 'afternoon'
+  tee_interval_minutes?: number
+  enable_two_sessions?: number | boolean
   weather_conditions?: string
   created_by?: number
   created_at: string
@@ -63,7 +77,9 @@ export interface TournamentGroup {
   tee_time: string
   tee_position: string
   group_size: number
-  starting_hole?: number
+  starting_hole?: number | null
+  /** Preferencia mañana/tarde elegida al inscribirse (respeta lo que eligió el grupo) */
+  group_tee_preference?: 'morning' | 'afternoon' | null
   status: 'pending' | 'playing' | 'completed'
   notes?: string
   
@@ -95,6 +111,15 @@ export interface CreateTournamentData {
   results_mode?: 'standard' | 'scratch_bands'
   separate_ladies?: boolean
   ladies_by_hcp?: boolean
+  public_inscription?: boolean
+  public_inscription_allow_groups?: boolean
+  flyer_url?: string
+  /** Tipo de salida: false = consecutivas, true = simultáneas (shotgun) */
+  enable_simultaneous_starts?: boolean
+  afternoon_start_time?: string
+  preferred_session?: 'morning' | 'afternoon'
+  tee_interval_minutes?: number
+  enable_two_sessions?: boolean
 }
 
 export interface TournamentStats {

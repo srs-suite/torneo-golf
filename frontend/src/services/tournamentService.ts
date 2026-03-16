@@ -55,6 +55,12 @@ export const tournamentService = {
     return response.data.data || response.data
   },
 
+  /** Sube una imagen del flyer (data URL en base64) y devuelve la URL pública. */
+  async uploadFlyer(clubId: number, tournamentId: number, imageDataUrl: string): Promise<{ url: string }> {
+    const response = await api.post(`/club/${clubId}/tournaments/${tournamentId}/flyer-upload`, { image: imageDataUrl })
+    return response.data
+  },
+
   // Eliminar torneo
   async deleteTournament(clubId: number, tournamentId: number): Promise<void> {
     console.log(`🏆 API: DELETE /club/${clubId}/tournaments/${tournamentId}`)
@@ -107,6 +113,7 @@ export const tournamentService = {
     groupSize?: number
     autoAssignByHandicap?: boolean
     preserveExistingGroups?: boolean
+    byHcp?: boolean
   } = {}): Promise<TournamentGroup[]> {
     console.log(`🏆 API: POST /club/${clubId}/tournaments/${tournamentId}/generate-groups`)
     const response = await api.post(`/club/${clubId}/tournaments/${tournamentId}/generate-groups`, options)

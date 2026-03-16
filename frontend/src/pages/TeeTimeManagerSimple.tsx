@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Users, GripVertical, User, Plus, Sun, Moon, HelpCircle, X, FileText } from 'lucide-react'
+import { ArrowLeft, Users, GripVertical, User, Plus, Sun, Moon, HelpCircle, X, FileText, FileSpreadsheet } from 'lucide-react'
+import * as XLSX from 'xlsx'
 import { useTournaments, useTournamentGroups, useGenerateGroups, useAssignTeeTimes, useMovePlayerToGroup, useMoveGroupToHole, useSwapGroupNumbers, useCreateEmptyGroup, useDeleteEmptyGroup } from '@/hooks/useTournaments'
+import { useUserPermissions } from '@/hooks/useUserPermissions'
 
 interface TeeTimeConfig {
   startTime: string
@@ -37,9 +39,26 @@ export default function TeeTimeManagerSimple() {
     preferredSession: 'morning'
   })
   
+  const { permissions } = useUserPermissions(clubId ?? undefined)
+  const canEditTournaments = permissions.canEditTournaments
   const { data: tournaments } = useTournaments(clubIdNum)
   const tournament = tournaments?.find(t => t.tournament_id === tournamentIdNum)
   const { data: groups, refetch: refetchGroups } = useTournamentGroups(clubIdNum, tournamentIdNum)
+
+  // Inicializar config de tee desde el torneo (salidas consecutivas/simultáneas definidas al crear el torneo)
+  useEffect(() => {
+    if (!tournament) return
+    const t = tournament as any
+    setConfig(prev => ({
+      ...prev,
+      startTime: t.start_time ? (t.start_time.length >= 5 ? t.start_time.slice(0, 5) : t.start_time) : '08:00',
+      intervalMinutes: typeof t.tee_interval_minutes === 'number' ? t.tee_interval_minutes : 10,
+      enableTwoSessions: t.enable_two_sessions === 1 || t.enable_two_sessions === true,
+      enableSimultaneousStarts: t.enable_simultaneous_starts === 1 || t.enable_simultaneous_starts === true,
+      afternoonStartTime: t.afternoon_start_time && t.afternoon_start_time.length >= 5 ? t.afternoon_start_time.slice(0, 5) : '14:00',
+      preferredSession: t.preferred_session === 'afternoon' ? 'afternoon' : 'morning'
+    }))
+  }, [tournament?.tournament_id])
   const generateGroups = useGenerateGroups(clubIdNum, tournamentIdNum)
   const assignTeeTimes = useAssignTeeTimes(clubIdNum, tournamentIdNum)
   const movePlayer = useMovePlayerToGroup(clubIdNum, tournamentIdNum)
@@ -55,6 +74,9 @@ export default function TeeTimeManagerSimple() {
   
   // Help modal state
   const [showHelpModal, setShowHelpModal] = useState(false)
+  // Modal "Reorganizar por HCP" / "Reorganizar por grupos" (un solo paso: generar + asignar tee times + ir a resultado)
+  const [showReorganizeModal, setShowReorganizeModal] = useState(false)
+  const [reorganizeByHcp, setReorganizeByHcp] = useState(true) // true = por HCP, false = por grupos/inscripción
   
   // Create group modal state
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false)
@@ -62,6 +84,10 @@ export default function TeeTimeManagerSimple() {
     hole: 1,
     time: ''
   })
+
+  // Modal editar hora/hoyo de un grupo (click en Editar)
+  const [editingGroupNumber, setEditingGroupNumber] = useState<number | null>(null)
+  const [editModalValues, setEditModalValues] = useState<{ session: 'morning' | 'afternoon'; time: string; hole: number }>({ session: 'morning', time: '08:00', hole: 1 })
   
   // Session filter state
   const [sessionFilter, setSessionFilter] = useState<'all' | 'morning' | 'afternoon'>('all')
@@ -121,29 +147,50 @@ export default function TeeTimeManagerSimple() {
     })
   }
 
-  const handleAssignTeeTimes = () => {
-    // Si se prefiere la tarde, usar la hora de la tarde como inicio principal
-    const actualStartTime = config.preferredSession === 'afternoon' ? config.afternoonStartTime : config.startTime;
-    
-    assignTeeTimes.mutate({
-      start_time: actualStartTime,
+  const getTeeTimePayload = () => {
+    // Siempre enviar hora de mañana y de tarde para que el backend asigne correctamente según group_tee_preference
+    const startMorning = (config.startTime || '08:00').length >= 5 ? (config.startTime || '08:00').slice(0, 5) : (config.startTime || '08:00')
+    const startAfternoon = (config.afternoonStartTime || '14:00').length >= 5 ? (config.afternoonStartTime || '14:00').slice(0, 5) : (config.afternoonStartTime || '14:00')
+    return {
+      start_time: startMorning,
       interval_minutes: config.intervalMinutes,
       course_holes: config.courseHoles,
       enable_two_sessions: config.enableTwoSessions,
       enable_simultaneous_starts: config.enableSimultaneousStarts,
-      afternoon_start_time: config.afternoonStartTime,
+      afternoon_start_time: startAfternoon,
       preferred_session: config.preferredSession
-    }, {
+    }
+  }
+
+  const handleAssignTeeTimes = () => {
+    assignTeeTimes.mutate(getTeeTimePayload(), {
       onSuccess: () => {
-        console.log('✅ Tee times assigned successfully')
         refetchGroups()
-        // Agregar un pequeño delay para que el usuario vea el progreso
-        setTimeout(() => {
-          console.log('✅ Moving to step 3 after delay')
-          setCurrentStep(3)
-        }, 1500) // 1.5 segundos de delay
+        setTimeout(() => setCurrentStep(3), 1500)
       }
     })
+  }
+
+  const handleReorganize = (byHcp: boolean) => {
+    setShowReorganizeModal(false)
+    generateGroups.mutate(
+      { preserveExistingGroups: false, byHcp },
+      {
+        onSuccess: async () => {
+          await refetchGroups()
+          assignTeeTimes.mutate(getTeeTimePayload(), {
+            onSuccess: () => {
+              refetchGroups().then(() => {
+                setCurrentStep(3)
+              })
+            },
+            onError: () => {
+              refetchGroups().then(() => setCurrentStep(3))
+            }
+          })
+        }
+      }
+    )
   }
 
   const handleConfigChange = (field: keyof TeeTimeConfig, value: any) => {
@@ -253,23 +300,17 @@ export default function TeeTimeManagerSimple() {
     })
   }
 
-  // Función para formatear tiempo a HH:MM
+  // Formatear hora en 24h (Argentina: sin AM/PM), ej. 08:00 o 14:00
   const formatTime = (timeString: string | null): string => {
     if (!timeString) return "Sin asignar"
-    
-    // Si el tiempo ya está en formato HH:MM, devolverlo tal como está
-    if (timeString.match(/^\d{1,2}:\d{2}$/)) {
-      const [hours, minutes] = timeString.split(':').map(Number)
-      return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`
+    const str = String(timeString).trim()
+    const match = str.match(/^(\d{1,2}):(\d{2})/)
+    if (match) return `${match[1].padStart(2, '0')}:${match[2]}`
+    if (str.includes(':')) {
+      const [h, m] = str.split(':').map(Number)
+      if (!isNaN(h) && !isNaN(m)) return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
     }
-    
-    // Si tiene segundos (HH:MM:SS), removerlos
-    if (timeString.includes(':')) {
-      const [hours, minutes] = timeString.split(':').map(Number)
-      return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`
-    }
-    
-    return timeString
+    return str
   }
 
   // Normalizar a HH:MM:SS para enviar al backend (MySQL TIME)
@@ -290,13 +331,39 @@ export default function TeeTimeManagerSimple() {
     return hours >= 13 ? 'afternoon' : 'morning'
   }
 
+  // Respetar preferencia del grupo (inscripción pública) si existe; si no, derivar de la hora
+  const getGroupSession = (group: { tee_time?: string | null; group_tee_preference?: string | null }): 'morning' | 'afternoon' => {
+    const pref = String(group.group_tee_preference || '').toLowerCase().trim()
+    if (pref === 'afternoon') return 'afternoon'
+    return getSessionFromTime(group.tee_time ?? null)
+  }
+
+  // Hoyo: 0 = "Sin asignar", solo mostrar número cuando esté realmente asignado
+  const getDisplayHole = (group: { starting_hole?: number | null }): number => {
+    const h = group.starting_hole
+    if (h == null || h === 0) return 0
+    return h
+  }
+
+  // Hora a mostrar: si el grupo es turno tarde pero tee_time está en rango mañana (ej. 08:00), mostrar hora de tarde
+  const getDisplayTimeForGroup = (group: { tee_time?: string | null; group_tee_preference?: string | null }): string => {
+    const raw = formatTime(group.tee_time ?? null)
+    if (raw === 'Sin asignar') return ''
+    const pref = String(group.group_tee_preference || '').toLowerCase().trim()
+    if (pref === 'afternoon') {
+      const [h] = (group.tee_time || '').split(':').map(Number)
+      if (!isNaN(h) && h < 12) return config.afternoonStartTime || '14:00'
+    }
+    return raw
+  }
+
   // Función para filtrar grupos por sesión
   const getFilteredGroups = () => {
     if (!groups) return []
     
     if (sessionFilter === 'all') return groups
     
-    return groups.filter(group => getSessionFromTime(group.tee_time) === sessionFilter)
+    return groups.filter(group => getGroupSession(group) === sessionFilter)
   }
 
   // Función para toggle del filtro de sesión
@@ -308,6 +375,43 @@ export default function TeeTimeManagerSimple() {
       // Activar el filtro seleccionado
       setSessionFilter(session)
     }
+  }
+
+  // Exportar grupos (Ver resultado) a Excel
+  const handleExportGroupsExcel = () => {
+    if (!groups || groups.length === 0) {
+      alert('No hay grupos para exportar.')
+      return
+    }
+    const sessionLabel = (g: { tee_time?: string | null; group_tee_preference?: string | null }) =>
+      getGroupSession(g) === 'afternoon' ? 'Tarde' : 'Mañana'
+    const excelData = groups.map((group) => {
+      const participants = group.participants || []
+      const row: Record<string, string | number> = {
+        'Grupo': group.group_number,
+        'Turno': sessionLabel(group),
+        'Hora': getDisplayTimeForGroup(group) || 'Sin asignar',
+        'Hoyo': getDisplayHole(group) === 0 ? 'Sin asignar' : getDisplayHole(group)
+      }
+      ;[1, 2, 3, 4].forEach((i) => {
+        const p = participants[i - 1]
+        row[`Jugador ${i}`] = p?.player_name ?? ''
+        row[`HCP ${i}`] = p?.handicap_local != null ? p.handicap_local : ''
+      })
+      return row
+    })
+    const worksheet = XLSX.utils.json_to_sheet(excelData)
+    const colWidths = [
+      { wch: 6 }, { wch: 8 }, { wch: 8 }, { wch: 10 },
+      { wch: 28 }, { wch: 6 }, { wch: 28 }, { wch: 6 },
+      { wch: 28 }, { wch: 6 }, { wch: 28 }, { wch: 6 }
+    ]
+    worksheet['!cols'] = colWidths
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Grupos')
+    const safeName = (tournament?.tournament_name || 'Torneo').replace(/[^a-zA-Z0-9\u00C0-\u024F]/g, '_')
+    const date = new Date().toLocaleDateString('es-AR').replace(/\//g, '-')
+    XLSX.writeFile(workbook, `Grupos_${safeName}_${date}.xlsx`)
   }
 
   // handleSwitchSession eliminado: la sesión se gestiona manualmente por panel
@@ -372,7 +476,7 @@ export default function TeeTimeManagerSimple() {
               fontSize: '14px',
               fontWeight: 'bold'
             }}>
-              1. Configurar Grupos
+              1. Generar grupos
             </div>
             <div style={{
               display: 'flex',
@@ -384,7 +488,7 @@ export default function TeeTimeManagerSimple() {
               fontSize: '14px',
               fontWeight: 'bold'
             }}>
-              2. Configurar Tee Times
+              2. Asignar horarios
             </div>
             <div style={{
               display: 'flex',
@@ -410,217 +514,72 @@ export default function TeeTimeManagerSimple() {
             marginBottom: '20px',
             boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
           }}>
-            <h2 style={{fontSize: '24px', fontWeight: 'bold', marginBottom: '30px'}}>
-              Paso 1: Configurar Grupos
+            <h2 style={{fontSize: '24px', fontWeight: 'bold', marginBottom: '20px'}}>
+              Paso 1: Generar grupos
             </h2>
             
-            <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px', marginBottom: '30px'}}>
-              
-              {/* Basic Settings */}
-              <div>
-                <h3 style={{fontSize: '18px', fontWeight: 'bold', marginBottom: '15px'}}>Configuración Básica</h3>
-                
-                <div style={{marginBottom: '15px'}}>
-                  <label style={{display: 'block', marginBottom: '5px', fontWeight: 'bold'}}>
-                    Hora de inicio:
-                  </label>
-                  <input
-                    type="time"
-                    value={config.startTime}
-                    onChange={(e) => handleConfigChange('startTime', e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '8px',
-                      border: '1px solid #d1d5db',
-                      borderRadius: '6px'
-                    }}
-                  />
-                </div>
-                
-                        <div style={{marginBottom: '15px'}}>
-          <label style={{display: 'block', marginBottom: '5px', fontWeight: 'bold'}}>
-            Modalidad del torneo:
-          </label>
-          <select
-            value={config.courseHoles}
-            onChange={(e) => handleConfigChange('courseHoles', parseInt(e.target.value))}
-            style={{
-              width: '100%',
-              padding: '8px',
-              border: '1px solid #d1d5db',
-              borderRadius: '6px'
-            }}
-          >
-            <option value="18">18 hoyos (recomendado)</option>
-            <option value="9">9 hoyos (solo para clubes con limitaciones)</option>
-          </select>
-
-        </div>
-
-        {/* Nueva opción: Sesión preferida */}
-        <div style={{marginBottom: '15px'}}>
-          <label style={{display: 'block', marginBottom: '5px', fontWeight: 'bold'}}>
-            Sesión preferida para grupos principales:
-          </label>
-          <div style={{display: 'flex', gap: '15px', marginBottom: '10px'}}>
-            <label style={{display: 'flex', alignItems: 'center', cursor: 'pointer'}}>
-              <input
-                type="radio"
-                name="preferredSession"
-                value="morning"
-                checked={config.preferredSession === 'morning'}
-                onChange={(e) => handleConfigChange('preferredSession', e.target.value)}
-                style={{marginRight: '8px'}}
-              />
-              Mañana (grupos principales temprano)
-            </label>
-            <label style={{display: 'flex', alignItems: 'center', cursor: 'pointer'}}>
-              <input
-                type="radio"
-                name="preferredSession"
-                value="afternoon"
-                checked={config.preferredSession === 'afternoon'}
-                onChange={(e) => handleConfigChange('preferredSession', e.target.value)}
-                style={{marginRight: '8px'}}
-              />
-              Tarde (grupos principales en la tarde)
-            </label>
-          </div>
-
-        </div>
-              </div>
-
-              {/* Start Type Settings */}
-              <div>
-                <h3 style={{fontSize: '18px', fontWeight: 'bold', marginBottom: '15px'}}>Tipo de Salida</h3>
-                
-                <div style={{marginBottom: '15px'}}>
-                  <label style={{display: 'flex', alignItems: 'center', marginBottom: '10px'}}>
-                    <input
-                      type="radio"
-                      checked={!config.enableSimultaneousStarts}
-                      onChange={() => handleConfigChange('enableSimultaneousStarts', false)}
-                      style={{marginRight: '8px'}}
-                    />
-                    Salidas consecutivas
-                  </label>
-
-                  
-                  {!config.enableSimultaneousStarts && (
-                    <div style={{marginLeft: '25px', marginBottom: '15px'}}>
-                      <label style={{display: 'block', marginBottom: '5px', fontSize: '14px'}}>
-                        Intervalo entre grupos (minutos):
-                      </label>
-                      <input
-                        type="number"
-                        value={config.intervalMinutes}
-                        onChange={(e) => handleConfigChange('intervalMinutes', parseInt(e.target.value))}
-                        style={{
-                          width: '100px',
-                          padding: '6px',
-                          border: '1px solid #d1d5db',
-                          borderRadius: '4px'
-                        }}
-                      />
-                    </div>
-                  )}
-                  
-                  <label style={{display: 'flex', alignItems: 'center', marginBottom: '10px'}}>
-                    <input
-                      type="radio"
-                      checked={config.enableSimultaneousStarts}
-                      onChange={() => handleConfigChange('enableSimultaneousStarts', true)}
-                      style={{marginRight: '8px'}}
-                    />
-                    Salidas simultáneas (shotgun)
-                  </label>
-
-                  
-                  
-                  {config.enableSimultaneousStarts && (
-                    <div style={{marginLeft: '25px', marginTop: '10px'}}>
-                      <label style={{display: 'flex', alignItems: 'center', marginBottom: '10px'}}>
-                        <input
-                          type="checkbox"
-                          checked={config.enableTwoSessions}
-                          onChange={(e) => handleConfigChange('enableTwoSessions', e.target.checked)}
-                          style={{marginRight: '8px'}}
-                        />
-                        Habilitar dos tandas (mañana y tarde)
-                      </label>
-                      
-                      {config.enableTwoSessions && (
-                        <div style={{marginLeft: '25px'}}>
-                          <label style={{display: 'block', marginBottom: '5px', fontSize: '14px'}}>
-                            Inicio tanda vespertina:
-                          </label>
-                          <input
-                            type="time"
-                            value={config.afternoonStartTime}
-                            onChange={(e) => handleConfigChange('afternoonStartTime', e.target.value)}
-                            style={{
-                              padding: '6px',
-                              border: '1px solid #d1d5db',
-                              borderRadius: '4px'
-                            }}
-                          />
-                        </div>
-                      )}
-                      
-                      <label style={{display: 'flex', alignItems: 'center', marginTop: '10px'}}>
-                        <input
-                          type="checkbox"
-                          checked={config.useInterval}
-                          onChange={(e) => handleConfigChange('useInterval', e.target.checked)}
-                          style={{marginRight: '8px'}}
-                        />
-                        Usar intervalo entre grupos (opcional)
-                      </label>
-                      
-                      {config.useInterval && (
-                        <div style={{marginLeft: '25px', marginTop: '5px'}}>
-                          <label style={{display: 'block', marginBottom: '5px', fontSize: '14px'}}>
-                            Intervalo (minutos):
-                          </label>
-                          <input
-                            type="number"
-                            value={config.intervalMinutes}
-                            onChange={(e) => handleConfigChange('intervalMinutes', parseInt(e.target.value))}
-                            style={{
-                              width: '100px',
-                              padding: '6px',
-                              border: '1px solid #d1d5db',
-                              borderRadius: '4px'
-                            }}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
+            <div style={{backgroundColor: '#f0f9ff', padding: '16px 20px', borderRadius: '8px', marginBottom: '24px', border: '1px solid #bae6fd'}}>
+              <h3 style={{fontSize: '15px', fontWeight: '600', marginBottom: '8px', color: '#0c4a6e'}}>Configuración de salidas (definida en el torneo)</h3>
+              <p style={{fontSize: '14px', color: '#075985', margin: 0}}>
+                <strong>Tipo de salida:</strong> {config.enableSimultaneousStarts ? 'Salidas simultáneas (shotgun)' : 'Salidas consecutivas'}
+                {!config.enableSimultaneousStarts && config.intervalMinutes != null && ` • Intervalo: ${config.intervalMinutes} min`}
+                {config.enableSimultaneousStarts && config.enableTwoSessions && ' • Dos tandas (mañana y tarde)'}
+                {config.enableSimultaneousStarts && ` • Sesión preferida: ${config.preferredSession === 'morning' ? 'Mañana' : 'Tarde'}`}
+              </p>
+              <p style={{fontSize: '12px', color: '#0369a1', marginTop: '8px', marginBottom: 0}}>
+                Para cambiar esta configuración, editá el torneo desde el listado de torneos.
+              </p>
             </div>
             
             <div style={{textAlign: 'center'}}>
-              <button
-                onClick={() => {
-                  handleGenerateGroups()
-                  setCurrentStep(2)
-                }}
-                style={{
-                  backgroundColor: '#374151',
-                  color: 'white',
-                  padding: '15px 30px',
-                  borderRadius: '8px',
-                  border: 'none',
-                  cursor: 'pointer',
-                  fontSize: '18px',
-                  fontWeight: 'bold'
-                }}
-                disabled={generateGroups.isLoading}
-              >
-                {generateGroups.isLoading ? 'Generando Grupos...' : 'Generar Grupos y Continuar'}
-              </button>
+              {!canEditTournaments && (
+                <p style={{fontSize: '14px', color: '#6b7280', marginBottom: '16px'}}>
+                  Solo el administrador (o usuarios con permiso de editar torneos) puede generar o reorganizar grupos por handicap.
+                </p>
+              )}
+              {canEditTournaments && (
+                <>
+                  {groups && groups.length > 0 && (
+                    <div style={{
+                      fontSize: '14px',
+                      color: '#92400e',
+                      marginBottom: '16px',
+                      maxWidth: '480px',
+                      marginLeft: 'auto',
+                      marginRight: 'auto',
+                      padding: '12px 16px',
+                      backgroundColor: '#fef3c7',
+                      border: '1px solid #f59e0b',
+                      borderRadius: '8px',
+                      textAlign: 'left'
+                    }}>
+                      <strong>Ya hay grupos configurados</strong> (por ejemplo los que armaron los jugadores por la web). Si decidiste armar por handicap, usá el botón de abajo: se reemplazarán por nuevos grupos ordenados por HCP.
+                    </div>
+                  )}
+                  <p style={{fontSize: '13px', color: '#6b7280', marginBottom: '12px', maxWidth: '420px', marginLeft: 'auto', marginRight: 'auto'}}>
+                    Si los jugadores ya formaron grupos por la inscripción web, podés usar este botón para reorganizar por handicap; el sistema creará nuevos grupos según HCP y podés asignar tee times después.
+                  </p>
+                  <button
+                    onClick={() => {
+                      handleGenerateGroups()
+                      setCurrentStep(2)
+                    }}
+                    style={{
+                      backgroundColor: '#374151',
+                      color: 'white',
+                      padding: '15px 30px',
+                      borderRadius: '8px',
+                      border: 'none',
+                      cursor: 'pointer',
+                      fontSize: '18px',
+                      fontWeight: 'bold'
+                    }}
+                    disabled={generateGroups.isLoading}
+                  >
+                    {generateGroups.isLoading ? 'Generando Grupos...' : 'Generar Grupos y Continuar'}
+                  </button>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -711,6 +670,7 @@ export default function TeeTimeManagerSimple() {
 
         {/* Step 3: Groups Display */}
         {currentStep === 3 && groups && groups.length > 0 && (
+          <>
           <div style={{
             backgroundColor: 'white',
             padding: '30px',
@@ -718,7 +678,7 @@ export default function TeeTimeManagerSimple() {
             marginBottom: '20px',
             boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
           }}>
-            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px'}}>
+            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px'}}>
               <div style={{display: 'flex', alignItems: 'center', gap: '15px'}}>
                 <h2 style={{fontSize: '24px', fontWeight: 'bold', margin: 0}}>
                   Paso 3: Grupos con Tee Times Asignados
@@ -736,7 +696,29 @@ export default function TeeTimeManagerSimple() {
                   </div>
                 )}
               </div>
-              <button
+              <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
+                {canEditTournaments && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReorganizeByHcp(!(tournament?.groups_by_hcp === 1 || tournament?.groups_by_hcp === true))
+                      setShowReorganizeModal(true)
+                    }}
+                    style={{
+                      padding: '8px 14px',
+                      backgroundColor: tournament?.groups_by_hcp ? '#e0e7ff' : '#fef3c7',
+                      color: tournament?.groups_by_hcp ? '#3730a3' : '#92400e',
+                      border: tournament?.groups_by_hcp ? '1px solid #6366f1' : '1px solid #f59e0b',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                      fontWeight: '500'
+                    }}
+                  >
+                    {tournament?.groups_by_hcp ? 'Reorganizar por grupos' : 'Reorganizar por HCP'}
+                  </button>
+                )}
+                <button
                 onClick={() => setShowHelpModal(true)}
                 style={{
                   display: 'flex',
@@ -764,99 +746,78 @@ export default function TeeTimeManagerSimple() {
               </button>
             </div>
             
-            {/* Filtros de sesiones - Clicables */}
+            {/* Resumen Mañana / Tarde: fila arriba a ancho completo (formato antiguo) */}
             {groups && groups.length > 0 && (
-              <div style={{
-                display: 'flex',
-                gap: '20px',
-                marginBottom: '30px',
-                padding: '20px',
-                backgroundColor: '#f8f9fa',
-                borderRadius: '8px',
-                border: '1px solid #e5e7eb'
-              }}>
-                <div 
-                  style={{
-                    flex: 1,
-                    textAlign: 'center',
-                    padding: '15px',
-                    backgroundColor: sessionFilter === 'morning' ? '#dbeafe' : 'white',
-                    borderRadius: '8px',
-                    border: sessionFilter === 'morning' ? '2px solid #3b82f6' : '1px solid #d1d5db',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s ease',
-                    transform: sessionFilter === 'morning' ? 'scale(1.02)' : 'scale(1)'
-                  }}
-                  onClick={() => handleSessionFilterToggle('morning')}
-                  onMouseEnter={(e) => {
-                    if (sessionFilter !== 'morning') {
-                      e.currentTarget.style.backgroundColor = '#f3f4f6'
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (sessionFilter !== 'morning') {
-                      e.currentTarget.style.backgroundColor = 'white'
-                    }
-                  }}
-                >
-                  <div style={{display: 'flex', justifyContent: 'center', marginBottom: '8px'}}>
-                    <Sun size={20} style={{color: sessionFilter === 'morning' ? '#3b82f6' : '#6b7280'}} />
+              <div style={{ width: '100%', marginBottom: '24px' }}>
+                <div style={{
+                  display: 'flex',
+                  gap: '20px',
+                  padding: '20px',
+                  backgroundColor: '#f8f9fa',
+                  borderRadius: '8px',
+                  border: '1px solid #e5e7eb',
+                  width: '100%',
+                  boxSizing: 'border-box'
+                }}>
+                  <div 
+                    style={{
+                      flex: 1,
+                      textAlign: 'center',
+                      padding: '15px',
+                      backgroundColor: sessionFilter === 'morning' ? '#dbeafe' : 'white',
+                      borderRadius: '8px',
+                      border: sessionFilter === 'morning' ? '2px solid #3b82f6' : '1px solid #d1d5db',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease',
+                      transform: sessionFilter === 'morning' ? 'scale(1.02)' : 'scale(1)'
+                    }}
+                    onClick={() => handleSessionFilterToggle('morning')}
+                    onMouseEnter={(e) => {
+                      if (sessionFilter !== 'morning') e.currentTarget.style.backgroundColor = '#f3f4f6'
+                    }}
+                    onMouseLeave={(e) => {
+                      if (sessionFilter !== 'morning') e.currentTarget.style.backgroundColor = 'white'
+                    }}
+                  >
+                    <div style={{display: 'flex', justifyContent: 'center', marginBottom: '8px'}}>
+                      <Sun size={20} style={{color: sessionFilter === 'morning' ? '#3b82f6' : '#6b7280'}} />
+                    </div>
+                    <div style={{ fontSize: '18px', fontWeight: 'bold', color: sessionFilter === 'morning' ? '#1e40af' : '#111827' }}>
+                      {groups.filter(g => getGroupSession(g) === 'morning').length}
+                    </div>
+                    <div style={{ fontSize: '14px', color: sessionFilter === 'morning' ? '#3b82f6' : '#6b7280', fontWeight: sessionFilter === 'morning' ? 'bold' : 'normal' }}>
+                      Grupos Mañana {sessionFilter === 'morning' && '✓'}
+                    </div>
                   </div>
-                  <div style={{
-                    fontSize: '18px', 
-                    fontWeight: 'bold', 
-                    color: sessionFilter === 'morning' ? '#1e40af' : '#111827'
-                  }}>
-                    {groups.filter(g => getSessionFromTime(g.tee_time) === 'morning').length}
-                  </div>
-                  <div style={{
-                    fontSize: '14px', 
-                    color: sessionFilter === 'morning' ? '#3b82f6' : '#6b7280',
-                    fontWeight: sessionFilter === 'morning' ? 'bold' : 'normal'
-                  }}>
-                    Grupos Mañana {sessionFilter === 'morning' && '✓'}
-                  </div>
-                </div>
-                <div 
-                  style={{
-                    flex: 1,
-                    textAlign: 'center',
-                    padding: '15px',
-                    backgroundColor: sessionFilter === 'afternoon' ? '#fef3c7' : 'white',
-                    borderRadius: '8px',
-                    border: sessionFilter === 'afternoon' ? '2px solid #f59e0b' : '1px solid #d1d5db',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s ease',
-                    transform: sessionFilter === 'afternoon' ? 'scale(1.02)' : 'scale(1)'
-                  }}
-                  onClick={() => handleSessionFilterToggle('afternoon')}
-                  onMouseEnter={(e) => {
-                    if (sessionFilter !== 'afternoon') {
-                      e.currentTarget.style.backgroundColor = '#f3f4f6'
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (sessionFilter !== 'afternoon') {
-                      e.currentTarget.style.backgroundColor = 'white'
-                    }
-                  }}
-                >
-                  <div style={{display: 'flex', justifyContent: 'center', marginBottom: '8px'}}>
-                    <Moon size={20} style={{color: sessionFilter === 'afternoon' ? '#f59e0b' : '#6b7280'}} />
-                  </div>
-                  <div style={{
-                    fontSize: '18px', 
-                    fontWeight: 'bold', 
-                    color: sessionFilter === 'afternoon' ? '#92400e' : '#111827'
-                  }}>
-                    {groups.filter(g => getSessionFromTime(g.tee_time) === 'afternoon').length}
-                  </div>
-                  <div style={{
-                    fontSize: '14px', 
-                    color: sessionFilter === 'afternoon' ? '#f59e0b' : '#6b7280',
-                    fontWeight: sessionFilter === 'afternoon' ? 'bold' : 'normal'
-                  }}>
-                    Grupos Tarde {sessionFilter === 'afternoon' && '✓'}
+                  <div 
+                    style={{
+                      flex: 1,
+                      textAlign: 'center',
+                      padding: '15px',
+                      backgroundColor: sessionFilter === 'afternoon' ? '#fef3c7' : 'white',
+                      borderRadius: '8px',
+                      border: sessionFilter === 'afternoon' ? '2px solid #f59e0b' : '1px solid #d1d5db',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease',
+                      transform: sessionFilter === 'afternoon' ? 'scale(1.02)' : 'scale(1)'
+                    }}
+                    onClick={() => handleSessionFilterToggle('afternoon')}
+                    onMouseEnter={(e) => {
+                      if (sessionFilter !== 'afternoon') e.currentTarget.style.backgroundColor = '#f3f4f6'
+                    }}
+                    onMouseLeave={(e) => {
+                      if (sessionFilter !== 'afternoon') e.currentTarget.style.backgroundColor = 'white'
+                    }}
+                  >
+                    <div style={{display: 'flex', justifyContent: 'center', marginBottom: '8px'}}>
+                      <Moon size={20} style={{color: sessionFilter === 'afternoon' ? '#f59e0b' : '#6b7280'}} />
+                    </div>
+                    <div style={{ fontSize: '18px', fontWeight: 'bold', color: sessionFilter === 'afternoon' ? '#92400e' : '#111827' }}>
+                      {groups.filter(g => getGroupSession(g) === 'afternoon').length}
+                    </div>
+                    <div style={{ fontSize: '14px', color: sessionFilter === 'afternoon' ? '#f59e0b' : '#6b7280', fontWeight: sessionFilter === 'afternoon' ? 'bold' : 'normal' }}>
+                      Grupos Tarde {sessionFilter === 'afternoon' && '✓'}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -905,10 +866,13 @@ export default function TeeTimeManagerSimple() {
               <div 
                 key={group.group_number} 
                 style={{
+                  width: '100%',
+                  boxSizing: 'border-box',
                   backgroundColor: 'white',
                   borderRadius: '8px',
                   padding: '20px',
                   marginBottom: '20px',
+                  minHeight: '280px',
                   boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
                   border: dragOverGroup === group.group_number ? '2px solid #3b82f6' : 
                          ((group.participants?.length || 0) >= 4 ? '2px solid #9ca3af' : '1px solid #e5e7eb')
@@ -1023,131 +987,47 @@ export default function TeeTimeManagerSimple() {
                       </div>
                     </div>
 
-                    {/* Controles manuales simples: Turno / Hora / Hoyo / Aplicar */}
+                    {/* Resumen Turno / Hora / Hoyo + Editar (abre modal) */}
                     <div style={{
                       display: 'flex',
                       alignItems: 'center',
-                      gap: '10px',
-                      padding: '8px',
+                      gap: '12px',
+                      padding: '8px 12px',
                       backgroundColor: '#f9fafb',
                       border: '1px solid #e5e7eb',
                       borderRadius: '6px'
                     }}>
-                      {/* Turno */}
-                      <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
-                        <label style={{fontSize: '12px', color: '#374151'}}>Turno</label>
-                        <select
-                          value={(groupEdits[group.group_number]?.session) || getSessionFromTime(group.tee_time)}
-                          onChange={(e) => {
-                            const session = (e.target.value as 'morning' | 'afternoon')
-                            setGroupEdits(prev => ({
-                              ...prev,
-                              [group.group_number]: {
-                                session,
-                                time: prev[group.group_number]?.time || '',
-                                hole: prev[group.group_number]?.hole || group.starting_hole || 1
-                              }
-                            }))
-                          }}
-                          style={{
-                            padding: '6px',
-                            border: '1px solid #d1d5db',
-                            borderRadius: '4px'
-                          }}
-                        >
-                          <option value="morning">Mañana</option>
-                          <option value="afternoon">Tarde</option>
-                        </select>
-                      </div>
-
-                      {/* Hora */}
-                      <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
-                        <label style={{fontSize: '12px', color: '#374151'}}>Hora</label>
-                      <input
-                        type="time"
-                        step="60"
-                          value={(groupEdits[group.group_number]?.time) || (formatTime(group.tee_time) === 'Sin asignar' ? '' : formatTime(group.tee_time))}
-                        onChange={(e) => {
-                            const time = e.target.value
-                            setGroupEdits(prev => ({
-                              ...prev,
-                              [group.group_number]: {
-                                session: prev[group.group_number]?.session || getSessionFromTime(group.tee_time),
-                                time,
-                                hole: prev[group.group_number]?.hole || group.starting_hole || 1
-                              }
-                            }))
+                      <span style={{ fontSize: '13px', color: '#374151' }}>
+                        <strong>Turno:</strong> {((groupEdits[group.group_number]?.session) ?? getGroupSession(group)) === 'afternoon' ? 'Tarde' : 'Mañana'}
+                        {' · '}
+                        <strong>Hora:</strong> {(groupEdits[group.group_number]?.time) ?? (getDisplayTimeForGroup(group) || '—')}
+                        {' · '}
+                        <strong>Hoyo:</strong> {getDisplayHole(group) === 0 ? 'Sin asignar' : getDisplayHole(group)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const session = (groupEdits[group.group_number]?.session) ?? getGroupSession(group)
+                          const time = (groupEdits[group.group_number]?.time) ?? (getDisplayTimeForGroup(group) || (session === 'morning' ? config.startTime : config.afternoonStartTime))
+                          const hole = (groupEdits[group.group_number]?.hole) ?? getDisplayHole(group) ?? 0
+                          setEditModalValues({ session, time: time || '08:00', hole })
+                          setEditingGroupNumber(group.group_number)
                         }}
                         style={{
+                          padding: '6px 12px',
+                          fontSize: '13px',
+                          fontWeight: '500',
                           border: '1px solid #d1d5db',
-                          borderRadius: '4px',
-                          padding: '4px 8px',
-                          fontSize: '14px',
-                          width: '90px'
+                          borderRadius: '6px',
+                          background: 'white',
+                          color: '#374151',
+                          cursor: 'pointer'
                         }}
-                      />
-                      </div>
-
-                      {/* Hoyo */}
-                      <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
-                        <label style={{fontSize: '12px', color: '#374151'}}>Hoyo</label>
-                        <select
-                          value={(groupEdits[group.group_number]?.hole) ?? (group.starting_hole ?? 0)}
-                          onChange={(e) => {
-                            const hole = parseInt(e.target.value)
-                            setGroupEdits(prev => ({
-                              ...prev,
-                              [group.group_number]: {
-                                session: prev[group.group_number]?.session || getSessionFromTime(group.tee_time),
-                                time: prev[group.group_number]?.time || (formatTime(group.tee_time) === 'Sin asignar' ? '' : formatTime(group.tee_time)),
-                                hole
-                              }
-                            }))
-                          }}
-                          style={{
-                            padding: '6px',
-                            border: '1px solid #d1d5db',
-                            borderRadius: '4px'
-                          }}
-                        >
-                          <option value={0}>Sin asignar</option>
-                          {Array.from({ length: config.courseHoles || 18 }, (_, i) => i + 1).map(h => (
-                            <option key={h} value={h}>Hoyo {h}</option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {/* Aplicar */}
-                        <button
-                          onClick={() => {
-                          const edits = groupEdits[group.group_number] || {
-                            session: getSessionFromTime(group.tee_time),
-                            time: formatTime(group.tee_time) === 'Sin asignar' ? '' : formatTime(group.tee_time),
-                            hole: group.starting_hole || 1
-                          }
-                          // Si no se eligió hora, usar por defecto según turno
-                          let finalTime = edits.time
-                          if (!finalTime || finalTime === '') {
-                            finalTime = edits.session === 'morning' ? config.startTime : config.afternoonStartTime
-                          }
-                          const normalized = toHHMMSS(finalTime)
-                          handleMoveGroup(group.group_number, edits.hole, normalized)
-                          }}
-                          style={{
-                          backgroundColor: '#374151',
-                          color: 'white',
-                          padding: '6px 10px',
-                            borderRadius: '4px',
-                          border: 'none',
-                            cursor: 'pointer',
-                          fontSize: '12px'
-                          }}
-                        >
-                        Aplicar
-                        </button>
-
-                      {/* Reset */}
+                      >
+                        Editar
+                      </button>
                       <button
+                        type="button"
                         onClick={() => {
                           setGroupEdits(prev => {
                             const clone = { ...prev }
@@ -1156,16 +1036,16 @@ export default function TeeTimeManagerSimple() {
                           })
                         }}
                         style={{
-                          backgroundColor: 'white',
-                        color: '#374151',
                           padding: '6px 10px',
-                          borderRadius: '4px',
-                        border: '1px solid #d1d5db',
-                          cursor: 'pointer',
-                          fontSize: '12px'
+                          fontSize: '12px',
+                          border: '1px solid #d1d5db',
+                          borderRadius: '6px',
+                          background: 'white',
+                          color: '#6b7280',
+                          cursor: 'pointer'
                         }}
                       >
-                        Reset
+                        Restablecer
                       </button>
                     </div>
                     {/* Botón para eliminar grupo vacío */}
@@ -1202,7 +1082,9 @@ export default function TeeTimeManagerSimple() {
                   padding: '15px',
                   backgroundColor: '#f8f9fa',
                   borderRadius: '6px',
-                  minHeight: '80px',
+                  minHeight: '98px',
+                  width: '100%',
+                  boxSizing: 'border-box',
                   border: dragOverGroup === group.group_number ? '2px dashed #3b82f6' : '1px solid #e5e7eb'
                 }}>
                   {group.participants && group.participants.length > 0 ? (
@@ -1222,6 +1104,12 @@ export default function TeeTimeManagerSimple() {
                           setDraggedPlayer(null)
                         }}
                         style={{
+                          flex: '0 0 calc((100% - 24px) / 4)',
+                          width: 'calc((100% - 24px) / 4)',
+                          maxWidth: 'calc((100% - 24px) / 4)',
+                          minHeight: '60px',
+                          height: '60px',
+                          boxSizing: 'border-box',
                           display: 'inline-flex',
                           alignItems: 'center',
                           gap: '6px',
@@ -1282,19 +1170,19 @@ export default function TeeTimeManagerSimple() {
               </div>
             ))}
             
-            {/* Botones de acción */}
-            <div style={{display: 'flex', gap: '10px', marginBottom: '20px'}}>
+            {/* Botones de acción: una sola línea (Crear grupo, Reporte, Excel, Reconfigurar, Cerrar). Config. tee time = editando torneo. */}
+            <div style={{display: 'flex', flexWrap: 'wrap', gap: '10px', marginBottom: '20px', alignItems: 'center'}}>
               <button
                 onClick={handleCreateEmptyGroup}
                 disabled={createEmptyGroup.isLoading}
                 style={{
                   backgroundColor: 'white',
                   color: '#374151',
-                  padding: '8px 16px',
+                  padding: '8px 14px',
                   borderRadius: '6px',
                   border: '1px solid #d1d5db',
                   cursor: 'pointer',
-                  fontSize: '14px',
+                  fontSize: '13px',
                   display: 'flex',
                   alignItems: 'center',
                   gap: '6px'
@@ -1315,8 +1203,8 @@ export default function TeeTimeManagerSimple() {
               <button
                 onClick={() => {
                   // Separar grupos por sesión
-                  const morningGroups = groups?.filter(g => getSessionFromTime(g.tee_time) === 'morning') || [];
-                  const afternoonGroups = groups?.filter(g => getSessionFromTime(g.tee_time) === 'afternoon') || [];
+                  const morningGroups = groups?.filter(g => getGroupSession(g) === 'morning') || [];
+                  const afternoonGroups = groups?.filter(g => getGroupSession(g) === 'afternoon') || [];
                   
                   // Función para generar carátula
                   const formatDate = (value?: string) => {
@@ -1363,7 +1251,7 @@ export default function TeeTimeManagerSimple() {
                       <tbody>
                         ${sessionGroups.map(group => `
                           <tr class="group-header">
-                            <td>Grupo ${group.group_number} - ${formatTime(group.tee_time)} - Hoyo ${group.starting_hole === null || group.starting_hole === 0 ? 'Sin asignar' : group.starting_hole}</td>
+                            <td>Grupo ${group.group_number} - ${getDisplayTimeForGroup(group) || 'Sin asignar'} - Hoyo ${group.starting_hole === null || group.starting_hole === 0 ? 'Sin asignar' : group.starting_hole}</td>
                             <td>${group.participants?.length || 0} jugadores</td>
                           </tr>
                           ${group.participants?.map((p: any) => `
@@ -1484,11 +1372,11 @@ export default function TeeTimeManagerSimple() {
                 style={{
                   backgroundColor: '#3b82f6',
                   color: 'white',
-                  padding: '8px 16px',
+                  padding: '8px 14px',
                   borderRadius: '6px',
                   border: 'none',
                   cursor: 'pointer',
-                  fontSize: '14px',
+                  fontSize: '13px',
                   display: 'flex',
                   alignItems: 'center',
                   gap: '6px'
@@ -1503,68 +1391,70 @@ export default function TeeTimeManagerSimple() {
                 <FileText size={16} />
                 Ver Reporte para Imprimir
               </button>
-            </div>
-
-            <div style={{display: 'flex', gap: '10px', marginTop: '30px', justifyContent: 'space-between'}}>
-              <div style={{display: 'flex', gap: '10px'}}>
-                <button
-                  onClick={() => {
-                    console.log('🔙 Usuario navegando manualmente del paso 3 al paso 1 (RECONFIGURAR GRUPOS)')
-                    setIsReconfiguring(true) // Activar modo reconfiguración
-                    setManualNavigation(true) // Activar navegación manual
-                    setCurrentStep(1)
-                    console.log('🔧 Modo reconfiguración activado - permanecerá en Paso 1')
-                  }}
-                  style={{
-                    backgroundColor: '#ef4444',
-                    color: 'white',
-                    padding: '12px 24px',
-                    borderRadius: '6px',
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontSize: '16px'
-                  }}
-                >
-                  ← Reconfigurar Grupos
-                </button>
-                <button
-                  onClick={() => {
-                    console.log('🔙 Usuario navegando manualmente del paso 3 al paso 2 (CAMBIAR CONFIGURACIÓN)')
-                    setManualNavigation(true) // Activar navegación manual
-                    setCurrentStep(2)
-                    // Resetear navegación manual después de un tiempo
-                    setTimeout(() => setManualNavigation(false), 1000)
-                  }}
-                  style={{
-                    backgroundColor: '#e5e7eb',
-                    color: '#374151',
-                    padding: '12px 24px',
-                    borderRadius: '6px',
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontSize: '16px'
-                  }}
-                >
-                  ← Cambiar Configuración Tee Times
-                </button>
-              </div>
               <button
+                type="button"
+                onClick={handleExportGroupsExcel}
+                style={{
+                  backgroundColor: '#059669',
+                  color: 'white',
+                  padding: '8px 14px',
+                  borderRadius: '6px',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#047857'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = '#059669'
+                }}
+              >
+                <FileSpreadsheet size={16} />
+                Exportar a Excel
+              </button>
+              <button
+                type="button"
+                title="Volver al paso 1 para regenerar grupos (ej. si agregaste o sacaste jugadores)"
+                onClick={() => {
+                  setIsReconfiguring(true)
+                  setManualNavigation(true)
+                  setCurrentStep(1)
+                }}
+                style={{
+                  backgroundColor: '#ef4444',
+                  color: 'white',
+                  padding: '8px 14px',
+                  borderRadius: '6px',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                ← Reconfigurar Grupos
+              </button>
+              <button
+                type="button"
                 onClick={() => navigate(`/club/${clubId}`)}
                 style={{
                   backgroundColor: '#374151',
                   color: 'white',
-                  padding: '12px 24px',
+                  padding: '8px 14px',
                   borderRadius: '6px',
                   border: 'none',
                   cursor: 'pointer',
-                  fontSize: '16px'
+                  fontSize: '13px'
                 }}
               >
                 Cerrar
               </button>
             </div>
-          </div>
-        )}
 
         {/* Modal de Ayuda */}
         {showHelpModal && (
@@ -1675,7 +1565,84 @@ export default function TeeTimeManagerSimple() {
             No hay grupos configurados. Haz clic en "Generar Grupos" para comenzar.
           </div>
         )}
-      </div>
+          </div>
+          </div>
+          </>
+        )}
+
+      {/* Modal Reorganizar: por HCP o por grupos (un solo paso: generar + asignar tee times + ir a resultado) */}
+      {showReorganizeModal && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1001
+          }}
+          onClick={() => setShowReorganizeModal(false)}
+        >
+          <div
+            style={{
+              backgroundColor: 'white',
+              borderRadius: '8px',
+              padding: '24px',
+              maxWidth: '420px',
+              width: '90%',
+              boxShadow: '0 10px 25px rgba(0, 0, 0, 0.15)'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '12px', color: '#111827' }}>
+              {reorganizeByHcp ? 'Reorganizar grupos por handicap' : 'Reorganizar por grupos'}
+            </h3>
+            <p style={{ fontSize: '14px', color: '#4b5563', marginBottom: '20px', lineHeight: 1.5 }}>
+              {reorganizeByHcp
+                ? 'Se reemplazarán todos los grupos por nuevos ordenados por HCP y se asignarán los horarios de salida con la configuración actual. Verás el resultado en la pantalla de grupos.'
+                : 'Se reemplazarán los grupos por orden de inscripción y se asignarán los horarios de salida con la configuración actual. Verás el resultado en la pantalla de grupos.'}
+            </p>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => setShowReorganizeModal(false)}
+                style={{
+                  padding: '10px 18px',
+                  backgroundColor: '#f3f4f6',
+                  color: '#374151',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '14px'
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => handleReorganize(reorganizeByHcp)}
+                disabled={generateGroups.isLoading}
+                style={{
+                  padding: '10px 18px',
+                  backgroundColor: reorganizeByHcp ? '#f59e0b' : '#6366f1',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: generateGroups.isLoading ? 'not-allowed' : 'pointer',
+                  fontSize: '14px',
+                  fontWeight: '600'
+                }}
+              >
+                {generateGroups.isLoading ? 'Reorganizando...' : 'Reorganizar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal para crear grupo vacío */}
       {showCreateGroupModal && (
@@ -1725,25 +1692,35 @@ export default function TeeTimeManagerSimple() {
             
             <div style={{marginBottom: '20px'}}>
               <label style={{display: 'block', marginBottom: '8px', fontWeight: 'bold'}}>
-                Horario (opcional):
+                Horario (opcional, 24h):
               </label>
-              <input
-                type="time"
-                step="60"
-                value={newGroupConfig.time}
-                onChange={(e) => setNewGroupConfig(prev => ({ ...prev, time: e.target.value }))}
-                style={{
-                  width: '100%',
-                  padding: '8px 12px',
-                  border: '1px solid #d1d5db',
-                  borderRadius: '6px',
-                  fontSize: '14px'
-                }}
-                pattern="[0-9]{2}:[0-9]{2}"
-                placeholder="00:00"
-              />
+              <div style={{display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap'}}>
+                {(() => {
+                  const raw = newGroupConfig.time || ''
+                  const [h = 14, m = 0] = raw ? raw.split(':').map(Number) : [14, 0]
+                  const hour = isNaN(h) ? 14 : Math.max(0, Math.min(23, h))
+                  const min = isNaN(m) ? 0 : Math.max(0, Math.min(59, m))
+                  const setT = (newH: number, newM: number) => setNewGroupConfig(prev => ({ ...prev, time: `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}` }))
+                  return (
+                    <>
+                      <select value={hour} onChange={(e) => setT(Number(e.target.value), min)} style={{ padding: '8px', fontSize: '14px', border: '1px solid #d1d5db', borderRadius: '6px' }}>
+                        {Array.from({ length: 24 }, (_, i) => <option key={i} value={i}>{String(i).padStart(2, '0')}</option>)}
+                      </select>
+                      <span style={{ fontWeight: 'bold', color: '#6b7280' }}>:</span>
+                      <select value={min} onChange={(e) => setT(hour, Number(e.target.value))} style={{ padding: '8px', fontSize: '14px', border: '1px solid #d1d5db', borderRadius: '6px' }}>
+                        {Array.from({ length: 60 }, (_, i) => <option key={i} value={i}>{String(i).padStart(2, '0')}</option>)}
+                      </select>
+                      {['08:00', '12:00', '14:00'].map(quick => {
+                        const [qh, qm] = quick.split(':').map(Number)
+                        return <button key={quick} type="button" onClick={() => setT(qh, qm)} style={{ padding: '6px 10px', fontSize: '13px', border: '1px solid #d1d5db', borderRadius: '6px', background: '#f9fafb', cursor: 'pointer' }}>{quick}</button>
+                      })}
+                      <button type="button" onClick={() => setNewGroupConfig(prev => ({ ...prev, time: '' }))} style={{ padding: '6px 10px', fontSize: '13px', border: '1px solid #d1d5db', borderRadius: '6px', background: '#fef2f2', color: '#991b1b', cursor: 'pointer' }}>Sin hora</button>
+                    </>
+                  )
+                })()}
+              </div>
               <p style={{fontSize: '12px', color: '#6b7280', marginTop: '4px'}}>
-                Deja vacío si no quieres asignar horario específico
+                Deja en blanco con &quot;Sin hora&quot; si no quieres asignar horario
               </p>
             </div>
             
@@ -1784,6 +1761,134 @@ export default function TeeTimeManagerSimple() {
           </div>
         </div>
       )}
+
+      {/* Modal Editar horario y hoyo del grupo */}
+      {editingGroupNumber != null && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000
+          }}
+          onClick={() => setEditingGroupNumber(null)}
+        >
+          <div
+            style={{
+              backgroundColor: 'white',
+              padding: '24px',
+              borderRadius: '8px',
+              width: '380px',
+              boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '16px' }}>
+              Editar grupo {editingGroupNumber}
+            </h3>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600', color: '#374151' }}>Turno</label>
+              <select
+                value={editModalValues.session}
+                onChange={(e) => {
+                  const newSession = e.target.value as 'morning' | 'afternoon'
+                  const currentH = parseInt((editModalValues.time || '08:00').split(':')[0], 10) || 8
+                  const isMorningHour = currentH < 12
+                  const newTime = newSession === 'morning'
+                    ? (isMorningHour ? editModalValues.time : (config.startTime || '08:00'))
+                    : (isMorningHour ? (config.afternoonStartTime || '14:00') : editModalValues.time)
+                  setEditModalValues(prev => ({ ...prev, session: newSession, time: newTime || (newSession === 'morning' ? '08:00' : '14:00') }))
+                }}
+                style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px' }}
+              >
+                <option value="morning">Mañana</option>
+                <option value="afternoon">Tarde</option>
+              </select>
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600', color: '#374151' }}>Hora (24h)</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                {(() => {
+                  const [h = 8, m = 0] = (editModalValues.time || '08:00').split(':').map(Number)
+                  const hour = isNaN(h) ? 8 : Math.max(0, Math.min(23, h))
+                  const min = isNaN(m) ? 0 : Math.max(0, Math.min(59, m))
+                  const setTime = (newH: number, newM: number) =>
+                    setEditModalValues(prev => ({ ...prev, time: `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}` }))
+                  const isTarde = editModalValues.session === 'afternoon'
+                  const quickTimes = isTarde ? ['14:00', '15:00', '16:00'] : ['08:00', '09:00', '10:00']
+                  return (
+                    <>
+                      <select value={hour} onChange={(e) => setTime(Number(e.target.value), min)} style={{ padding: '8px', fontSize: '14px', border: '1px solid #d1d5db', borderRadius: '6px' }}>
+                        {Array.from({ length: 24 }, (_, i) => <option key={i} value={i}>{String(i).padStart(2, '0')}</option>)}
+                      </select>
+                      <span style={{ fontWeight: 'bold', color: '#6b7280' }}>:</span>
+                      <select value={min} onChange={(e) => setTime(hour, Number(e.target.value))} style={{ padding: '8px', fontSize: '14px', border: '1px solid #d1d5db', borderRadius: '6px' }}>
+                        {Array.from({ length: 60 }, (_, i) => <option key={i} value={i}>{String(i).padStart(2, '0')}</option>)}
+                      </select>
+                      <span style={{ fontSize: '12px', color: '#6b7280', marginLeft: '4px' }}>Rápido ({isTarde ? 'tarde' : 'mañana'}):</span>
+                      {quickTimes.map(quick => {
+                        const [qh, qm] = quick.split(':').map(Number)
+                        return (
+                          <button key={quick} type="button" onClick={() => setTime(qh, qm)} style={{ padding: '6px 10px', fontSize: '13px', border: '1px solid #d1d5db', borderRadius: '6px', background: '#f9fafb', cursor: 'pointer' }}>
+                            {quick}
+                          </button>
+                        )
+                      })}
+                    </>
+                  )
+                })()}
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '600', color: '#374151' }}>Hoyo de salida</label>
+              <select
+                value={editModalValues.hole}
+                onChange={(e) => setEditModalValues(prev => ({ ...prev, hole: parseInt(e.target.value) }))}
+                style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px' }}
+              >
+                <option value={0}>Sin asignar</option>
+                {Array.from({ length: config.courseHoles || 18 }, (_, i) => i + 1).map(h => (
+                  <option key={h} value={h}>Hoyo {h}</option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => setEditingGroupNumber(null)}
+                style={{ padding: '8px 16px', fontSize: '14px', border: '1px solid #d1d5db', borderRadius: '6px', background: '#f9fafb', color: '#374151', cursor: 'pointer' }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const finalTime = editModalValues.time || (editModalValues.session === 'morning' ? config.startTime : config.afternoonStartTime)
+                  const normalized = toHHMMSS(finalTime)
+                  setGroupEdits(prev => ({ ...prev, [editingGroupNumber]: { session: editModalValues.session, time: finalTime, hole: editModalValues.hole } }))
+                  handleMoveGroup(editingGroupNumber, editModalValues.hole || 0, normalized)
+                  setEditingGroupNumber(null)
+                }}
+                style={{ padding: '8px 16px', fontSize: '14px', borderRadius: '6px', background: '#374151', color: 'white', border: 'none', cursor: 'pointer' }}
+              >
+                Aplicar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      </div>
     </div>
   )
 }

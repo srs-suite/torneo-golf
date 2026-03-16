@@ -10,8 +10,7 @@
     "backend": "cd backend && npm run dev",
     "frontend": "cd frontend && npm run dev",
     "build": "cd frontend && npm run build",
-    "install-all": "npm install && cd frontend && npm install",
-    "system": "powershell -ExecutionPolicy Bypass -File scripts/INICIAR_SISTEMA_PS5.ps1"
+    "install-all": "npm install && cd frontend && npm install"
   },
   "keywords": [
     "golf",

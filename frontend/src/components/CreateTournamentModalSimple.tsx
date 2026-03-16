@@ -1,8 +1,9 @@
 import { useForm } from 'react-hook-form'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { X, Trophy, Calendar, DollarSign } from 'lucide-react'
+import { X, Trophy, Calendar, DollarSign, Link2, Upload } from 'lucide-react'
+import { tournamentService } from '@/services/tournamentService'
 import { useCreateTournament, useUpdateTournament } from '@/hooks/useTournaments'
 import { Tournament, CreateTournamentData } from '@/types/tournament'
 import { toast } from 'react-hot-toast'
@@ -44,9 +45,48 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
   const createTournament = useCreateTournament(clubId)
   const updateTournament = useUpdateTournament(clubId, tournament?.tournament_id || 0)
   const [isRankingEvent, setIsRankingEvent] = useState<boolean>((tournament as any)?.is_ranking_event === 1 || (tournament as any)?.is_ranking_event === true)
-  const [resultsMode, setResultsMode] = useState<'standard' | 'scratch_bands'>(((tournament as any)?.results_mode as any) || 'standard')
+  const readResultsMode = (t: any): 'standard' | 'scratch_bands' => {
+    const v = t?.results_mode
+    if (v === 'scratch_bands' || (typeof v === 'string' && v.toLowerCase() === 'scratch_bands')) return 'scratch_bands'
+    return 'standard'
+  }
+  const [resultsMode, setResultsMode] = useState<'standard' | 'scratch_bands'>(readResultsMode(tournament as any))
   const [separateLadies, setSeparateLadies] = useState<boolean>((tournament as any)?.separate_ladies === 1 || (tournament as any)?.separate_ladies === true)
   const [ladiesByHcp, setLadiesByHcp] = useState<boolean>((tournament as any)?.ladies_by_hcp === 1 || (tournament as any)?.ladies_by_hcp === true)
+  const [publicInscription, setPublicInscription] = useState<boolean>((tournament as any)?.public_inscription === 1 || (tournament as any)?.public_inscription === true)
+  const [publicInscriptionAllowGroups, setPublicInscriptionAllowGroups] = useState<boolean>((tournament as any)?.public_inscription_allow_groups !== 0 && (tournament as any)?.public_inscription_allow_groups !== false)
+  const [flyerUrl, setFlyerUrl] = useState<string>((tournament as any)?.flyer_url || '')
+  const [uploadingFlyer, setUploadingFlyer] = useState(false)
+  /** Al crear torneo, si el usuario eligió un archivo, se guarda aquí y se sube después de crear. */
+  const [pendingFlyerDataUrl, setPendingFlyerDataUrl] = useState<string | null>(null)
+  const [teeSimultaneousStarts, setTeeSimultaneousStarts] = useState<boolean>((tournament as any)?.enable_simultaneous_starts === 1 || (tournament as any)?.enable_simultaneous_starts === true)
+  const [teeIntervalMinutes, setTeeIntervalMinutes] = useState<number>(typeof (tournament as any)?.tee_interval_minutes === 'number' ? (tournament as any).tee_interval_minutes : 10)
+  const [teePreferredSession, setTeePreferredSession] = useState<'morning' | 'afternoon'>(((tournament as any)?.preferred_session === 'afternoon') ? 'afternoon' : 'morning')
+  const [teeAfternoonStartTime, setTeeAfternoonStartTime] = useState<string>((tournament as any)?.afternoon_start_time || '14:00')
+  const [teeTwoSessions, setTeeTwoSessions] = useState<boolean>((tournament as any)?.enable_two_sessions === 1 || (tournament as any)?.enable_two_sessions === true)
+
+  useEffect(() => {
+    if (isOpen) {
+      if (tournament) {
+        const t = tournament as any
+        setPublicInscription(t?.public_inscription === 1 || t?.public_inscription === true)
+        setPublicInscriptionAllowGroups(t?.public_inscription_allow_groups !== 0 && t?.public_inscription_allow_groups !== false)
+        setFlyerUrl(t?.flyer_url || '')
+        setPendingFlyerDataUrl(null)
+        setResultsMode(readResultsMode(t))
+      setSeparateLadies(t?.separate_ladies === 1 || t?.separate_ladies === true)
+      setLadiesByHcp(t?.ladies_by_hcp === 1 || t?.ladies_by_hcp === true)
+      setIsRankingEvent(t?.is_ranking_event === 1 || t?.is_ranking_event === true)
+      setTeeSimultaneousStarts(t?.enable_simultaneous_starts === 1 || t?.enable_simultaneous_starts === true)
+      setTeeIntervalMinutes(typeof t?.tee_interval_minutes === 'number' ? t.tee_interval_minutes : 10)
+      setTeePreferredSession(t?.preferred_session === 'afternoon' ? 'afternoon' : 'morning')
+      setTeeAfternoonStartTime(t?.afternoon_start_time || '14:00')
+      setTeeTwoSessions(t?.enable_two_sessions === 1 || t?.enable_two_sessions === true)
+      } else {
+        setPendingFlyerDataUrl(null)
+      }
+    }
+  }, [isOpen, tournament])
 
   const {
     register,
@@ -87,22 +127,46 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
           ? (tournament?.tournament_date ? new Date(tournament.tournament_date).toISOString().split('T')[0] : '')
           : data.tournament_date
       }
+      const teePayload = {
+        enable_simultaneous_starts: teeSimultaneousStarts,
+        afternoon_start_time: teeAfternoonStartTime,
+        preferred_session: teePreferredSession,
+        tee_interval_minutes: teeIntervalMinutes,
+        enable_two_sessions: teeTwoSessions
+      }
       if (isEditMode) {
         await updateTournament.mutateAsync({ 
           ...safeData, 
           is_ranking_event: isRankingEvent,
           results_mode: resultsMode,
           separate_ladies: separateLadies,
-          ladies_by_hcp: ladiesByHcp
+          ladies_by_hcp: ladiesByHcp,
+          public_inscription: publicInscription,
+          public_inscription_allow_groups: publicInscriptionAllowGroups,
+          flyer_url: flyerUrl.trim() || undefined,
+          ...teePayload
         })
       } else {
-        await createTournament.mutateAsync({ 
+        const newTournament = await createTournament.mutateAsync({ 
           ...safeData, 
           is_ranking_event: isRankingEvent,
           results_mode: resultsMode,
           separate_ladies: separateLadies,
-          ladies_by_hcp: ladiesByHcp
+          ladies_by_hcp: ladiesByHcp,
+          public_inscription: publicInscription,
+          public_inscription_allow_groups: publicInscriptionAllowGroups,
+          flyer_url: flyerUrl.trim() || undefined,
+          ...teePayload
         })
+        if (pendingFlyerDataUrl && newTournament?.tournament_id) {
+          try {
+            const { url } = await tournamentService.uploadFlyer(clubId, newTournament.tournament_id, pendingFlyerDataUrl)
+            await tournamentService.updateTournament(clubId, newTournament.tournament_id, { flyer_url: url })
+          } catch (e) {
+            console.error('Error subiendo flyer tras crear torneo:', e)
+            toast.error('Torneo creado pero no se pudo subir el flyer. Podés editarlo y subir la imagen de nuevo.')
+          }
+        }
       }
       // Si llegamos aquí, la operación fue exitosa
       handleClose()
@@ -122,7 +186,7 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
   }
 
   const tournamentTypeOptions = [
-    { value: 'stroke_play', label: 'Stroke Play', description: 'Juego por golpes' },
+    { value: 'stroke_play', label: 'Stroke Play (por HCP / neto)', description: 'Juego por golpes; resultados con handicap' },
     { value: 'match_play', label: 'Match Play', description: 'Juego por hoyos' },
     { value: 'scramble', label: 'Scramble', description: 'Equipo - mejor posición' },
     { value: 'best_ball', label: 'Best Ball', description: 'Equipo - mejor score' }
@@ -221,6 +285,9 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                       </option>
                     ))}
                   </select>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Para torneo por handicap (neto): elegí <strong>Stroke Play (por HCP / neto)</strong>. Las salidas se pueden agrupar por HCP en Gestión de tee times → Generar grupos.
+                  </p>
                 </div>
 
                 {/* Estado del Torneo */}
@@ -242,6 +309,121 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                   <p className="mt-1 text-xs text-gray-500">
                     Cambiar a "Abierto" cuando esté listo para recibir inscripciones
                   </p>
+                </div>
+
+                {/* Inscripción por web */}
+                <div className="md:col-span-2">
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={publicInscription}
+                        onChange={(e) => setPublicInscription(e.target.checked)}
+                        className="h-4 w-4 text-blue-600 border-gray-300 rounded"
+                      />
+                      <Link2 className="w-5 h-5 text-blue-600" />
+                      <span className="text-sm font-medium text-blue-900">
+                        Inscripción por web: los jugadores podrán anotarse desde un enlace público
+                      </span>
+                    </label>
+                    <p className="text-xs text-blue-700 mt-2">
+                      Si activás esta opción, el sistema generará una URL para publicar (WhatsApp, redes, etc.). Los jugadores ingresan con su teléfono y eligen turno y grupo. Después podés reorganizar salidas por handicap si lo necesitás.
+                    </p>
+                    {publicInscription && (
+                      <label className="flex items-center gap-3 cursor-pointer mt-3 pt-3 border-t border-blue-200">
+                        <input
+                          type="checkbox"
+                          checked={publicInscriptionAllowGroups}
+                          onChange={(e) => setPublicInscriptionAllowGroups(e.target.checked)}
+                          className="h-4 w-4 text-blue-600 border-gray-300 rounded"
+                        />
+                        <span className="text-sm font-medium text-blue-900">
+                          Permitir que los inscriptos formen grupos o se unan a uno
+                        </span>
+                      </label>
+                    )}
+                    {publicInscription && !publicInscriptionAllowGroups && (
+                      <p className="text-xs text-amber-700 mt-1">
+                        Si desactivás esta opción (por ejemplo porque vas a organizar por HCP), en la web solo podrán inscribirse de forma individual; la opción de crear o unirse a grupos quedará deshabilitada.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Flyer del torneo (inscripción pública) */}
+                <div className="md:col-span-2">
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Flyer del torneo
+                    </label>
+                    <p className="text-xs text-gray-600 mb-2">
+                      Si la inscripción es por web, podés agregar una imagen del flyer (cartel). Se mostrará en la página de inscripción. Pegá una URL o subí un archivo desde tu computadora (PNG, JPG, GIF o WebP, máx. 5 MB).
+                    </p>
+                    <div className="flex flex-wrap gap-2 items-center mb-2">
+                      <input
+                        type="url"
+                        value={flyerUrl}
+                        onChange={(e) => setFlyerUrl(e.target.value)}
+                        placeholder="https://ejemplo.com/flyer.jpg"
+                        className="flex-1 min-w-[200px] border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                      />
+                      <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm font-medium text-gray-700 cursor-pointer hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                        <Upload className="w-4 h-4" />
+                        {isEditMode ? 'Subir archivo' : 'Elegir archivo'}
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/jpg,image/gif,image/webp"
+                          className="sr-only"
+                          disabled={uploadingFlyer}
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0]
+                            if (!file) return
+                            const maxSize = 5 * 1024 * 1024
+                            if (file.size > maxSize) {
+                              toast.error('La imagen no debe superar 5 MB')
+                              e.target.value = ''
+                              return
+                            }
+                            const dataUrl = await new Promise<string>((resolve, reject) => {
+                              const r = new FileReader()
+                              r.onload = () => resolve(r.result as string)
+                              r.onerror = () => reject(new Error('Error al leer el archivo'))
+                              r.readAsDataURL(file)
+                            })
+                            if (isEditMode && tournament?.tournament_id) {
+                              setUploadingFlyer(true)
+                              try {
+                                const { url } = await tournamentService.uploadFlyer(clubId, tournament.tournament_id, dataUrl)
+                                setFlyerUrl(url)
+                                toast.success('Flyer subido correctamente')
+                              } catch (err: any) {
+                                toast.error(err?.response?.data?.error || err?.message || 'Error al subir la imagen')
+                              } finally {
+                                setUploadingFlyer(false)
+                                e.target.value = ''
+                              }
+                            } else {
+                              setPendingFlyerDataUrl(dataUrl)
+                              toast.success('Imagen lista. Guardá el torneo para subirla.')
+                            }
+                            e.target.value = ''
+                          }}
+                        />
+                      </label>
+                    </div>
+                    {uploadingFlyer && <p className="text-xs text-amber-600 mb-1">Subiendo imagen…</p>}
+                    {(flyerUrl.trim() || pendingFlyerDataUrl) && (
+                      <div className="mt-3">
+                        <p className="text-xs text-gray-500 mb-1">Vista previa:</p>
+                        <img
+                          src={flyerUrl.trim() || pendingFlyerDataUrl || ''}
+                          alt="Flyer del torneo"
+                          className="max-w-full max-h-40 object-contain rounded border border-gray-200 bg-white"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                        />
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Horarios */}
@@ -438,7 +620,7 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                     className="w-full px-3 py-2 border border-gray-300 rounded-md"
                   >
                     <option value="standard">Estándar (0–7.9, 8–13.9, 14–21.9, 22–53.9)</option>
-                    <option value="scratch_bands">Scratch (Gross) + Bandas (-5–7.9, 8–15.8, 15.9–54)</option>
+                    <option value="scratch_bands">Scratch (Gross) + Bandas (5–7.9, 8–15.8, 15.9–54)</option>
                   </select>
                   
                   {/* Descripción de la modalidad seleccionada */}
@@ -459,7 +641,7 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                         <p className="font-semibold text-blue-900">Modalidad Scratch:</p>
                         <ul className="list-disc list-inside space-y-0.5 ml-2">
                           <li><strong>Scratch (Gross):</strong> Ganador absoluto por score bruto</li>
-                          <li><strong>1ra Banda:</strong> HCP -5.0 - 7.9 (Net)</li>
+                          <li><strong>1ra Banda:</strong> HCP 5.0 - 7.9 (Net)</li>
                           <li><strong>2da Banda:</strong> HCP 8.0 - 15.8 (Net)</li>
                           <li><strong>3ra Banda:</strong> HCP 15.9 - 54.0 (Net)</li>
                           <li><strong>Sin HCP:</strong> Jugadores sin handicap asignado (agrupados por separado)</li>
@@ -498,6 +680,108 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                         ) : (
                           <p>✓ Todas las damas competirán en un único grupo</p>
                         )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Salidas: Consecutivas / Simultáneas (se usa en Gestión de Tee Times) */}
+          <div className="px-6 mt-4">
+            <div className="bg-gray-50 border border-gray-200 rounded p-4">
+              <h4 className="text-sm font-semibold text-gray-800 mb-3">Salidas del torneo</h4>
+              <p className="text-xs text-gray-600 mb-3">Define cómo se asignarán los horarios de salida. Esta configuración se usará en Gestión de Tee Times.</p>
+              <div className="space-y-4">
+                <div className="flex flex-col gap-2">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="teeStarts"
+                      checked={!teeSimultaneousStarts}
+                      onChange={() => setTeeSimultaneousStarts(false)}
+                      className="h-4 w-4 text-gray-600"
+                    />
+                    <span className="text-sm font-medium text-gray-800">Salidas consecutivas</span>
+                  </label>
+                  <p className="text-xs text-gray-600 ml-6">Cada grupo sale a intervalos (ej. cada 10 min).</p>
+                  {!teeSimultaneousStarts && (
+                    <div className="ml-6 flex items-center gap-2">
+                      <label className="text-sm text-gray-700">Intervalo (min):</label>
+                      <input
+                        type="number"
+                        min={5}
+                        max={30}
+                        value={teeIntervalMinutes}
+                        onChange={(e) => setTeeIntervalMinutes(Number(e.target.value) || 10)}
+                        className="w-20 px-2 py-1 border border-gray-300 rounded text-sm"
+                      />
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-col gap-2">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="teeStarts"
+                      checked={teeSimultaneousStarts}
+                      onChange={() => setTeeSimultaneousStarts(true)}
+                      className="h-4 w-4 text-gray-600"
+                    />
+                    <span className="text-sm font-medium text-gray-800">Salidas simultáneas (shotgun)</span>
+                  </label>
+                  <p className="text-xs text-gray-600 ml-6">Todos los grupos salen a la misma hora desde distintos hoyos.</p>
+                  {teeSimultaneousStarts && (
+                    <div className="ml-6 space-y-2">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={teeTwoSessions}
+                          onChange={(e) => setTeeTwoSessions(e.target.checked)}
+                          className="h-4 w-4 text-gray-600"
+                        />
+                        <span className="text-sm text-gray-700">Dos tandas (mañana y tarde)</span>
+                      </label>
+                      {teeTwoSessions && (
+                        <div className="flex items-center gap-2">
+                          <label className="text-sm text-gray-700">Inicio tanda tarde (24h):</label>
+                          <input
+                            type="text"
+                            value={teeAfternoonStartTime}
+                            onChange={(e) => setTeeAfternoonStartTime(e.target.value)}
+                            onBlur={(e) => {
+                              let v = e.target.value.replace(/\D/g, '')
+                              if (v.length >= 2) v = v.slice(0, 2) + ':' + v.slice(2, 4)
+                              if (v.length === 5) setTeeAfternoonStartTime(v)
+                            }}
+                            placeholder="14:00"
+                            maxLength={5}
+                            className="px-2 py-1 border border-gray-300 rounded text-sm w-20"
+                          />
+                        </div>
+                      )}
+                      <div className="flex items-center gap-3">
+                        <label className="flex items-center gap-1 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="teePreferred"
+                            checked={teePreferredSession === 'morning'}
+                            onChange={() => setTeePreferredSession('morning')}
+                            className="h-3 w-3"
+                          />
+                          <span className="text-sm">Mañana</span>
+                        </label>
+                        <label className="flex items-center gap-1 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="teePreferred"
+                            checked={teePreferredSession === 'afternoon'}
+                            onChange={() => setTeePreferredSession('afternoon')}
+                            className="h-3 w-3"
+                          />
+                          <span className="text-sm">Tarde</span>
+                        </label>
                       </div>
                     </div>
                   )}

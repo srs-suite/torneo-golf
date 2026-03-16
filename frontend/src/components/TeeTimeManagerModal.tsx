@@ -390,10 +390,14 @@ export function TeeTimeManagerModal({
 
   const formatTeeTime = (teeTime: string) => {
     if (!teeTime) return 'Sin asignar'
-    return new Date(`2000-01-01 ${teeTime}`).toLocaleTimeString('es-ES', {
-      hour: '2-digit',
-      minute: '2-digit'
-    })
+    const str = String(teeTime).trim()
+    const m = str.match(/^(\d{1,2}):(\d{2})/)
+    if (m) return `${m[1].padStart(2, '0')}:${m[2]}`
+    if (str.includes(':')) {
+      const [h, min] = str.split(':').map(Number)
+      if (!isNaN(h) && !isNaN(min)) return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`
+    }
+    return str
   }
 
   if (!isOpen) return null
@@ -609,12 +613,19 @@ export function TeeTimeManagerModal({
                   
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Hora de inicio
+                      Hora de inicio (24h)
                     </label>
                     <input
-                      type="time"
+                      type="text"
                       value={settings.start_time}
                       onChange={(e) => setSettings(prev => ({ ...prev, start_time: e.target.value }))}
+                      onBlur={(e) => {
+                        let v = e.target.value.replace(/\D/g, '')
+                        if (v.length >= 2) v = v.slice(0, 2) + ':' + v.slice(2, 4)
+                        if (v.length === 5) setSettings(prev => ({ ...prev, start_time: v }))
+                      }}
+                      placeholder="08:00"
+                      maxLength={5}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
@@ -671,24 +682,38 @@ export function TeeTimeManagerModal({
                     <>
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Fin turno mañana
+                          Fin turno mañana (24h)
                         </label>
                         <input
-                          type="time"
+                          type="text"
                           value={settings.morning_end_time}
                           onChange={(e) => setSettings(prev => ({ ...prev, morning_end_time: e.target.value }))}
+                          onBlur={(e) => {
+                            let v = e.target.value.replace(/\D/g, '')
+                            if (v.length >= 2) v = v.slice(0, 2) + ':' + v.slice(2, 4)
+                            if (v.length === 5) setSettings(prev => ({ ...prev, morning_end_time: v }))
+                          }}
+                          placeholder="12:00"
+                          maxLength={5}
                           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
                       </div>
 
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Inicio turno tarde
+                          Inicio turno tarde (24h)
                         </label>
                         <input
-                          type="time"
+                          type="text"
                           value={settings.afternoon_start_time}
                           onChange={(e) => setSettings(prev => ({ ...prev, afternoon_start_time: e.target.value }))}
+                          onBlur={(e) => {
+                            let v = e.target.value.replace(/\D/g, '')
+                            if (v.length >= 2) v = v.slice(0, 2) + ':' + v.slice(2, 4)
+                            if (v.length === 5) setSettings(prev => ({ ...prev, afternoon_start_time: v }))
+                          }}
+                          placeholder="14:00"
+                          maxLength={5}
                           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
                       </div>

@@ -74,6 +74,7 @@ export function useUpdateTournament(clubId: number, tournamentId: number) {
       console.log('✅ Torneo actualizado exitosamente:', updatedTournament)
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.tournaments(clubId) })
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.tournament(clubId, tournamentId) })
+      queryClient.refetchQueries({ queryKey: QUERY_KEYS.tournaments(clubId) })
       toast.success('Torneo actualizado exitosamente')
     },
     onError: (error: any) => {
@@ -188,6 +189,7 @@ export function useGenerateGroups(clubId: number, tournamentId: number) {
     onSuccess: () => {
       console.log('✅ Grupos generados exitosamente')
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.tournamentGroups(clubId, tournamentId) })
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.tournaments(clubId) })
       toast.success('Grupos generados exitosamente')
     },
     onError: (error: any) => {

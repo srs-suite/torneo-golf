@@ -1,0 +1,17 @@
+Torneo de Golf
+
+pc   
+
+cd C:\Documents\proyectos\Torneogolf
+   git add backend/src/server.js backend/src/services/database.js
+   git commit -m "Fix producción y editar gasto"
+   git push origin main
+
+Subir los archivos que se cambiaron con FileZilla
+y luego hacer
+
+
+en ssh
+cd /home/retailso/torneogolf-source
+   pm2 restart teetracker-backend
+

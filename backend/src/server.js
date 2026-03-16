@@ -10,7 +10,7 @@ import dotenv from 'dotenv';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load environment variables from backend directory
+// Cargar .env desde la raíz del proyecto (igual que antes)
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 
 // Database functions (using real exports)
@@ -26,6 +26,7 @@ import {
     getAllMembers, getMemberById, createMember, updateMember, deleteMember, updateMemberStatus,
     getMemberTournaments, getMemberScorecards, getMemberHandicapHistory, getMemberContributions,
     verifyMemberPhone, verifyReportToken,
+    getTournamentForPublicInscription, getTournamentForPublicInscriptionUnfiltered, getTournamentGroupsForInscription, getTournamentParticipantsWithoutGroup, addPublicInscription, checkPublicInscriptionStatus,
     
     // Tournament functions
     getAllTournaments, getTournamentById, createTournament, updateTournament, deleteTournament,
@@ -332,6 +333,47 @@ async function handleClubAPI(req, res, pathParts) {
                 } else {
                     sendError(res, 'Método no permitido', 405);
                 }
+            } else if (subResource === 'flyer-upload' && method === 'POST') {
+                // Subir flyer (imagen) del torneo; manejado primero para que no sea capturado por otras rutas
+                try {
+                    const body = await parseBody(req);
+                    const dataUrl = body?.image;
+                    if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
+                        sendError(res, 'Se requiere una imagen en formato data URL (data:image/...)', 400);
+                        return;
+                    }
+                    const match = dataUrl.match(/^data:image\/(\w+);base64,(.+)$/);
+                    if (!match) {
+                        sendError(res, 'Formato de imagen no válido', 400);
+                        return;
+                    }
+                    const ext = match[1].toLowerCase() === 'jpeg' ? 'jpg' : match[1].toLowerCase();
+                    if (!['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)) {
+                        sendError(res, 'Formato de imagen no permitido. Usá PNG, JPG, GIF o WebP.', 400);
+                        return;
+                    }
+                    const base64Data = match[2];
+                    const uploadsDir = path.join(__dirname, 'uploads', 'tournaments');
+                    if (!fs.existsSync(uploadsDir)) {
+                        fs.mkdirSync(uploadsDir, { recursive: true });
+                    }
+                    const fileName = `${resourceId}_flyer.${ext}`;
+                    const filePath = path.join(uploadsDir, fileName);
+                    const buf = Buffer.from(base64Data, 'base64');
+                    if (buf.length > 5 * 1024 * 1024) {
+                        sendError(res, 'La imagen no debe superar 5 MB', 400);
+                        return;
+                    }
+                    fs.writeFileSync(filePath, buf);
+                    const baseUrl = process.env.API_BASE_URL || `http://${req.headers.host}`;
+                    const url = `${baseUrl.replace(/\/$/, '')}/uploads/tournaments/${fileName}`;
+                    sendJSON(res, { success: true, url });
+                    return;
+                } catch (err) {
+                    console.error('Flyer upload error:', err);
+                    sendError(res, err.message || 'Error al subir la imagen', 500);
+                    return;
+                }
             } else if (method === 'GET' && !subResource) {
                 const tournament = await getTournamentById(parseInt(clubId), parseInt(resourceId));
                 sendJSON(res, { success: true, data: tournament });
@@ -409,7 +451,8 @@ async function handleClubAPI(req, res, pathParts) {
                 } else {
                     sendError(res, 'Método no permitido', 405);
                 }
-            } else if (method === 'PUT' && !subResource) {
+            }
+            else if (method === 'PUT' && !subResource) {
                 const tournamentData = await parseBody(req);
                 const updatedTournament = await updateTournament(parseInt(clubId), parseInt(resourceId), tournamentData);
                 sendJSON(res, { success: true, data: updatedTournament, message: 'Torneo actualizado exitosamente' });
@@ -1157,6 +1200,128 @@ async function handlePublicReportAPI(req, res, pathParts) {
     }
 }
 
+// Public Inscription API (inscripción por teléfono + grupos + preferencia mañana/tarde)
+// Rutas: /api/public/inscription/:clubId/verify | /api/public/inscription/:clubId/tournament/:tid | .../tournament/:tid/groups | .../tournament/:tid/inscribe
+async function handlePublicInscriptionAPI(req, res, pathParts) {
+    const method = req.method;
+    const clubId = pathParts[3];
+    const action = pathParts[4];
+
+    if (method === 'OPTIONS') {
+        res.writeHead(200, corsHeaders);
+        res.end();
+        return;
+    }
+
+    try {
+        const clubIdNum = parseInt(clubId);
+
+        // POST .../verify -> verificar teléfono (mismo flujo que report)
+        if (action === 'verify' && method === 'POST') {
+            const body = await parseBody(req);
+            const { phone } = body;
+            if (!phone) return sendError(res, 'Número de teléfono requerido', 400);
+            const result = await verifyMemberPhone(clubIdNum, phone);
+            if (result.success) {
+                sendJSON(res, { success: true, token: result.token, memberName: result.memberName });
+            } else {
+                sendError(res, result.message || 'Teléfono no encontrado', 404);
+            }
+            return;
+        }
+
+        // GET .../tournament/:tournamentId -> datos del torneo (inhabilitado si pasó la fecha límite de inscripción)
+        if (action === 'tournament' && pathParts[5] && !pathParts[6] && method === 'GET') {
+            const tid = parseInt(pathParts[5]);
+            const tournament = await getTournamentForPublicInscription(clubIdNum, tid);
+            if (!tournament) {
+                const unfiltered = await getTournamentForPublicInscriptionUnfiltered(clubIdNum, tid);
+                if (unfiltered) return sendError(res, 'El plazo de inscripción ha finalizado', 403);
+                return sendError(res, 'Torneo no encontrado', 404);
+            }
+            const payload = {
+                tournament_id: tournament.tournament_id,
+                tournament_name: tournament.tournament_name,
+                tournament_date: tournament.tournament_date,
+                registration_deadline: tournament.registration_deadline ?? null,
+                max_participants: tournament.max_participants ?? null,
+                public_inscription_allow_groups: tournament.public_inscription_allow_groups ?? 1,
+                flyer_url: tournament.flyer_url != null && String(tournament.flyer_url).trim() !== '' ? String(tournament.flyer_url).trim() : null
+            };
+            sendJSON(res, { success: true, tournament: payload });
+            return;
+        }
+
+        // GET .../tournament/:tournamentId/groups -> grupos con menos de 4
+        if (action === 'tournament' && pathParts[5] && pathParts[6] === 'groups' && method === 'GET') {
+            const tid = parseInt(pathParts[5]);
+            const groups = await getTournamentGroupsForInscription(tid);
+            sendJSON(res, { success: true, groups });
+            return;
+        }
+
+        // GET .../tournament/:tournamentId/participants-without-group?token=xxx -> inscriptos sin grupo (para crear grupo)
+        if (action === 'tournament' && pathParts[5] && pathParts[6] === 'participants-without-group' && method === 'GET') {
+            const tid = parseInt(pathParts[5]);
+            const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
+            const token = url.searchParams.get('token');
+            if (!token) return sendError(res, 'Token requerido', 400);
+            const verification = await verifyReportToken(clubIdNum, token);
+            if (!verification.success) return sendError(res, verification.message, 401);
+            const memberId = verification.member_id;
+            if (!memberId) return sendError(res, 'Sesión inválida', 401);
+            const participants = await getTournamentParticipantsWithoutGroup(tid, memberId);
+            sendJSON(res, { success: true, participants });
+            return;
+        }
+
+        // POST .../tournament/:tournamentId/status -> verificar si ya está inscripto (body: token)
+        if (action === 'tournament' && pathParts[5] && pathParts[6] === 'status' && method === 'POST') {
+            const tid = parseInt(pathParts[5]);
+            const body = await parseBody(req);
+            const { token: bodyToken } = body || {};
+            if (!bodyToken) return sendError(res, 'Token requerido', 400);
+            const verification = await verifyReportToken(clubIdNum, bodyToken);
+            if (!verification.success) return sendError(res, verification.message, 401);
+            const memberId = verification.member_id;
+            if (!memberId) return sendError(res, 'Sesión inválida', 401);
+            const { alreadyInscribed } = await checkPublicInscriptionStatus(clubIdNum, tid, memberId);
+            sendJSON(res, { success: true, alreadyInscribed });
+            return;
+        }
+
+        // POST .../tournament/:tournamentId/inscribe -> inscribir (token + opciones)
+        if (action === 'tournament' && pathParts[5] && pathParts[6] === 'inscribe' && method === 'POST') {
+            const tid = parseInt(pathParts[5]);
+            const body = await parseBody(req);
+            const { token, createGroup, groupNumber, teeTimePreference, addToGroup } = body || {};
+            if (!token) return sendError(res, 'Token requerido', 400);
+            const isJoiningGroup = groupNumber != null && groupNumber !== '' && !createGroup;
+            if (!isJoiningGroup && (!teeTimePreference || (teeTimePreference !== 'morning' && teeTimePreference !== 'afternoon'))) {
+                return sendError(res, 'Debe elegir turno mañana o tarde', 400);
+            }
+            const verification = await verifyReportToken(clubIdNum, token);
+            if (!verification.success) return sendError(res, verification.message, 401);
+            const memberId = verification.member_id;
+            if (!memberId) return sendError(res, 'Sesión inválida', 401);
+            await addPublicInscription(clubIdNum, tid, memberId, {
+                createGroup: !!createGroup,
+                groupNumber: groupNumber != null ? parseInt(groupNumber) : undefined,
+                teeTimePreference: teeTimePreference || undefined,
+                addToGroup: Array.isArray(addToGroup) ? addToGroup : undefined
+            });
+            sendJSON(res, { success: true, message: 'Inscripción realizada' });
+            return;
+        }
+
+        sendError(res, 'Recurso no encontrado', 404);
+    } catch (error) {
+        console.error('Error en Public Inscription API:', error);
+        const status = error.statusCode && error.statusCode >= 400 && error.statusCode < 600 ? error.statusCode : 500;
+        sendError(res, error.message || 'Error en inscripción', status);
+    }
+}
+
 // Public Finance API handler (for members transparency)
 async function handlePublicFinanceAPI(req, res, pathParts) {
     const method = req.method;
@@ -1283,6 +1448,9 @@ const server = http.createServer(async (req, res) => {
         } else if (pathParts[1] === 'public' && pathParts[2] === 'report') {
             await handlePublicReportAPI(req, res, pathParts);
             return;
+        } else if (pathParts[1] === 'public' && pathParts[2] === 'inscription') {
+            await handlePublicInscriptionAPI(req, res, pathParts);
+            return;
         }
     }
 
@@ -1308,6 +1476,27 @@ const server = http.createServer(async (req, res) => {
             });
             fs.createReadStream(filePath).pipe(res);
             return;
+        }
+    }
+
+    // Serve uploaded tournament flyers
+    if (pathname.startsWith('/uploads/tournaments/')) {
+        const fileName = pathname.substring(21); // Remove '/uploads/tournaments/'
+        if (fileName && !fileName.includes('..')) {
+            const filePath = path.join(__dirname, 'uploads', 'tournaments', fileName);
+            if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+                const ext = path.extname(filePath).toLowerCase();
+                const contentType = {
+                    '.png': 'image/png',
+                    '.jpg': 'image/jpeg',
+                    '.jpeg': 'image/jpeg',
+                    '.gif': 'image/gif',
+                    '.webp': 'image/webp'
+                }[ext] || 'application/octet-stream';
+                res.writeHead(200, { 'Content-Type': contentType, ...corsHeaders, 'Cache-Control': 'public, max-age=86400' });
+                fs.createReadStream(filePath).pipe(res);
+                return;
+            }
         }
     }
 

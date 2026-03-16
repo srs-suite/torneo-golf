@@ -144,3 +144,7 @@ vite.config.ts.timestamp-*
 *.xlsx
 *.zip
 *.rar
+
+# Uploads (flyers, logos, etc.)
+backend/src/uploads/
+backend/uploads/

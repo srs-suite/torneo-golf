@@ -11,7 +11,6 @@ import { Login } from '@/pages/Login'
 import { ClubAdmin } from '@/pages/ClubAdmin'
 
 import TeeTimeManagerSimple from '@/pages/TeeTimeManagerSimple'
-// import TeeTimeReport from '@/pages/TeeTimeReport' // File removed
 import MobileScorecard from '@/pages/MobileScorecard'
 import ManualScorecardEntry from '@/pages/ManualScorecardEntry'
 import ScorecardPlayerSelection from '@/pages/ScorecardPlayerSelection'
@@ -24,6 +23,7 @@ import TournamentResults from '@/pages/TournamentResults'
 import Rankings from '@/pages/Rankings'
 import Payments from '@/pages/Payments'
 import PublicFinancialReport from '@/pages/PublicFinancialReport'
+import PublicInscription from '@/pages/PublicInscription'
 
 // Componente para redirigir /club/:clubId a /club/:clubId/admin
 function ClubRedirect() {
@@ -65,9 +65,6 @@ function App() {
       {/* Gestión de Tee Times */}
       <Route path="/club/:clubId/tournaments/:tournamentId/tee-times" element={<TeeTimeManagerSimple />} />
       
-      {/* Reporte de Tee Times - Removed */}
-      {/* <Route path="/club/:clubId/tournaments/:tournamentId/tee-times/report" element={<TeeTimeReport />} /> */}
-      
       {/* Scorecard móvil */}
       <Route path="/club/:clubId/tournaments/:tournamentId/mobile/:playerId" element={<MobileScorecard />} />
       
@@ -99,6 +96,8 @@ function App() {
       
       {/* Informe contable público para socios */}
       <Route path="/club/:clubId/informe-contable" element={<PublicFinancialReport />} />
+      {/* Inscripción pública al torneo (por teléfono, grupos, preferencia mañana/tarde) */}
+      <Route path="/club/:clubId/torneo/:tournamentId/inscribirse" element={<PublicInscription />} />
       
       {/* Ruta catch-all: redirigir al login si no hay ruta coincidente */}
       <Route path="*" element={<Navigate to="/login" replace />} />
