@@ -87,6 +87,33 @@ export function calculateHCPWithTee(
   return Math.round(hcp);
 }
 
+/** Par for standard 18-hole course */
+const DEFAULT_PAR = 72;
+
+/**
+ * Calculate HCP local from handicap index using default slope/course rating by gender.
+ * Formula: index * (slope/113) + (course_rating - par), rounded.
+ * Used when no course/tee is selected (e.g. external player form).
+ */
+export function calculateHCPFromIndexDefault(
+  handicapIndex: number | null | undefined,
+  gender?: string | null
+): number | null {
+  if (handicapIndex == null || !Number.isFinite(Number(handicapIndex))) return null;
+  const index = Number(handicapIndex);
+  let slopeRating: number;
+  let courseRating: number;
+  if (gender === 'F') {
+    slopeRating = 118;
+    courseRating = 69.8;
+  } else {
+    slopeRating = 125;
+    courseRating = 72.3;
+  }
+  const hcp = index * (slopeRating / 113) + (courseRating - DEFAULT_PAR);
+  return Math.round(hcp);
+}
+
 /**
  * Get tee color for display
  */

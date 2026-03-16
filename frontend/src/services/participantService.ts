@@ -43,6 +43,19 @@ export const updateParticipantStatus = async (
   return response.data.data;
 };
 
+export const updateParticipantHandicap = async (
+  clubId: number,
+  tournamentId: number,
+  participantId: number,
+  data: { handicap_index?: number | null; handicap_local?: number | null }
+): Promise<Participant[]> => {
+  const response = await axios.put(
+    `${API_URL}/${clubId}/tournaments/${tournamentId}/participants/${participantId}`,
+    data
+  );
+  return response.data.data;
+};
+
 export const updateParticipantPayment = async (
   clubId: number,
   tournamentId: number,

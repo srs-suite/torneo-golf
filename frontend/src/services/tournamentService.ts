@@ -92,8 +92,15 @@ export const tournamentService = {
     player_phone?: string
     player_club?: string
     handicap_index: number
-    is_member: boolean
+    is_member?: boolean
     notes?: string
+    /** Número de grupo (opcional; si el torneo usa grupos). */
+    group_number?: number | null
+    member_id?: number | null
+    external_player_id?: number | null
+    player_type?: 'member' | 'visitor' | 'external'
+    status?: string
+    payment_status?: string
   }): Promise<TournamentParticipant> {
     console.log(`🏆 API: POST /club/${clubId}/tournaments/${tournamentId}/participants`, participantData)
     const response = await api.post(`/club/${clubId}/tournaments/${tournamentId}/participants`, participantData)
@@ -119,6 +126,12 @@ export const tournamentService = {
     const response = await api.post(`/club/${clubId}/tournaments/${tournamentId}/generate-groups`, options)
     console.log('🏆 Groups generated response:', response.data)
     return response.data.data || response.data
+  },
+
+  // Reacomodar participantes por HCP (mover al grupo con número más bajo que tenga su banda y espacio)
+  async rebalanceGroupsByHcp(clubId: number, tournamentId: number): Promise<{ moved: number; message?: string }> {
+    const response = await api.post(`/club/${clubId}/tournaments/${tournamentId}/rebalance-groups-by-hcp`)
+    return response.data.data ?? response.data
   },
 
   // Mover jugador entre grupos

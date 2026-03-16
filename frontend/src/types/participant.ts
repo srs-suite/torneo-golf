@@ -23,6 +23,10 @@ export interface Participant {
   payment_notes?: string | null
   notes?: string
   display_club?: string
+  /** Número de grupo (cuando el torneo usa grupos). */
+  group_number?: number | null
+  /** ID usado para mover jugador de grupo (backend: participation_id). */
+  participation_id?: number
 }
 
 export interface PlayerSearchResult {

@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
 import { X, UserX, Plus, User, Trash2 } from 'lucide-react'
 import { useCreateExternalPlayer, useExternalPlayers, useDeleteExternalPlayer, useUpdateExternalPlayer } from '@/hooks/useParticipants'
 import { checkDuplicateExternalPlayers } from '@/services/participantService'
+import { calculateHCPFromIndexDefault } from '@/utils/teeSelection'
 import { SearchInput } from './SearchInput'
 import DuplicatePlayerModal from './DuplicatePlayerModal'
 
@@ -13,14 +14,14 @@ const externalPlayerSchema = z.object({
   member_number: z.string().optional().or(z.literal('')),
   email: z.string().email('Email inválido').optional().or(z.literal('')),
   phone: z.string().optional().or(z.literal('')),
-  gender: z.enum(['M', 'F', 'Other']).optional(),
+  gender: z.enum(['M', 'F', 'Other']).optional().or(z.literal('')),
   handicap_index: z.preprocess(
-    (val) => val === '' ? 0 : Number(val),
-    z.number().min(-10, 'Index mínimo: -10').max(54, 'Index máximo: 54')
+    (val) => (val === '' || val === undefined || val === null ? null : Number(val)),
+    z.number().min(-10, 'Index mínimo: -10').max(54, 'Index máximo: 54').nullable()
   ),
   handicap_local: z.preprocess(
-    (val) => val === '' ? 0 : Number(val),
-    z.number().min(0, 'HCP mínimo: 0').max(72, 'HCP máximo: 72')
+    (val) => (val === '' || val === undefined || val === null ? null : Number(val)),
+    z.number().min(0, 'HCP mínimo: 0').max(72, 'HCP máximo: 72').nullable()
   ),
   home_club: z.string().optional().or(z.literal('')),
   notes: z.string().optional().or(z.literal(''))
@@ -61,6 +62,8 @@ export function CreateExternalPlayerModal({
 
   const {
     register,
+    watch,
+    setValue,
     handleSubmit,
     formState: { errors, isSubmitting },
     reset
@@ -72,16 +75,18 @@ export function CreateExternalPlayerModal({
       email: '',
       phone: '',
       gender: undefined,
-      handicap_index: 0,
-      handicap_local: 0,
+      handicap_index: null as number | null,
+      handicap_local: null as number | null,
       home_club: '',
       notes: ''
     }
   })
 
+  const skipNextHcpCalcRef = useRef(false)
   // Reset form when initialName changes or editingPlayer is provided
   useEffect(() => {
     if (isOpen) {
+      skipNextHcpCalcRef.current = true
       if (editingPlayer) {
         // Editing mode: pre-fill with existing data and show form directly
         setShowCreateForm(true)
@@ -91,8 +96,8 @@ export function CreateExternalPlayerModal({
           email: editingPlayer.player_email || '',
           phone: editingPlayer.player_phone || '',
           gender: editingPlayer.gender || undefined,
-          handicap_index: parseFloat(editingPlayer.handicap_index) || 0,
-          handicap_local: editingPlayer.handicap_local || 0,
+          handicap_index: editingPlayer.handicap_index != null && editingPlayer.handicap_index !== '' ? Number(editingPlayer.handicap_index) : null,
+          handicap_local: editingPlayer.handicap_local != null && editingPlayer.handicap_local !== '' ? Number(editingPlayer.handicap_local) : null,
           home_club: editingPlayer.player_club || '',
           notes: editingPlayer.notes || ''
         })
@@ -105,14 +110,31 @@ export function CreateExternalPlayerModal({
           email: '',
           phone: '',
           gender: undefined,
-          handicap_index: 0,
-          handicap_local: 0,
+          handicap_index: null,
+          handicap_local: null,
           home_club: '',
           notes: ''
         })
       }
     }
   }, [editingPlayer, initialName, isOpen, reset])
+
+  // Auto-calcular HCP local cuando el usuario cambia el Index (no sobrescribir al abrir/editar)
+  const indexVal = watch('handicap_index')
+  const genderVal = watch('gender')
+  useEffect(() => {
+    if (skipNextHcpCalcRef.current) {
+      skipNextHcpCalcRef.current = false
+      return
+    }
+    const idx = indexVal !== '' && indexVal != null && Number.isFinite(Number(indexVal)) ? Number(indexVal) : null
+    if (idx !== null) {
+      const calculated = calculateHCPFromIndexDefault(idx, genderVal)
+      if (calculated !== null) setValue('handicap_local', calculated)
+    } else {
+      setValue('handicap_local', null)
+    }
+  }, [indexVal, genderVal, setValue])
 
   // Additional effect to handle form reset when switching to create form
   useEffect(() => {
@@ -124,8 +146,8 @@ export function CreateExternalPlayerModal({
         email: '',
         phone: '',
         gender: undefined,
-        handicap_index: 0,
-        handicap_local: 0,
+        handicap_index: null,
+        handicap_local: null,
         home_club: '',
         notes: ''
       })
@@ -406,7 +428,6 @@ export function CreateExternalPlayerModal({
             <select
               {...register('gender')}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
-              defaultValue=""
             >
               <option value="">Sin especificar</option>
               <option value="M">Masculino</option>
@@ -436,35 +457,45 @@ export function CreateExternalPlayerModal({
             {/* Index */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Index
+                Index (vacío = Sin HCP)
               </label>
               <input
-                type="number"
-                step="0.1"
-                min="-10"
-                max="54"
-                {...register('handicap_index')}
+                type="text"
+                inputMode="decimal"
+                {...register('handicap_index', {
+                  setValueAs: (v) => {
+                    const s = typeof v === 'string' ? v.trim() : v
+                    if (s === '' || s === undefined || s === null) return null
+                    const n = Number(s)
+                    return Number.isFinite(n) ? n : null
+                  }
+                })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
-                placeholder="0.0"
+                placeholder="Sin HCP"
               />
               {errors.handicap_index && (
                 <p className="mt-1 text-sm text-red-600">{errors.handicap_index.message}</p>
               )}
             </div>
 
-            {/* HCP */}
+            {/* HCP local */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                HCP
+                HCP local (vacío = Sin HCP)
               </label>
               <input
-                type="number"
-                step="1"
-                min="0"
-                max="72"
-                {...register('handicap_local')}
+                type="text"
+                inputMode="decimal"
+                {...register('handicap_local', {
+                  setValueAs: (v) => {
+                    const s = typeof v === 'string' ? v.trim() : v
+                    if (s === '' || s === undefined || s === null) return null
+                    const n = Number(s)
+                    return Number.isFinite(n) ? n : null
+                  }
+                })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
-                placeholder="0"
+                placeholder="Sin HCP"
               />
               {errors.handicap_local && (
                 <p className="mt-1 text-sm text-red-600">{errors.handicap_local.message}</p>
@@ -601,7 +632,7 @@ export function CreateExternalPlayerModal({
                               <div className="font-medium text-gray-900">{player.player_name}</div>
                               <div className="text-sm text-gray-500">
                                 {player.member_number && `N°: ${player.member_number} • `}
-                                {player.player_club || 'Sin club'} • Index: {player.handicap_index || 0} • HCP: {player.handicap_local || 0}
+                                {player.player_club || 'Sin club'} • Index: {player.handicap_index != null && player.handicap_index !== '' ? player.handicap_index : 'Sin HCP'} • HCP: {player.handicap_local != null && player.handicap_local !== '' ? player.handicap_local : 'Sin HCP'}
                               </div>
                               {player.player_email && (
                                 <div className="text-xs text-gray-400">{player.player_email}</div>

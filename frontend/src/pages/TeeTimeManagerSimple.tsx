@@ -1009,7 +1009,8 @@ export default function TeeTimeManagerSimple() {
                         onClick={() => {
                           const session = (groupEdits[group.group_number]?.session) ?? getGroupSession(group)
                           const time = (groupEdits[group.group_number]?.time) ?? (getDisplayTimeForGroup(group) || (session === 'morning' ? config.startTime : config.afternoonStartTime))
-                          const hole = (groupEdits[group.group_number]?.hole) ?? getDisplayHole(group) ?? 0
+                          const rawHole = (groupEdits[group.group_number]?.hole) ?? getDisplayHole(group) ?? 0
+                          const hole = config.enableSimultaneousStarts ? rawHole : (rawHole || 1)
                           setEditModalValues({ session, time: time || '08:00', hole })
                           setEditingGroupNumber(group.group_number)
                         }}
@@ -1684,7 +1685,8 @@ export default function TeeTimeManagerSimple() {
                   fontSize: '14px'
                 }}
               >
-                {Array.from({ length: 18 }, (_, i) => i + 1).map(hole => (
+                {config.enableSimultaneousStarts && <option value={0}>Sin asignar</option>}
+                {Array.from({ length: config.courseHoles || 18 }, (_, i) => i + 1).map(hole => (
                   <option key={hole} value={hole}>Hoyo {hole}</option>
                 ))}
               </select>
@@ -1855,7 +1857,7 @@ export default function TeeTimeManagerSimple() {
                 onChange={(e) => setEditModalValues(prev => ({ ...prev, hole: parseInt(e.target.value) }))}
                 style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px' }}
               >
-                <option value={0}>Sin asignar</option>
+                {config.enableSimultaneousStarts && <option value={0}>Sin asignar</option>}
                 {Array.from({ length: config.courseHoles || 18 }, (_, i) => i + 1).map(h => (
                   <option key={h} value={h}>Hoyo {h}</option>
                 ))}

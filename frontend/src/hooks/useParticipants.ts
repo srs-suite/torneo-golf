@@ -6,6 +6,7 @@ import {
   removeTournamentParticipant,
   updateParticipantStatus,
   updateParticipantPayment,
+  updateParticipantHandicap,
   searchPlayersForTournament,
   createExternalPlayer,
   updateExternalPlayer,
@@ -51,10 +52,11 @@ export const useAddParticipant = (clubId: number, tournamentId: number) => {
     mutationFn: (participantData) => addTournamentParticipant(clubId, tournamentId, participantData),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.participants(clubId, tournamentId) });
+      queryClient.invalidateQueries({ queryKey: ['tournament-groups', clubId, tournamentId] });
       toast.success('Participante agregado exitosamente!');
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.message || 'Error al agregar participante');
+      toast.error(error.response?.data?.message || error.response?.data?.error || 'Error al agregar participante');
       console.error('Error adding participant:', error);
     },
   });
@@ -67,6 +69,7 @@ export const useRemoveParticipant = (clubId: number, tournamentId: number) => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.participants(clubId, tournamentId) });
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.externalPlayers(clubId) });
+      queryClient.invalidateQueries({ queryKey: ['tournament-groups', clubId, tournamentId] });
       toast.success('Participante eliminado exitosamente!');
     },
     onError: (error: any) => {
@@ -87,6 +90,22 @@ export const useUpdateParticipantStatus = (clubId: number, tournamentId: number)
     onError: (error: any) => {
       toast.error(error.response?.data?.message || 'Error al actualizar estado');
       console.error('Error updating status:', error);
+    },
+  });
+};
+
+export const useUpdateParticipantHandicap = (clubId: number, tournamentId: number) => {
+  const queryClient = useQueryClient();
+  return useMutation<Participant[], Error, { participantId: number; handicap_index?: number | null; handicap_local?: number | null }>({
+    mutationFn: ({ participantId, handicap_index, handicap_local }) =>
+      updateParticipantHandicap(clubId, tournamentId, participantId, { handicap_index, handicap_local }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.participants(clubId, tournamentId) });
+      queryClient.invalidateQueries({ queryKey: ['tournament-groups', clubId, tournamentId] });
+      toast.success('Index/HCP actualizado');
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.message || error.response?.data?.error || 'Error al actualizar handicap');
     },
   });
 };

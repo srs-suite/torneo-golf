@@ -166,9 +166,10 @@ export function useRemoveParticipant(clubId: number, tournamentId: number) {
       tournamentService.removeParticipant(clubId, tournamentId, participantId),
     onSuccess: () => {
       console.log('✅ Participante removido exitosamente')
-      // Invalidar y refetch inmediato para actualizar conteos
+      // Invalidar y refetch inmediato para actualizar conteos y vista de grupos
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.tournamentParticipants(clubId, tournamentId) })
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.tournaments(clubId) })
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.tournamentGroups(clubId, tournamentId) })
       queryClient.refetchQueries({ queryKey: QUERY_KEYS.tournaments(clubId) })
       toast.success('Participante removido exitosamente')
     },
@@ -228,6 +229,24 @@ export function useTournamentGroups(clubId: number, tournamentId: number) {
   })
 }
 
+// Hook para reacomodar participantes por HCP (mover al grupo con número más bajo que tenga su banda)
+export function useRebalanceGroupsByHcp(clubId: number, tournamentId: number) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => tournamentService.rebalanceGroupsByHcp(clubId, tournamentId),
+    onSuccess: (data: { moved: number; message?: string }) => {
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.tournamentGroups(clubId, tournamentId) })
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.tournamentParticipants(clubId, tournamentId) })
+      queryClient.invalidateQueries({ queryKey: ['participants', clubId, tournamentId] })
+      if (data.moved > 0) toast.success(`Reacomodados ${data.moved} participante(s) por HCP`)
+      else toast.info(data.message || 'Nada que reacomodar')
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.message || error.response?.data?.error || 'Error al reacomodar')
+    }
+  })
+}
+
 // Hook para mover jugador entre grupos
 export function useMovePlayerToGroup(clubId: number, tournamentId: number) {
   const queryClient = useQueryClient()
@@ -242,7 +261,7 @@ export function useMovePlayerToGroup(clubId: number, tournamentId: number) {
     },
     onError: (error: any) => {
       console.error('❌ Error al mover jugador:', error)
-      toast.error(error.response?.data?.message || 'Error al mover jugador')
+      toast.error(error.response?.data?.message || error.response?.data?.error || 'Error al mover jugador')
     }
   })
 }

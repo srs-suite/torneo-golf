@@ -3506,16 +3506,12 @@ async function getTournamentParticipants(courseId, tournamentId) {
                        m.phone
                END as player_phone,
                CASE 
-                   WHEN tp.player_type = 'external' THEN 
-                       COALESCE(tp.handicap_used, ep.handicap_local, ep.handicap_index)
-                   ELSE 
-                       COALESCE(tp.handicap_used, m.handicap_local, m.handicap_index)
+                   WHEN tp.player_type = 'external' THEN ep.handicap_index
+                   ELSE m.handicap_index
                END as handicap_index,
                CASE 
-                   WHEN tp.player_type = 'external' THEN 
-                       ep.handicap_local
-                   ELSE 
-                       m.handicap_local
+                   WHEN tp.player_type = 'external' THEN ep.handicap_local
+                   ELSE m.handicap_local
                END as handicap_local,
                CASE 
                    WHEN tp.player_type = 'external' THEN 
@@ -3529,7 +3525,8 @@ async function getTournamentParticipants(courseId, tournamentId) {
                    ELSE 
                        gc.club_name
                END as player_club,
-               tp.player_type
+               tp.player_type,
+               CASE WHEN tp.player_type = 'external' THEN ep.gender ELSE NULL END as gender
         FROM tournament_participants tp
         LEFT JOIN members m ON tp.member_id = m.member_id AND tp.player_type IN ('member', 'visitor')
         LEFT JOIN external_players ep ON tp.external_player_id = ep.external_id AND tp.player_type = 'external'
@@ -3693,6 +3690,18 @@ async function searchPlayersForTournament(courseId, query) {
     }
 }
 
+// Bandas HCP para torneos scratch_bands (igual que en generateTournamentGroups)
+function getBandFromHcp(hcp) {
+    if (hcp == null || (typeof hcp !== 'number' && isNaN(Number(hcp)))) return 'noHcp';
+    const n = Number(hcp);
+    if (!Number.isFinite(n)) return 'noHcp';
+    if (n < 5) return 'scratch';
+    if (n <= 7.9) return 'band1';
+    if (n <= 15.8) return 'band2';
+    if (n <= 54) return 'band3';
+    return 'noHcp';
+}
+
 // Placeholder functions for tournament groups and participants
 async function addTournamentParticipant(courseId, tournamentId, participantData) {
     console.log('🎯 Adding participant:', {
@@ -3700,6 +3709,9 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
         tournamentId, 
         participantData
     });
+    
+    const tournament = await getTournamentById(courseId, tournamentId);
+    const isByHcp = tournament && tournament.results_mode === 'scratch_bands';
     
     // Normalizar payload desde frontend
     try {
@@ -3719,7 +3731,7 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
     const isExternalPlayer = participantData.player_type === 'external' && participantData.external_player_id;
     const isHomeMember = participantData.player_type === 'member' && participantData.member_id;
     
-    // Evitar duplicados: mismo torneo + mismo miembro
+    // Evitar duplicados: mismo torneo + mismo miembro o mismo jugador externo
     try {
         if (participantData.member_id) {
             const dupCheck = await executeQuery(
@@ -3730,12 +3742,35 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
                 throw new Error('El jugador ya está agregado a este torneo');
             }
         }
+        if (participantData.external_player_id) {
+            const dupExt = await executeQuery(
+                'SELECT participation_id FROM tournament_participants WHERE tournament_id = ? AND external_player_id = ? LIMIT 1',
+                [tournamentId, participantData.external_player_id]
+            );
+            if (dupExt.rows && dupExt.rows.length > 0) {
+                throw new Error('El jugador externo ya está agregado a este torneo');
+            }
+        }
     } catch (dupErr) {
         console.warn('⚠️ Duplicate participant check:', dupErr?.message || dupErr);
         throw dupErr;
     }
 
+    // Máximo 4 jugadores por grupo: rechazar si el grupo elegido ya está lleno (solo cuando el torneo es "por grupos", no por HCP)
+    const requestedGroup = !isByHcp && participantData.group_number != null && participantData.group_number > 0 ? participantData.group_number : null;
+    if (requestedGroup != null) {
+        const { rows: countRows } = await executeQuery(
+            'SELECT COUNT(*) as c FROM tournament_participants WHERE tournament_id = ? AND group_number = ?',
+            [tournamentId, requestedGroup]
+        );
+        const currentInGroup = (countRows && countRows[0] && countRows[0].c) ? Number(countRows[0].c) : 0;
+        if (currentInGroup >= 4) {
+            throw new Error(`El grupo ${requestedGroup} ya tiene 4 jugadores (máximo permitido). Elige otro grupo o deja "Sin grupo".`);
+        }
+    }
+
     let query, params;
+    const groupForInsert = isByHcp ? null : requestedGroup;
     
     if (isVisitor) {
         // Para visitantes (socios de otros clubes) - obtener handicap del club original
@@ -3756,8 +3791,8 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
         
         query = `
             INSERT INTO tournament_participants (
-                tournament_id, member_id, handicap_used, player_type, status, payment_status, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                tournament_id, member_id, handicap_used, player_type, status, payment_status, notes, group_number
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `;
         
         params = [
@@ -3767,7 +3802,8 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
             'visitor',
             participantData.status || 'registered',
             participantData.payment_status || 'pending',
-            participantData.notes || null
+            participantData.notes || null,
+            groupForInsert
         ];
         
     } else if (isExternalPlayer) {
@@ -3791,8 +3827,8 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
         query = `
             INSERT INTO tournament_participants (
                 tournament_id, external_player_id, player_name, player_email, player_phone,
-                handicap_used, player_club, player_type, status, payment_status, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                handicap_used, player_club, player_type, status, payment_status, notes, group_number
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
         
         params = [
@@ -3806,7 +3842,8 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
             'external',
             participantData.status || 'registered',
             participantData.payment_status || 'pending',
-            participantData.notes || null
+            participantData.notes || null,
+            groupForInsert
         ];
         
     } else if (isHomeMember) {
@@ -3828,8 +3865,8 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
         
         query = `
             INSERT INTO tournament_participants (
-                tournament_id, member_id, handicap_used, player_type, status, payment_status, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                tournament_id, member_id, handicap_used, player_type, status, payment_status, notes, group_number
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `;
         
         params = [
@@ -3839,7 +3876,8 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
             'member',
             participantData.status || 'registered',
             participantData.payment_status || 'pending',
-            participantData.notes || null
+            participantData.notes || null,
+            groupForInsert
         ];
         
     } else {
@@ -3851,57 +3889,192 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
     const { rows } = await executeQuery(query, params);
     console.log('✅ Participant added successfully, insertId:', rows.insertId);
 
-    // Auto-asignación a grupo si ya existen grupos configurados
-    try {
-        // Buscar grupos existentes con conteo de jugadores
-        const groupsQuery = `
-            SELECT tp.group_number, COUNT(*) as cnt
-            FROM tournament_participants tp
-            WHERE tp.tournament_id = ? AND tp.group_number IS NOT NULL
-            GROUP BY tp.group_number
-            ORDER BY tp.group_number
-        `;
-        const { rows: existingGroups } = await executeQuery(groupsQuery, [tournamentId]);
+    // Auto-asignación a grupo: 1) Turno (mañana/tarde) 2) Buscar grupo de ese turno con espacio 3) Si no hay, crear grupo nuevo
+    const needAutoAssign = isByHcp || requestedGroup == null;
+    if (needAutoAssign) {
+        try {
+            const toGroupNum = (v) => (v != null && v !== '' ? Number(v) : null);
+            const preferredSession = (participantData.preferred_session === 'afternoon' || participantData.preferred_session === 'morning')
+                ? participantData.preferred_session
+                : 'morning';
 
-        let targetGroup = null;
-        if (existingGroups.length > 0) {
-            // Elegir el primer grupo con menos de 4 jugadores
-            const notFull = existingGroups.find(g => (g.cnt || 0) < 4);
-            if (notFull) {
-                targetGroup = notFull.group_number;
-            } else {
-                // Si todos llenos, buscar número de grupo siguiente disponible
-                const numbers = existingGroups.map(g => g.group_number).sort((a,b)=>a-b);
-                const next = numbers.length ? Math.max(...numbers) + 1 : 1;
-                targetGroup = next;
-            }
-        } else {
-            // Si no hay grupos con participantes, ver si hay grupo vacío registrado
-            const { rows: empty } = await getPool().execute(
-                'SELECT group_number FROM empty_tournament_groups WHERE tournament_id = ? ORDER BY group_number LIMIT 1',
-                [tournamentId]
+            const partRow = await executeQuery(
+                'SELECT handicap_used FROM tournament_participants WHERE participation_id = ? AND tournament_id = ?',
+                [rows.insertId, tournamentId]
             );
-            targetGroup = empty.length ? empty[0].group_number : 1;
-        }
+            const hcpVal = partRow.rows?.[0]?.handicap_used != null ? Number(partRow.rows[0].handicap_used) : null;
+            const playerBand = getBandFromHcp(hcpVal);
 
-        // Asegurar que exista el grupo vacío si se necesita nuevo
-        if (targetGroup && existingGroups.find(g => g.group_number === targetGroup) == null) {
+            const { rows: allInGroups } = await executeQuery(
+                'SELECT group_number, handicap_used FROM tournament_participants WHERE tournament_id = ? AND group_number IS NOT NULL AND participation_id != ?',
+                [tournamentId, rows.insertId]
+            );
+            const groupCount = {};
+            const groupBands = {};
+            for (const r of allInGroups || []) {
+                const gn = toGroupNum(r.group_number);
+                if (gn == null || !Number.isFinite(gn)) continue;
+                groupCount[gn] = (groupCount[gn] || 0) + 1;
+                const hcp = r.handicap_used != null && r.handicap_used !== '' ? Number(r.handicap_used) : null;
+                const band = getBandFromHcp(hcp);
+                if (!groupBands[gn]) groupBands[gn] = new Set();
+                groupBands[gn].add(band);
+            }
+            try {
+                const { rows: emptyGroups } = await executeQuery(
+                    'SELECT group_number FROM empty_tournament_groups WHERE tournament_id = ?',
+                    [tournamentId]
+                );
+                for (const eg of emptyGroups || []) {
+                    const gn = toGroupNum(eg.group_number);
+                    if (gn != null && Number.isFinite(gn) && groupCount[gn] === undefined) {
+                        groupCount[gn] = 0;
+                        groupBands[gn] = new Set();
+                    }
+                }
+            } catch (_) {}
+
+            // Turno por grupo: por MAYORÍA de participantes (no MAX), así un grupo con 2 tarde y 1 mañana = tarde
+            const groupSession = {};
+            try {
+                const afternoonStart = tournament.afternoon_start_time ? String(tournament.afternoon_start_time).trim().slice(0, 5) : '13:00';
+                const [afternoonH] = afternoonStart.split(':').map(Number);
+                const normSession = (pref, teeTime) => {
+                    const p = (pref != null ? String(pref).toLowerCase().trim() : '') || '';
+                    if (p === 'afternoon' || p === 'tarde') return 'afternoon';
+                    if (p === 'morning' || p === 'mañana' || p === 'manana') return 'morning';
+                    if (teeTime) {
+                        const t = String(teeTime).trim();
+                        const [h] = t.split(':').map(Number);
+                        return (!isNaN(h) && h >= (afternoonH || 13)) ? 'afternoon' : 'morning';
+                    }
+                    return null;
+                };
+                const { rows: perParticipant } = await executeQuery(
+                    `SELECT group_number, tee_time_preference, tee_time FROM tournament_participants
+                     WHERE tournament_id = ? AND group_number IS NOT NULL`,
+                    [tournamentId]
+                );
+                const groupAfternoon = {};
+                const groupMorning = {};
+                for (const row of perParticipant || []) {
+                    const gn = toGroupNum(row.group_number);
+                    if (gn == null || !Number.isFinite(gn)) continue;
+                    const s = normSession(row.tee_time_preference, row.tee_time);
+                    if (s === 'afternoon') groupAfternoon[gn] = (groupAfternoon[gn] || 0) + 1;
+                    else if (s === 'morning') groupMorning[gn] = (groupMorning[gn] || 0) + 1;
+                }
+                for (const gn of [...Object.keys(groupAfternoon).map(Number), ...Object.keys(groupMorning).map(Number)]) {
+                    if (!Number.isFinite(gn) || groupSession[gn] !== undefined) continue;
+                    const aft = groupAfternoon[gn] || 0;
+                    const mor = groupMorning[gn] || 0;
+                    groupSession[gn] = aft > mor ? 'afternoon' : (mor > aft ? 'morning' : null);
+                }
+                const { rows: emptyTee } = await executeQuery(
+                    'SELECT group_number, tee_time FROM empty_tournament_groups WHERE tournament_id = ?',
+                    [tournamentId]
+                );
+                for (const row of emptyTee || []) {
+                    const gn = toGroupNum(row.group_number);
+                    if (gn == null || !Number.isFinite(gn) || groupSession[gn] !== undefined) continue;
+                    if (row.tee_time) {
+                        const t = String(row.tee_time).trim();
+                        const [h] = t.split(':').map(Number);
+                        groupSession[gn] = (!isNaN(h) && h >= (afternoonH || 13)) ? 'afternoon' : 'morning';
+                    } else {
+                        groupSession[gn] = null;
+                    }
+                }
+            } catch (_) {}
+
+            const matchesTurn = (gn) => {
+                const s = groupSession[gn];
+                return s === preferredSession || s == null;
+            };
+
+            let targetGroup = null;
+            const withSpaceAndTurn = Object.keys(groupCount).map(Number).filter(gn => {
+                const cnt = groupCount[gn] || 0;
+                return cnt < 4 && matchesTurn(gn);
+            }).sort((a, b) => a - b);
+
+            if (isByHcp && playerBand) {
+                // Preferir grupo existente con misma banda HCP y espacio; si no hay, grupo vacío del turno; si no, cualquier grupo con espacio
+                const withSameBand = withSpaceAndTurn.filter(gn => groupBands[gn] && groupBands[gn].has(playerBand));
+                const emptyInTurn = withSpaceAndTurn.filter(gn => (groupCount[gn] || 0) === 0);
+                targetGroup = withSameBand.length > 0
+                    ? withSameBand[0]
+                    : (withSpaceAndTurn.length > 0 ? withSpaceAndTurn[0] : null);
+            } else {
+                targetGroup = withSpaceAndTurn.length > 0 ? withSpaceAndTurn[0] : null;
+            }
+
+            if (targetGroup == null) {
+                const numbers = Object.keys(groupCount).map(Number).filter(Boolean).sort((a, b) => a - b);
+                targetGroup = numbers.length > 0 ? Math.max(...numbers) + 1 : 1;
+            }
+            const finalGroup = targetGroup != null ? targetGroup : 1;
+            let groupTeeTime = null;
+            let groupStartingHole = null;
+            const existingInGroup = await executeQuery(
+                `SELECT tee_time, starting_hole, COUNT(*) as cnt
+                 FROM tournament_participants
+                 WHERE tournament_id = ? AND group_number = ? AND participation_id != ?
+                 GROUP BY tee_time, starting_hole
+                 ORDER BY cnt DESC
+                 LIMIT 1`,
+                [tournamentId, finalGroup, rows.insertId]
+            );
+            if (existingInGroup.rows && existingInGroup.rows[0]) {
+                groupTeeTime = existingInGroup.rows[0].tee_time;
+                groupStartingHole = existingInGroup.rows[0].starting_hole;
+            } else {
+                try {
+                    const { rows: emptyRow } = await executeQuery(
+                        'SELECT tee_time, starting_hole FROM empty_tournament_groups WHERE tournament_id = ? AND group_number = ? LIMIT 1',
+                        [tournamentId, finalGroup]
+                    );
+                    if (emptyRow && emptyRow[0]) {
+                        groupTeeTime = emptyRow[0].tee_time;
+                        groupStartingHole = emptyRow[0].starting_hole;
+                    }
+                } catch (_) {}
+            }
             try {
                 await getPool().execute(
                     'INSERT INTO empty_tournament_groups (tournament_id, group_number) VALUES (?, ?) ON DUPLICATE KEY UPDATE group_number = VALUES(group_number)',
-                    [tournamentId, targetGroup]
+                    [tournamentId, finalGroup]
                 );
             } catch (_) {}
+            await executeQuery(
+                'UPDATE tournament_participants SET group_number = ?, tee_time = ?, starting_hole = ? WHERE participation_id = ? AND tournament_id = ?',
+                [finalGroup, groupTeeTime, groupStartingHole, rows.insertId, tournamentId]
+            );
+            if (groupTeeTime != null || groupStartingHole != null) {
+                await executeQuery(
+                    'UPDATE tournament_participants SET tee_time = ?, starting_hole = ? WHERE tournament_id = ? AND group_number = ?',
+                    [groupTeeTime, groupStartingHole, tournamentId, finalGroup]
+                );
+            }
+            try {
+                await executeQuery(
+                    'UPDATE tournament_participants SET tee_time_preference = ? WHERE participation_id = ? AND tournament_id = ?',
+                    [preferredSession, rows.insertId, tournamentId]
+                );
+            } catch (_) {}
+            console.log(`✅ Participant ${rows.insertId} asignado al grupo ${finalGroup} (turno ${preferredSession})${isByHcp ? ' por HCP' : ''}`);
+        } catch (autoErr) {
+            console.warn('⚠️ Auto-assign group failed (continuing):', autoErr?.message || autoErr);
+            try {
+                await executeQuery(
+                    'UPDATE tournament_participants SET group_number = 1 WHERE participation_id = ? AND tournament_id = ?',
+                    [rows.insertId, tournamentId]
+                );
+                console.log(`✅ Participant ${rows.insertId} asignado al grupo 1 (fallback tras error)`);
+            } catch (fallbackErr) {
+                console.warn('⚠️ Fallback assign group 1 failed:', fallbackErr?.message || fallbackErr);
+            }
         }
-
-        // Asignar el participante al grupo elegido (sin tocar horario/hoyo todavía)
-        await executeQuery(
-            'UPDATE tournament_participants SET group_number = ? WHERE participation_id = ? AND tournament_id = ?',
-            [targetGroup, rows.insertId, tournamentId]
-        );
-        console.log(`✅ Participant ${rows.insertId} auto-asignado al grupo ${targetGroup}`);
-    } catch (autoErr) {
-        console.warn('⚠️ Auto-assign group failed (continuing):', autoErr?.message || autoErr);
     }
     
     // Log activity
@@ -3991,6 +4164,101 @@ async function removeTournamentParticipant(courseId, tournamentId, participantId
         console.error('❌ Error al eliminar participante:', error);
         throw error;
     }
+}
+
+async function updateParticipantHandicap(courseId, tournamentId, participationId, data) {
+    const { handicap_index, handicap_local } = data || {};
+    const toNumOrNull = (v) => (v !== undefined && v !== null && v !== '' && !Number.isNaN(Number(v)) ? Number(v) : null);
+    const hcpLocal = toNumOrNull(handicap_local);
+    const hcpIndex = toNumOrNull(handicap_index);
+    const hcpUsed = hcpLocal != null ? hcpLocal : hcpIndex;
+    const getRow = await executeQuery(
+        'SELECT external_player_id, member_id, player_type FROM tournament_participants WHERE participation_id = ? AND tournament_id = ?',
+        [participationId, tournamentId]
+    );
+    if (!getRow.rows || getRow.rows.length === 0) {
+        throw new Error('Participante no encontrado');
+    }
+    const row = getRow.rows[0];
+    if (row.player_type === 'external' && row.external_player_id) {
+        await executeQuery(
+            'UPDATE external_players SET handicap_index = ?, handicap_local = ?, updated_at = CURRENT_TIMESTAMP WHERE external_id = ?',
+            [hcpIndex, hcpLocal, row.external_player_id]
+        );
+    } else if ((row.player_type === 'member' || row.player_type === 'visitor') && row.member_id) {
+        await executeQuery(
+            'UPDATE members SET handicap_index = ?, handicap_local = ?, updated_at = CURRENT_TIMESTAMP WHERE member_id = ? AND course_id = ?',
+            [hcpIndex, hcpLocal, row.member_id, courseId]
+        );
+    }
+    await executeQuery(
+        'UPDATE tournament_participants SET handicap_used = ? WHERE participation_id = ? AND tournament_id = ?',
+        [hcpUsed, participationId, tournamentId]
+    );
+
+    // Si el torneo es por HCP (scratch_bands), reacomodar al participante en un grupo que tenga alguien de su banda
+    try {
+        const tournament = await getTournamentById(courseId, tournamentId);
+        if (tournament && tournament.results_mode === 'scratch_bands') {
+            const playerBand = getBandFromHcp(hcpUsed);
+            const toGn = (v) => (v != null && v !== '' ? Number(v) : null);
+            const { rows: partRows } = await executeQuery(
+                'SELECT group_number FROM tournament_participants WHERE participation_id = ? AND tournament_id = ?',
+                [participationId, tournamentId]
+            );
+            const currentGroup = partRows && partRows[0] ? toGn(partRows[0].group_number) : null;
+            const { rows: allInGroups } = await executeQuery(
+                'SELECT group_number, handicap_used FROM tournament_participants WHERE tournament_id = ? AND group_number IS NOT NULL AND participation_id != ?',
+                [tournamentId, participationId]
+            );
+            const groupCount = {};
+            const groupBands = {};
+            for (const r of allInGroups || []) {
+                const gn = toGn(r.group_number);
+                if (gn == null || !Number.isFinite(gn)) continue;
+                groupCount[gn] = (groupCount[gn] || 0) + 1;
+                const band = getBandFromHcp(r.handicap_used != null && r.handicap_used !== '' ? Number(r.handicap_used) : null);
+                if (!groupBands[gn]) groupBands[gn] = new Set();
+                groupBands[gn].add(band);
+            }
+            // Grupos con esta banda y con espacio (< 4); priorizar número de grupo más bajo (3 antes que 4)
+            const candidatesSameBand = playerBand ? Object.keys(groupCount).map(Number).filter(gn => {
+                const cnt = groupCount[gn] || 0;
+                const hasBand = groupBands[gn] && groupBands[gn].has(playerBand);
+                return hasBand && cnt < 4;
+            }).sort((a, b) => {
+                const n = a - b;
+                if (n !== 0) return n;
+                return (groupCount[a] || 0) - (groupCount[b] || 0);
+            }) : [];
+            const currentGroupHasPlayerBand = currentGroup != null && groupBands[currentGroup] && groupBands[currentGroup].has(playerBand);
+            const needsMove = !currentGroupHasPlayerBand;
+            const bestOther = candidatesSameBand.find(gn => gn !== currentGroup);
+            const shouldMove = playerBand && (needsMove || bestOther != null);
+            if (shouldMove) {
+                let targetGroup;
+                if (bestOther != null) {
+                    targetGroup = bestOther;
+                } else if (candidatesSameBand.length > 0) {
+                    targetGroup = candidatesSameBand[0];
+                } else {
+                    const numbers = Object.keys(groupCount).map(Number).filter(Boolean).sort((a, b) => a - b);
+                    targetGroup = numbers.length ? Math.max(...numbers) + 1 : 1;
+                }
+                if (targetGroup !== currentGroup) {
+                    await executeQuery(
+                        'UPDATE tournament_participants SET group_number = ? WHERE participation_id = ? AND tournament_id = ?',
+                        [targetGroup, participationId, tournamentId]
+                    );
+                    console.log(`✅ Participante ${participationId} reasignado al grupo ${targetGroup} (banda ${playerBand})`);
+                }
+            }
+        }
+    } catch (reassignErr) {
+        console.warn('⚠️ Reasignar grupo por HCP:', reassignErr?.message || reassignErr);
+    }
+
+    return await getTournamentParticipants(courseId, tournamentId);
 }
 
 async function updateParticipantStatus(courseId, tournamentId, participantId, status) {
@@ -4265,13 +4533,14 @@ async function createExternalPlayer(playerData) {
             updated_at = CURRENT_TIMESTAMP
     `;
     
+    const toNumOrNull = (v) => (v !== undefined && v !== null && v !== '' && !Number.isNaN(Number(v)) ? Number(v) : null);
     const params = [
         playerData.full_name,
         playerData.email || null,
         playerData.phone || null,
         playerData.gender || null,
-        playerData.handicap_index || 0,
-        playerData.handicap_local || 0,
+        toNumOrNull(playerData.handicap_index),
+        toNumOrNull(playerData.handicap_local),
         playerData.member_number || null,
         playerData.home_club || null,
         playerData.notes || null
@@ -4282,8 +4551,28 @@ async function createExternalPlayer(playerData) {
 }
 
 async function getExternalPlayers(clubId) {
-    // Para funcionalidad multi-club: mostrar socios de OTROS clubes como "jugadores disponibles"
-    const query = `
+    // 1) Jugadores externos creados por el club (tabla external_players) - para agregar al torneo
+    const customQuery = `
+        SELECT 
+            ep.external_id as player_id,
+            ep.full_name as player_name,
+            ep.email as player_email,
+            ep.phone as player_phone,
+            ep.gender,
+            ep.handicap_index,
+            ep.handicap_local,
+            ep.member_number,
+            ep.home_club as player_club,
+            ep.notes,
+            'external' as player_type,
+            ep.created_at,
+            ep.updated_at
+        FROM external_players ep
+        ORDER BY ep.full_name
+    `;
+    const { rows: customRows } = await executeQuery(customQuery, []);
+    // 2) Socios de OTROS clubes como "visitantes" disponibles (opcional)
+    const visitorsQuery = `
         SELECT 
             m.member_id as player_id,
             CONCAT(m.first_name, ' ', m.last_name) as player_name,
@@ -4301,9 +4590,8 @@ async function getExternalPlayers(clubId) {
         WHERE m.course_id != ? AND m.is_active = true
         ORDER BY gc.club_name, m.first_name, m.last_name
     `;
-    
-    const { rows } = await executeQuery(query, [clubId]);
-    return rows;
+    const { rows: visitorRows } = await executeQuery(visitorsQuery, [clubId]);
+    return [...(customRows || []), ...(visitorRows || [])];
 }
 
 async function updateExternalPlayer(playerId, playerData) {
@@ -4322,13 +4610,14 @@ async function updateExternalPlayer(playerId, playerData) {
         WHERE external_id = ?
     `;
     
+    const toNumOrNull = (v) => (v !== undefined && v !== null && v !== '' && !Number.isNaN(Number(v)) ? Number(v) : null);
     const params = [
         playerData.full_name,
         playerData.email || null,
         playerData.phone || null,
         playerData.gender || null,
-        playerData.handicap_index || 0,
-        playerData.handicap_local || 0,
+        toNumOrNull(playerData.handicap_index),
+        toNumOrNull(playerData.handicap_local),
         playerData.member_number || null,
         playerData.home_club || null,
         playerData.notes || null,
@@ -5093,6 +5382,77 @@ async function assignTeeTimesToGroups(courseId, tournamentId, teeTimeData) {
     return updatedGroups;
 }
 
+// Reacomodar todos los participantes por HCP: mover a cada uno al grupo con número más bajo que tenga su banda y espacio (ej. del 4 al 3)
+async function rebalanceGroupsByHcp(courseId, tournamentId) {
+    const tournament = await getTournamentById(courseId, tournamentId);
+    if (!tournament || tournament.results_mode !== 'scratch_bands') {
+        return { moved: 0, message: 'El torneo no es por bandas HCP' };
+    }
+    const toGn = (v) => (v != null && v !== '' ? Number(v) : null);
+    const { rows: participants } = await executeQuery(
+        'SELECT participation_id, group_number, handicap_used FROM tournament_participants WHERE tournament_id = ? AND group_number IS NOT NULL',
+        [tournamentId]
+    );
+    if (!participants || participants.length === 0) return { moved: 0 };
+
+    const groupCount = {};
+    const groupBands = {};
+    for (const r of participants) {
+        const gn = toGn(r.group_number);
+        if (gn == null || !Number.isFinite(gn)) continue;
+        groupCount[gn] = (groupCount[gn] || 0) + 1;
+        const band = getBandFromHcp(r.handicap_used != null && r.handicap_used !== '' ? Number(r.handicap_used) : null);
+        if (!groupBands[gn]) groupBands[gn] = new Set();
+        groupBands[gn].add(band);
+    }
+    try {
+        const { rows: emptyGroups } = await executeQuery(
+            'SELECT group_number FROM empty_tournament_groups WHERE tournament_id = ?',
+            [tournamentId]
+        );
+        for (const eg of emptyGroups || []) {
+            const gn = toGn(eg.group_number);
+            if (gn != null && Number.isFinite(gn) && groupCount[gn] === undefined) {
+                groupCount[gn] = 0;
+                groupBands[gn] = new Set();
+            }
+        }
+    } catch (_) {}
+    const getCandidates = (playerBand) => {
+        if (!playerBand) return [];
+        return Object.keys(groupCount).map(Number).filter(gn => {
+            const cnt = groupCount[gn] || 0;
+            const hasBand = groupBands[gn] && groupBands[gn].has(playerBand);
+            const isEmpty = cnt === 0;
+            return (hasBand || isEmpty) && cnt < 4;
+        }).sort((a, b) => (a !== b ? a - b : (groupCount[a] || 0) - (groupCount[b] || 0)));
+    };
+
+    let moved = 0;
+    const sorted = [...participants].sort((a, b) => (toGn(b.group_number) || 0) - (toGn(a.group_number) || 0));
+    for (const p of sorted) {
+        const pid = p.participation_id;
+        const currentGroup = toGn(p.group_number);
+        if (currentGroup == null || !Number.isFinite(currentGroup)) continue;
+        const playerBand = getBandFromHcp(p.handicap_used != null && p.handicap_used !== '' ? Number(p.handicap_used) : null);
+        const candidates = getCandidates(playerBand);
+        const targetGroup = candidates.find(gn => gn < currentGroup) || candidates[0];
+        if (targetGroup != null && targetGroup !== currentGroup) {
+            await executeQuery(
+                'UPDATE tournament_participants SET group_number = ? WHERE participation_id = ? AND tournament_id = ?',
+                [targetGroup, pid, tournamentId]
+            );
+            groupCount[currentGroup] = (groupCount[currentGroup] || 1) - 1;
+            groupCount[targetGroup] = (groupCount[targetGroup] || 0) + 1;
+            if (!groupBands[targetGroup]) groupBands[targetGroup] = new Set();
+            groupBands[targetGroup].add(playerBand);
+            moved++;
+            console.log(`✅ Rebalance: participante ${pid} movido del grupo ${currentGroup} al ${targetGroup} (banda ${playerBand})`);
+        }
+    }
+    return { moved };
+}
+
 // Función para mover un jugador entre grupos
 async function movePlayerToGroup(courseId, tournamentId, participationId, newGroupNumber) {
     console.log(`🔄 Moving player ${participationId} to group ${newGroupNumber} in tournament ${tournamentId}`);
@@ -5142,6 +5502,22 @@ async function movePlayerToGroup(courseId, tournamentId, participationId, newGro
         throw new Error(`Target group ${newGroupNumber} does not exist in tournament ${tournamentId}`);
     }
     console.log(`🎯 Target group info:`, targetGroup);
+
+    // Máximo 4 jugadores por grupo: no permitir mover si el grupo destino ya está lleno
+    const [countResult] = await getPool().execute(
+        'SELECT COUNT(*) as c FROM tournament_participants WHERE tournament_id = ? AND group_number = ?',
+        [tournamentId, newGroupNumber]
+    );
+    const currentInGroup = Number(countResult?.[0]?.c ?? 0);
+    if (currentInGroup >= 4) {
+        const [alreadyInGroup] = await getPool().execute(
+            'SELECT 1 FROM tournament_participants WHERE tournament_id = ? AND participation_id = ? AND group_number = ? LIMIT 1',
+            [tournamentId, participationId, newGroupNumber]
+        );
+        if (!alreadyInGroup.length) {
+            throw new Error(`El grupo ${newGroupNumber} ya tiene 4 jugadores (máximo permitido). Elige otro grupo.`);
+        }
+    }
     
     // Actualizar el jugador con la información del grupo destino
     const updateQuery = `
@@ -5352,16 +5728,16 @@ async function moveGroupToHole(courseId, tournamentId, groupNumber, newStartingH
                     )
                 `);
 
-                // Upsert del grupo vacío con el hoyo y la hora solicitados
+                // Upsert del grupo vacío con el hoyo y la hora solicitados (normalizedHole: 0 => NULL)
                 if (finalTeeTime !== null && finalTeeTime !== undefined) {
                     await pool.execute(
                         'INSERT INTO empty_tournament_groups (tournament_id, group_number, starting_hole, tee_time) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE starting_hole = VALUES(starting_hole), tee_time = VALUES(tee_time)',
-                        [tournamentId, groupNumber, newStartingHole, finalTeeTime]
+                        [tournamentId, groupNumber, normalizedHole, finalTeeTime]
                     );
                 } else {
                     await pool.execute(
                         'INSERT INTO empty_tournament_groups (tournament_id, group_number, starting_hole) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE starting_hole = VALUES(starting_hole), tee_time = NULL',
-                        [tournamentId, groupNumber, newStartingHole]
+                        [tournamentId, groupNumber, normalizedHole]
                     );
                 }
 
@@ -6852,10 +7228,11 @@ export {
     // Tournament functions
     getAllTournaments, getTournamentById, createTournament, updateTournament, deleteTournament,
     getTournamentParticipants, getTournamentParticipantsById, addTournamentParticipant, removeTournamentParticipant,
+    updateParticipantHandicap,
     updateParticipantStatus, updateParticipantPayment, getTournamentStats, searchPlayersForTournament, findDuplicateExternalPlayers, createExternalPlayer, updateExternalPlayer, getExternalPlayers, deleteExternalPlayer,
     
     // Tournament groups functions
-    getTournamentGroups, generateTournamentGroups, assignTeeTimesToGroups, movePlayerToGroup, moveGroupToHole, swapGroupNumbers, createEmptyGroup, deleteEmptyGroup,
+    getTournamentGroups, generateTournamentGroups, assignTeeTimesToGroups, rebalanceGroupsByHcp, movePlayerToGroup, moveGroupToHole, swapGroupNumbers, createEmptyGroup, deleteEmptyGroup,
     
     // Scorecard functions
     saveScorecard, getScorecardsByTournament, getScorecardByPlayer, updateScorecard, deleteScorecard, getScorecardForPrint,

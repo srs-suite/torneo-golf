@@ -19,7 +19,9 @@ import { SearchInput } from './SearchInput'
 import { Tournament } from '@/types/tournament'
 import { Participant, PlayerSearchResult } from '@/types/participant'
 import { LoadingSpinner } from '@/components/LoadingSpinner'
-import { useParticipants, useAddParticipant, useRemoveParticipant, useSearchPlayers, useExternalPlayers, useDeleteExternalPlayer } from '@/hooks/useParticipants'
+import { useParticipants, useAddParticipant, useRemoveParticipant, useUpdateParticipantHandicap, useSearchPlayers, useExternalPlayers, useDeleteExternalPlayer } from '@/hooks/useParticipants'
+import { calculateHCPFromIndexDefault } from '@/utils/teeSelection'
+import { useTournamentGroups, useMovePlayerToGroup } from '@/hooks/useTournaments'
 import { CreateExternalPlayerModal } from '@/components/CreateExternalPlayerModal'
 import { PaymentModal } from '@/components/PaymentModal'
 
@@ -46,7 +48,6 @@ export function TournamentParticipantsModal({
   const [selectedMembers, setSelectedMembers] = useState<Set<number>>(new Set())
   const [selectedExternalPlayers, setSelectedExternalPlayers] = useState<Set<number>>(new Set())
   const [clubMembers, setClubMembers] = useState<PlayerSearchResult[]>([])
-  const [externalPlayers, setExternalPlayers] = useState<PlayerSearchResult[]>([])
   const [memberSearchTerm, setMemberSearchTerm] = useState('')
   const [externalPlayerSearchTerm, setExternalPlayerSearchTerm] = useState('')
   const [externalPlayerNameForModal, setExternalPlayerNameForModal] = useState('')
@@ -81,11 +82,23 @@ export function TournamentParticipantsModal({
   const { data: externalPlayersData = [] } = useExternalPlayers(clubId, showExternalPlayersList)
   const addParticipant = useAddParticipant(clubId, tournament.tournament_id)
   const removeParticipant = useRemoveParticipant(clubId, tournament.tournament_id)
+  const updateParticipantHandicap = useUpdateParticipantHandicap(clubId, tournament.tournament_id)
   const deleteExternalPlayer = useDeleteExternalPlayer(clubId)
   const searchPlayers = useSearchPlayers(clubId)
   // const createExternalPlayer = useCreateExternalPlayer(clubId)
 
   const [paymentEditing, setPaymentEditing] = useState<Participant | null>(null)
+  const [addToGroupNumber, setAddToGroupNumber] = useState<number | ''>('')
+  const [preferredSessionForAdd, setPreferredSessionForAdd] = useState<'morning' | 'afternoon'>('morning')
+  const [movingParticipantId, setMovingParticipantId] = useState<number | null>(null)
+  const [editingIndexParticipantId, setEditingIndexParticipantId] = useState<number | null>(null)
+  const [editingIndexValue, setEditingIndexValue] = useState<string>('')
+  const [savingIndexParticipantId, setSavingIndexParticipantId] = useState<number | null>(null)
+  const allowGroups = (tournament as any)?.public_inscription_allow_groups !== 0 && (tournament as any)?.public_inscription_allow_groups !== false
+  const groupsByHcp = (tournament as any)?.results_mode === 'scratch_bands'
+  const { data: tournamentGroups = [] } = useTournamentGroups(clubId, tournament.tournament_id)
+  const movePlayerToGroup = useMovePlayerToGroup(clubId, tournament.tournament_id)
+  const groupNumbers = Array.from(new Set(tournamentGroups.map((g: any) => g.group_number).filter((n: number) => n != null))).sort((a, b) => (a as number) - (b as number)) as number[]
 
   // Sanitize to ASCII like other pages
   const sanitizeAscii = (text: string | undefined | null) => {
@@ -104,16 +117,34 @@ export function TournamentParticipantsModal({
     setShowAddParticipant(false)
     setSelectedMembers(new Set())
     setSelectedExternalPlayers(new Set())
+    setAddToGroupNumber('')
     loadClubMembers()
     // Evitar bucles: refetch una vez al abrir
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen])
 
-  // Load external players when data changes
-  useEffect(() => {
-    if (externalPlayersData && externalPlayersData.length >= 0) {
-      loadExternalPlayers()
-    }
+  // Derive external players from query data (avoids infinite loop from useEffect + setState)
+  const externalPlayers = useMemo(() => {
+    const playersFormatted: PlayerSearchResult[] = (externalPlayersData ?? []).map((player: any) => {
+      const formattedName = formatName(player.player_name || 'Jugador Externo')
+      return {
+        player_id: player.player_id,
+        player_name: formattedName,
+        player_email: player.player_email || '',
+        player_phone: player.player_phone || '',
+        gender: player.gender ?? undefined,
+        handicap_index: player.handicap_index ?? undefined,
+        handicap_local: player.handicap_local ?? undefined,
+        player_club: player.player_club || 'Sin club',
+        player_type: 'external' as const,
+        is_home_member: false,
+        member_number: player.member_number || '',
+        notes: player.notes ?? ''
+      }
+    })
+    return playersFormatted.sort((a, b) =>
+      a.player_name.localeCompare(b.player_name, 'es', { sensitivity: 'base' })
+    )
   }, [externalPlayersData])
 
   // Load club members
@@ -158,33 +189,6 @@ export function TournamentParticipantsModal({
     }
   }
 
-  // Load external players from the hook data
-  const loadExternalPlayers = () => {
-    const playersFormatted: PlayerSearchResult[] = externalPlayersData.map((player: any) => {
-      const formattedName = formatName(player.player_name || 'Jugador Externo')
-      
-      return {
-        player_id: player.player_id,
-        player_name: formattedName,
-        player_email: player.player_email || '',
-        player_phone: player.player_phone || '',
-        handicap_index: player.handicap_index || 0,
-        handicap_local: player.handicap_local || 0,
-        player_club: player.player_club || 'Sin club',
-        player_type: 'external' as const,
-        is_home_member: false,
-        member_number: player.member_number || ''
-      }
-    })
-    
-    // Sort external players alphabetically by name
-    const sortedExternalPlayers = playersFormatted.sort((a, b) => 
-      a.player_name.localeCompare(b.player_name, 'es', { sensitivity: 'base' })
-    )
-    
-    setExternalPlayers(sortedExternalPlayers)
-  }
-
   const handleSearchPlayers = async (searchTerm: string) => {
     if (searchTerm.length < 2) {
       setSearchResults([])
@@ -221,9 +225,11 @@ export function TournamentParticipantsModal({
         player_club: player.player_club,
         player_type: player.player_type === 'external' ? 'external' : 'member',
         status: 'registered',
-        payment_status: 'pending'
+        payment_status: 'pending',
+        ...(allowGroups && !groupsByHcp && addToGroupNumber !== '' ? { group_number: addToGroupNumber as number } : {}),
+        ...(allowGroups ? { preferred_session: preferredSessionForAdd } : {})
       }
-      
+
       await addParticipant.mutateAsync(participantData)
       setPlayerSearchTerm('')
       setSearchResults([])
@@ -402,12 +408,14 @@ export function TournamentParticipantsModal({
           player_club: member.player_club,
           player_type: 'member' as const,
           status: 'registered' as const,
-          payment_status: 'pending' as const
+          payment_status: 'pending' as const,
+          ...(allowGroups && !groupsByHcp && addToGroupNumber !== '' ? { group_number: addToGroupNumber as number } : {}),
+          ...(allowGroups ? { preferred_session: preferredSessionForAdd } : {})
         }
-        
+
         await addParticipant.mutateAsync(participantData)
       }
-      
+
       setSelectedMembers(new Set())
       if (validMembers.length > 0) {
         setShowMembersList(false)
@@ -456,12 +464,14 @@ export function TournamentParticipantsModal({
           handicap_local: player.handicap_local, // Add handicap_local field
           member_number: player.member_number, // Add member_number field
           player_club: player.player_club,
-          player_type: player.player_type
+          player_type: player.player_type,
+          ...(allowGroups && !groupsByHcp && addToGroupNumber !== '' ? { group_number: addToGroupNumber as number } : {}),
+          ...(allowGroups ? { preferred_session: preferredSessionForAdd } : {})
         }
-        
+
         await addParticipant.mutateAsync(participantData)
       }
-      
+
       setSelectedExternalPlayers(new Set())
       if (validPlayers.length > 0) {
         setShowExternalPlayersList(false)
@@ -482,6 +492,20 @@ export function TournamentParticipantsModal({
       } catch (error) {
         console.error('Error removing participant:', error)
       }
+    }
+  }
+
+  const handleChangeParticipantGroup = async (participant: Participant, newGroupNumber: number) => {
+    const participationId = (participant as any).participation_id ?? participant.participant_id
+    if (!participationId) return
+    setMovingParticipantId(participationId)
+    try {
+      await movePlayerToGroup.mutateAsync({ participationId, newGroupNumber })
+      refetch()
+    } catch (error) {
+      console.error('Error moving participant to group:', error)
+    } finally {
+      setMovingParticipantId(null)
     }
   }
 
@@ -602,6 +626,42 @@ export function TournamentParticipantsModal({
           <div className="flex flex-col space-y-4 mb-6">
             {/* Row 1: Acciones */}
             <div className="flex items-center flex-wrap gap-3">
+              {allowGroups && (
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-gray-700">¿En qué turno agregás jugadores?</span>
+                  <select
+                    value={preferredSessionForAdd}
+                    onChange={(e) => setPreferredSessionForAdd(e.target.value as 'morning' | 'afternoon')}
+                    className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-medium"
+                    title="Elegí Mañana o Tarde; el sistema lo pondrá en un grupo de ese turno con espacio, o creará uno nuevo"
+                  >
+                    <option value="morning">Mañana</option>
+                    <option value="afternoon">Tarde</option>
+                  </select>
+                  {!groupsByHcp && (
+                    <>
+                      <label className="text-sm font-medium text-gray-700">Asignar a grupo:</label>
+                      <select
+                        value={addToGroupNumber}
+                        onChange={(e) => setAddToGroupNumber(e.target.value === '' ? '' : Number(e.target.value))}
+                        className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                      >
+                        <option value="">Sin grupo</option>
+                        {groupNumbers.map((num) => {
+                          const g = tournamentGroups.find((g: any) => g.group_number === num)
+                          const count = g?.participants_count ?? 0
+                          const full = count >= 4
+                          return (
+                            <option key={num} value={num} disabled={full}>
+                              Grupo {num}{full ? ' (completo)' : ''}
+                            </option>
+                          )
+                        })}
+                      </select>
+                    </>
+                  )}
+                </div>
+              )}
               <button
                 onClick={() => {
                   setShowMembersList(!showMembersList)
@@ -1136,6 +1196,11 @@ export function TournamentParticipantsModal({
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Estado
                       </th>
+                      {allowGroups && (
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Grupo
+                        </th>
+                      )}
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Fecha
                       </th>
@@ -1161,7 +1226,56 @@ export function TournamentParticipantsModal({
                             {participant.member_number || 'N/A'}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                            {participant.handicap_index !== null && participant.handicap_index !== undefined ? participant.handicap_index : 'N/A'}
+                            {savingIndexParticipantId === participant.participant_id ? (
+                              <span className="inline-flex items-center gap-1 text-amber-600 text-sm">
+                                <span className="inline-block w-3 h-3 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+                                Guardando...
+                              </span>
+                            ) : editingIndexParticipantId === participant.participant_id ? (
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                className="w-16 px-2 py-1 border border-gray-300 rounded text-sm"
+                                value={editingIndexValue}
+                                onChange={(e) => setEditingIndexValue(e.target.value)}
+                                onBlur={() => {
+                                  const v = editingIndexValue.trim()
+                                  setEditingIndexParticipantId(null)
+                                  if (v === '') {
+                                    setSavingIndexParticipantId(participant.participant_id)
+                                    updateParticipantHandicap.mutate(
+                                      { participantId: participant.participant_id, handicap_index: null, handicap_local: null },
+                                      { onSettled: () => { refetch(); setSavingIndexParticipantId(null) } }
+                                    )
+                                  } else {
+                                    const num = Number(v)
+                                    if (!Number.isFinite(num)) return
+                                    const local = calculateHCPFromIndexDefault(num, (participant as any).gender)
+                                    setSavingIndexParticipantId(participant.participant_id)
+                                    updateParticipantHandicap.mutate(
+                                      { participantId: participant.participant_id, handicap_index: num, handicap_local: local ?? undefined },
+                                      { onSettled: () => { refetch(); setSavingIndexParticipantId(null) } }
+                                    )
+                                  }
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                                }}
+                                autoFocus
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingIndexParticipantId(participant.participant_id)
+                                  setEditingIndexValue(participant.handicap_index != null && participant.handicap_index !== '' ? String(participant.handicap_index) : '')
+                                }}
+                                className="text-left underline decoration-dotted hover:bg-gray-100 rounded px-1 py-0.5 min-w-[2rem]"
+                                title="Clic para editar index"
+                              >
+                                {participant.handicap_index !== null && participant.handicap_index !== undefined ? participant.handicap_index : '—'}
+                              </button>
+                            )}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                             {participant.handicap_local !== null && participant.handicap_local !== undefined ? participant.handicap_local : 'N/A'}
@@ -1173,6 +1287,36 @@ export function TournamentParticipantsModal({
                               </span>
                             </div>
                           </td>
+                          {allowGroups && (
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              {groupsByHcp ? (
+                                <span className="text-sm text-gray-600">{participant.group_number != null ? `Grupo ${participant.group_number}` : '—'}</span>
+                              ) : (
+                                <select
+                                  value={participant.group_number ?? ''}
+                                  onChange={(e) => {
+                                    const v = e.target.value
+                                    if (v === '') return
+                                    handleChangeParticipantGroup(participant, Number(v))
+                                  }}
+                                  disabled={movingParticipantId === ((participant as any).participation_id ?? participant.participant_id)}
+                                  className="border border-gray-300 rounded px-2 py-1 text-sm w-28"
+                                >
+                                  <option value="">Sin grupo</option>
+                                  {groupNumbers.map((num) => {
+                                    const g = tournamentGroups.find((g: any) => g.group_number === num)
+                                    const count = g?.participants_count ?? 0
+                                    const full = count >= 4 && (participant as any).group_number !== num
+                                    return (
+                                      <option key={num} value={num} disabled={full}>
+                                        Grupo {num}{full ? ' (completo)' : ''}
+                                      </option>
+                                    )
+                                  })}
+                                </select>
+                              )}
+                            </td>
+                          )}
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                             {new Date(participant.registration_date).toLocaleDateString('es-ES')}
                           </td>
@@ -1241,12 +1385,38 @@ export function TournamentParticipantsModal({
           }}
           initialName={externalPlayerNameForModal}
           editingPlayer={editingExternalPlayer}
-          onSuccess={() => {
+          onSuccess={async (player: any) => {
             setShowCreateExternalModal(false)
             setExternalPlayerNameForModal('')
             setEditingExternalPlayer(null)
-            // Just refresh the external players list, don't auto-add to tournament
-            // The user can manually select and add the player from the updated list
+            if (player && (player.external_id != null || player.player_id != null)) {
+              const externalId = player.external_id ?? player.player_id
+              const alreadyAdded = participants.some(
+                (p: any) => p.external_player_id === externalId || p.player_id === externalId
+              )
+              if (!alreadyAdded) {
+                try {
+                  const participantData = {
+                    external_player_id: externalId,
+                    player_name: player.full_name ?? player.player_name,
+                    player_email: player.player_email ?? player.email,
+                    player_phone: player.player_phone ?? player.phone,
+                    player_club: player.player_club ?? player.home_club,
+                    handicap_index: player.handicap_index ?? 0,
+                    player_type: 'external' as const,
+                    status: 'registered' as const,
+                    payment_status: 'pending' as const,
+                    ...(allowGroups && !groupsByHcp && addToGroupNumber !== '' ? { group_number: addToGroupNumber as number } : {}),
+                    ...(allowGroups ? { preferred_session: preferredSessionForAdd } : {})
+                  }
+                  await addParticipant.mutateAsync(participantData)
+                  setStatusFilter('registered')
+                  refetch()
+                } catch (err) {
+                  console.error('Error adding created player to tournament:', err)
+                }
+              }
+            }
           }}
           clubId={clubId}
         />

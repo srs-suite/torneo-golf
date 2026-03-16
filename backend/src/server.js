@@ -31,9 +31,10 @@ import {
     // Tournament functions
     getAllTournaments, getTournamentById, createTournament, updateTournament, deleteTournament,
     getTournamentParticipants, getTournamentParticipantsById, addTournamentParticipant, removeTournamentParticipant,
-    updateParticipantPayment,
+    updateParticipantHandicap, updateParticipantPayment,
+    getExternalPlayers, createExternalPlayer, updateExternalPlayer, deleteExternalPlayer, findDuplicateExternalPlayers,
     // Tee time and groups functions
-    getTournamentGroups, generateTournamentGroups, assignTeeTimesToGroups,
+    getTournamentGroups, generateTournamentGroups, assignTeeTimesToGroups, rebalanceGroupsByHcp,
     movePlayerToGroup, moveGroupToHole, swapGroupNumbers, createEmptyGroup, deleteEmptyGroup,
     
     // Scorecard functions
@@ -405,6 +406,14 @@ async function handleClubAPI(req, res, pathParts) {
                     sendError(res, 'Método no permitido', 405);
                 }
             }
+            else if (subResource === 'rebalance-groups-by-hcp') {
+                if (method === 'POST') {
+                    const result = await rebalanceGroupsByHcp(parseInt(clubId), parseInt(resourceId));
+                    sendJSON(res, { success: true, data: result, message: result.moved > 0 ? `Reacomodados ${result.moved} participante(s) por HCP` : (result.message || 'Nada que reacomodar') });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
+            }
             else if (subResource === 'move-player') {
                 if (method === 'POST') {
                     const { participationId, newGroupNumber } = await parseBody(req);
@@ -470,12 +479,23 @@ async function handleClubAPI(req, res, pathParts) {
                 if (method === 'PUT' && participantId && action === 'payment') {
                     const paymentData = await parseBody(req);
                     await updateParticipantPayment(
-                        parseInt(clubId), 
-                        parseInt(resourceId), 
-                        parseInt(participantId), 
+                        parseInt(clubId),
+                        parseInt(resourceId),
+                        parseInt(participantId),
                         paymentData
                     );
                     sendJSON(res, { success: true, message: 'Pago actualizado exitosamente' });
+                }
+                // Update participant handicap: PUT /participants/{id} with body { handicap_index?, handicap_local? }
+                else if (method === 'PUT' && participantId && !action) {
+                    const body = await parseBody(req);
+                    const participants = await updateParticipantHandicap(
+                        parseInt(clubId),
+                        parseInt(resourceId),
+                        parseInt(participantId),
+                        { handicap_index: body.handicap_index, handicap_local: body.handicap_local }
+                    );
+                    sendJSON(res, { success: true, data: participants, message: 'Handicap actualizado' });
                 }
                 // Get all participants
                 else if (method === 'GET' && !participantId) {
@@ -924,6 +944,31 @@ async function handleClubAPI(req, res, pathParts) {
                 // Delete user
                 await deleteClubUser(parseInt(resourceId));
                 sendJSON(res, { success: true, message: 'Usuario eliminado exitosamente' });
+            } else {
+                sendError(res, 'Método no permitido', 405);
+            }
+        }
+
+        else if (resource === 'external-players') {
+            const cId = parseInt(clubId);
+            if (method === 'GET' && !resourceId) {
+                const list = await getExternalPlayers(cId);
+                sendJSON(res, { success: true, data: list });
+            } else if (method === 'POST' && resourceId === 'check-duplicates') {
+                const body = await parseBody(req);
+                const duplicates = await findDuplicateExternalPlayers(body);
+                sendJSON(res, { success: true, data: duplicates });
+            } else if (method === 'POST' && !resourceId) {
+                const body = await parseBody(req);
+                const newPlayer = await createExternalPlayer(body);
+                sendJSON(res, { success: true, data: newPlayer });
+            } else if (method === 'PUT' && resourceId) {
+                const body = await parseBody(req);
+                await updateExternalPlayer(parseInt(resourceId), body);
+                sendJSON(res, { success: true });
+            } else if (method === 'DELETE' && resourceId) {
+                await deleteExternalPlayer(parseInt(resourceId));
+                sendJSON(res, { success: true });
             } else {
                 sendError(res, 'Método no permitido', 405);
             }
