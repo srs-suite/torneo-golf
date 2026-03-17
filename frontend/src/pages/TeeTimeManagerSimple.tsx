@@ -193,10 +193,6 @@ export default function TeeTimeManagerSimple() {
     )
   }
 
-  const handleConfigChange = (field: keyof TeeTimeConfig, value: any) => {
-    setConfig(prev => ({ ...prev, [field]: value }))
-  }
-
   // Drag & Drop handlers
   const handleMovePlayer = (participationId: number, targetGroupNumber: number) => {
     movePlayer.mutate(
@@ -322,13 +318,19 @@ export default function TeeTimeManagerSimple() {
     return time
   }
 
+  // Usar la hora de inicio de tarde del torneo (ej. 14:00) para clasificar
+  const afternoonStartHour = (() => {
+    const t = (config.afternoonStartTime || '14:00').trim()
+    const [h] = t.split(':').map(Number)
+    return !isNaN(h) ? h : 13
+  })()
+
   // Función para determinar la sesión basada en la hora
   const getSessionFromTime = (timeString: string | null): 'morning' | 'afternoon' => {
     if (!timeString) return 'morning'
-    
-    const [hours] = timeString.split(':').map(Number)
-    // Consideramos que la tarde empieza a partir de las 13:00 (1 PM)
-    return hours >= 13 ? 'afternoon' : 'morning'
+    const str = String(timeString).trim()
+    const [hours] = str.split(':').map(Number)
+    return !isNaN(hours) && hours >= afternoonStartHour ? 'afternoon' : 'morning'
   }
 
   // Respetar preferencia del grupo (inscripción pública) si existe; si no, derivar de la hora
@@ -701,21 +703,21 @@ export default function TeeTimeManagerSimple() {
                   <button
                     type="button"
                     onClick={() => {
-                      setReorganizeByHcp(!(tournament?.groups_by_hcp === 1 || tournament?.groups_by_hcp === true))
+                      setReorganizeByHcp(!((tournament as any)?.groups_by_hcp === 1 || (tournament as any)?.groups_by_hcp === true))
                       setShowReorganizeModal(true)
                     }}
                     style={{
                       padding: '8px 14px',
-                      backgroundColor: tournament?.groups_by_hcp ? '#e0e7ff' : '#fef3c7',
-                      color: tournament?.groups_by_hcp ? '#3730a3' : '#92400e',
-                      border: tournament?.groups_by_hcp ? '1px solid #6366f1' : '1px solid #f59e0b',
+                      backgroundColor: (tournament as any)?.groups_by_hcp ? '#e0e7ff' : '#fef3c7',
+                      color: (tournament as any)?.groups_by_hcp ? '#3730a3' : '#92400e',
+                      border: (tournament as any)?.groups_by_hcp ? '1px solid #6366f1' : '1px solid #f59e0b',
                       borderRadius: '6px',
                       cursor: 'pointer',
                       fontSize: '14px',
                       fontWeight: '500'
                     }}
                   >
-                    {tournament?.groups_by_hcp ? 'Reorganizar por grupos' : 'Reorganizar por HCP'}
+                    {(tournament as any)?.groups_by_hcp ? 'Reorganizar por grupos' : 'Reorganizar por HCP'}
                   </button>
                 )}
                 <button
@@ -1227,16 +1229,15 @@ export default function TeeTimeManagerSimple() {
                   `;
                   
                   // Función para formatear hora (solo HH:MM)
-                  const formatTime = (timeString: string | null): string => {
+                  const _formatTime = (timeString: string | null): string => {
                     if (!timeString) return 'N/A';
-                    // Si tiene segundos (HH:MM:SS), removerlos
                     if (timeString.includes(':')) {
                       const [hours, minutes] = timeString.split(':').map(Number);
                       return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
                     }
                     return timeString;
                   };
-                  
+                  void _formatTime; // avoid unused lint
                   // Función para generar tabla de grupos con el MISMO header en thead (se repite en cada página)
                   const generateGroupTable = (sessionGroups: any[], headerHtml: string) => `
                     <table>

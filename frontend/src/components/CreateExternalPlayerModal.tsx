@@ -127,7 +127,7 @@ export function CreateExternalPlayerModal({
       skipNextHcpCalcRef.current = false
       return
     }
-    const idx = indexVal !== '' && indexVal != null && Number.isFinite(Number(indexVal)) ? Number(indexVal) : null
+    const idx = indexVal != null && Number.isFinite(Number(indexVal)) ? Number(indexVal) : null
     if (idx !== null) {
       const calculated = calculateHCPFromIndexDefault(idx, genderVal)
       if (calculated !== null) setValue('handicap_local', calculated)
@@ -632,7 +632,7 @@ export function CreateExternalPlayerModal({
                               <div className="font-medium text-gray-900">{player.player_name}</div>
                               <div className="text-sm text-gray-500">
                                 {player.member_number && `N°: ${player.member_number} • `}
-                                {player.player_club || 'Sin club'} • Index: {player.handicap_index != null && player.handicap_index !== '' ? player.handicap_index : 'Sin HCP'} • HCP: {player.handicap_local != null && player.handicap_local !== '' ? player.handicap_local : 'Sin HCP'}
+                                {player.player_club || 'Sin club'} • Index: {player.handicap_index != null ? player.handicap_index : 'Sin HCP'} • HCP: {player.handicap_local != null ? player.handicap_local : 'Sin HCP'}
                               </div>
                               {player.player_email && (
                                 <div className="text-xs text-gray-400">{player.player_email}</div>

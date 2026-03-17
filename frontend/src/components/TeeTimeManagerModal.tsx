@@ -26,7 +26,7 @@ interface TeeTimeSettings {
 interface Group {
   group_number: number;
   tee_time: string;
-  starting_hole?: number;
+  starting_hole?: number | null;
   participants?: Participant[];
 }
 
@@ -841,7 +841,7 @@ export function TeeTimeManagerModal({
                           <div className="flex items-center space-x-2">
                             <label className="text-xs text-gray-600">Hoyo:</label>
                             <select
-                              value={group.starting_hole}
+                              value={group.starting_hole ?? ''}
                               onChange={(e) => {
                                 const newHole = parseInt(e.target.value)
                                 if (newHole !== group.starting_hole) {

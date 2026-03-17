@@ -2740,6 +2740,39 @@ async function verifyMemberPhone(clubId, phone) {
 }
 
 /**
+ * Verificar socio por número de matrícula (inscripción pública).
+ * Devuelve el mismo formato que verifyMemberPhone para reutilizar token en el flujo.
+ */
+async function verifyMemberByMatricula(clubId, memberNumber) {
+    const normalized = (memberNumber || '').toString().trim().replace(/\s/g, '');
+    if (!normalized.length) {
+        return { success: false, message: 'Ingresá un número de matrícula.' };
+    }
+    const query = `
+        SELECT member_id, first_name, last_name, phone, membership_status
+        FROM members
+        WHERE course_id = ? AND membership_status = 'active'
+        AND (member_number = ? OR REPLACE(TRIM(COALESCE(member_number, '')), ' ', '') = ?)
+    `;
+    const { rows } = await executeQuery(query, [clubId, normalized, normalized]);
+    if (rows.length === 0) {
+        return {
+            success: false,
+            message: 'Matrícula no encontrada o socio inactivo. Revisá el número o contactá al club.'
+        };
+    }
+    const member = rows[0];
+    const secret = 'torneogolf2024secret';
+    const tokenData = `${member.phone || ''}-${member.member_id}-${secret}`;
+    const token = crypto.createHash('sha256').update(tokenData).digest('hex');
+    return {
+        success: true,
+        token,
+        memberName: `${member.first_name} ${member.last_name}`
+    };
+}
+
+/**
  * Verify access token for public financial report
  */
 async function verifyReportToken(clubId, token) {
@@ -2928,18 +2961,36 @@ async function addPublicInscription(clubId, tournamentId, memberId, options = {}
     const { rows: memberData } = await executeQuery(memberHandicapQuery, [memberId, clubIdNum]);
     const currentHandicap = memberData.length > 0 ? (memberData[0].handicap_local || memberData[0].handicap_index) : null;
 
+    // Al unirse a un grupo existente, usar el mismo tee_time y starting_hole que el grupo (para quedar en la misma tarjeta)
+    let groupTeeTime = null;
+    let groupStartingHole = null;
+    if (finalGroupNumber != null && groupNumber != null) {
+        const existingGroup = await executeQuery(
+            `SELECT tee_time, starting_hole FROM tournament_participants
+             WHERE tournament_id = ? AND group_number = ? AND (tee_time IS NOT NULL OR starting_hole IS NOT NULL)
+             ORDER BY participation_id ASC LIMIT 1`,
+            [tournamentIdNum, finalGroupNumber]
+        );
+        if (existingGroup.rows && existingGroup.rows[0]) {
+            groupTeeTime = existingGroup.rows[0].tee_time;
+            groupStartingHole = existingGroup.rows[0].starting_hole;
+        }
+    }
+
     const insertQuery = `
         INSERT INTO tournament_participants (
             tournament_id, member_id, handicap_used, player_type, status, payment_status,
-            group_number, tee_time_preference
-        ) VALUES (?, ?, ?, 'member', 'registered', 'pending', ?, ?)
+            group_number, tee_time_preference, tee_time, starting_hole
+        ) VALUES (?, ?, ?, 'member', 'registered', 'pending', ?, ?, ?, ?)
     `;
     await executeQuery(insertQuery, [
         tournamentIdNum,
         memberId,
         currentHandicap,
         finalGroupNumber,
-        teeToUse
+        teeToUse,
+        groupTeeTime,
+        groupStartingHole
     ]);
 
     // Si creó grupo y eligió inscriptos para sumar, asignarlos al nuevo grupo (máx 3 para no superar 4)
@@ -4639,7 +4690,7 @@ async function getTournamentGroups(courseId, tournamentId) {
         SELECT tp.group_number,
                tp.tee_time,
                tp.starting_hole,
-               MAX(tp.tee_time_preference) as group_tee_preference,
+               (SELECT IF(SUM(CASE WHEN tp2.tee_time_preference = 'afternoon' THEN 1 ELSE 0 END) > 0, 'afternoon', IF(SUM(CASE WHEN tp2.tee_time_preference = 'morning' THEN 1 ELSE 0 END) > 0, 'morning', NULL)) FROM tournament_participants tp2 WHERE tp2.tournament_id = tp.tournament_id AND tp2.group_number = tp.group_number AND (tp2.tee_time <=> tp.tee_time) AND (tp2.starting_hole <=> tp.starting_hole)) as group_tee_preference,
                COUNT(*) as participants_count,
                AVG(CASE 
                    WHEN tp.player_type = 'external' THEN 
@@ -7222,7 +7273,7 @@ export {
     
     // Member functions
     getAllMembers, getMemberById, createMember, updateMember, deleteMember, updateMemberStatus,
-    verifyMemberPhone, verifyReportToken,
+    verifyMemberPhone, verifyMemberByMatricula, verifyReportToken,
     getTournamentForPublicInscription, getTournamentForPublicInscriptionUnfiltered, getTournamentGroupsForInscription, getTournamentParticipantsWithoutGroup, addPublicInscription, checkPublicInscriptionStatus,
     
     // Tournament functions

@@ -889,6 +889,23 @@ export function ClubAdmin() {
                                     {tournament.tournament_type === 'scramble' && 'Scramble'}
                                     {tournament.tournament_type === 'best_ball' && 'Best Ball'}
                                   </div>
+                                  {/* Enlace inscripción visible en celular (sin depender del scroll horizontal) */}
+                                  {((tournament as any)?.public_inscription === 1 || (tournament as any)?.public_inscription === true) && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const url = `${window.location.origin}/club/${clubId}/torneo/${tournament.tournament_id}/inscribirse`
+                                        navigator.clipboard.writeText(url).then(() => {
+                                          toast.success('Enlace de inscripción copiado')
+                                        }).catch(() => toast.error('No se pudo copiar. Enlace: ' + url))
+                                      }}
+                                      className="mt-1.5 flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                                      title="Copiar enlace para que los jugadores se inscriban por celular"
+                                    >
+                                      <Link2 className="w-3.5 h-3.5" />
+                                      Enlace inscripción
+                                    </button>
+                                  )}
                                 </div>
                               </div>
                             </td>

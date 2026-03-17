@@ -25,7 +25,7 @@ import {
     // Member functions
     getAllMembers, getMemberById, createMember, updateMember, deleteMember, updateMemberStatus,
     getMemberTournaments, getMemberScorecards, getMemberHandicapHistory, getMemberContributions,
-    verifyMemberPhone, verifyReportToken,
+    verifyMemberPhone, verifyMemberByMatricula, verifyReportToken,
     getTournamentForPublicInscription, getTournamentForPublicInscriptionUnfiltered, getTournamentGroupsForInscription, getTournamentParticipantsWithoutGroup, addPublicInscription, checkPublicInscriptionStatus,
     
     // Tournament functions
@@ -1261,16 +1261,27 @@ async function handlePublicInscriptionAPI(req, res, pathParts) {
     try {
         const clubIdNum = parseInt(clubId);
 
-        // POST .../verify -> verificar teléfono (mismo flujo que report)
+        // POST .../verify -> verificar por teléfono o matrícula (inscripción pública)
         if (action === 'verify' && method === 'POST') {
             const body = await parseBody(req);
-            const { phone } = body;
-            if (!phone) return sendError(res, 'Número de teléfono requerido', 400);
-            const result = await verifyMemberPhone(clubIdNum, phone);
+            const phone = body.phone != null ? String(body.phone).trim() : '';
+            const memberNumber = (body.member_number ?? body.memberNumber ?? body.matricula ?? '').toString().trim();
+            const identifier = phone || memberNumber;
+            if (!identifier) {
+                sendError(res, 'Ingresá tu teléfono o número de matrícula', 400);
+                return;
+            }
+            // Si enviaron un solo valor (identifier), probar primero como teléfono y luego como matrícula
+            const tryPhone = phone || identifier;
+            const tryMatricula = memberNumber || identifier;
+            let result = tryPhone ? await verifyMemberPhone(clubIdNum, tryPhone) : { success: false };
+            if (!result.success && tryMatricula) {
+                result = await verifyMemberByMatricula(clubIdNum, tryMatricula);
+            }
             if (result.success) {
                 sendJSON(res, { success: true, token: result.token, memberName: result.memberName });
             } else {
-                sendError(res, result.message || 'Teléfono no encontrado', 404);
+                sendError(res, result.message || 'No encontrado. Revisá teléfono o matrícula.', 404);
             }
             return;
         }

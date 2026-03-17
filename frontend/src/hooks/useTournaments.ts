@@ -239,7 +239,7 @@ export function useRebalanceGroupsByHcp(clubId: number, tournamentId: number) {
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.tournamentParticipants(clubId, tournamentId) })
       queryClient.invalidateQueries({ queryKey: ['participants', clubId, tournamentId] })
       if (data.moved > 0) toast.success(`Reacomodados ${data.moved} participante(s) por HCP`)
-      else toast.info(data.message || 'Nada que reacomodar')
+      else toast(data.message || 'Nada que reacomodar')
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.message || error.response?.data?.error || 'Error al reacomodar')

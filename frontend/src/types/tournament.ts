@@ -85,6 +85,8 @@ export interface TournamentGroup {
   
   // Participantes del grupo
   participants?: TournamentParticipant[]
+  /** Cuando la API devuelve conteo en lugar del array */
+  participants_count?: number
 }
 
 export interface TeeTime {

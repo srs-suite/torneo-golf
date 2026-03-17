@@ -12,7 +12,8 @@ import {
   UserX,
   Users,
   Download,
-  DollarSign
+  DollarSign,
+  Link2
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { SearchInput } from './SearchInput'
@@ -24,6 +25,7 @@ import { calculateHCPFromIndexDefault } from '@/utils/teeSelection'
 import { useTournamentGroups, useMovePlayerToGroup } from '@/hooks/useTournaments'
 import { CreateExternalPlayerModal } from '@/components/CreateExternalPlayerModal'
 import { PaymentModal } from '@/components/PaymentModal'
+import { toast } from 'react-hot-toast'
 
 interface TournamentParticipantsModalProps {
   isOpen: boolean
@@ -569,6 +571,34 @@ export function TournamentParticipantsModal({
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6 pb-8 rounded-b-lg">
+          {/* Enlace inscripción pública (visible en celular) */}
+          {((tournament as any)?.public_inscription === 1 || (tournament as any)?.public_inscription === true) && (
+            <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg flex flex-col sm:flex-row sm:items-center gap-3">
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                <Link2 className="w-5 h-5 text-blue-600 flex-shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-blue-900">Enlace para inscripción desde el celular</p>
+                  <p className="text-xs text-blue-700 truncate" title={`${typeof window !== 'undefined' ? window.location.origin : ''}/club/${clubId}/torneo/${tournament.tournament_id}/inscribirse`}>
+                    {typeof window !== 'undefined' ? window.location.origin : ''}/club/{clubId}/torneo/{tournament.tournament_id}/inscribirse
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const url = `${window.location.origin}/club/${clubId}/torneo/${tournament.tournament_id}/inscribirse`
+                  navigator.clipboard.writeText(url).then(() => {
+                    toast.success('Enlace copiado. Compartilo por WhatsApp o redes.')
+                  }).catch(() => {
+                    toast.error('No se pudo copiar')
+                  })
+                }}
+                className="flex-shrink-0 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700"
+              >
+                Copiar enlace
+              </button>
+            </div>
+          )}
           {/* Stats */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
             <div 
@@ -649,7 +679,7 @@ export function TournamentParticipantsModal({
                         <option value="">Sin grupo</option>
                         {groupNumbers.map((num) => {
                           const g = tournamentGroups.find((g: any) => g.group_number === num)
-                          const count = g?.participants_count ?? 0
+                          const count = g?.participants_count ?? g?.participants?.length ?? 0
                           const full = count >= 4
                           return (
                             <option key={num} value={num} disabled={full}>
@@ -1268,7 +1298,7 @@ export function TournamentParticipantsModal({
                                 type="button"
                                 onClick={() => {
                                   setEditingIndexParticipantId(participant.participant_id)
-                                  setEditingIndexValue(participant.handicap_index != null && participant.handicap_index !== '' ? String(participant.handicap_index) : '')
+                                  setEditingIndexValue(participant.handicap_index != null && participant.handicap_index !== undefined ? String(participant.handicap_index) : '')
                                 }}
                                 className="text-left underline decoration-dotted hover:bg-gray-100 rounded px-1 py-0.5 min-w-[2rem]"
                                 title="Clic para editar index"
@@ -1305,7 +1335,7 @@ export function TournamentParticipantsModal({
                                   <option value="">Sin grupo</option>
                                   {groupNumbers.map((num) => {
                                     const g = tournamentGroups.find((g: any) => g.group_number === num)
-                                    const count = g?.participants_count ?? 0
+                                    const count = g?.participants_count ?? g?.participants?.length ?? 0
                                     const full = count >= 4 && (participant as any).group_number !== num
                                     return (
                                       <option key={num} value={num} disabled={full}>

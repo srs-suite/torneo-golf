@@ -39,6 +39,9 @@ function ClubRedirect() {
 function App() {
   return (
     <Routes>
+      {/* Inscripción pública SIN login: debe ir antes que Layout para que no redirija a login */}
+      <Route path="/club/:clubId/torneo/:tournamentId/inscribirse" element={<PublicInscription />} />
+      
       {/* Sistema de administración principal */}
       <Route path="/" element={<Layout />}>
         <Route index element={<Dashboard />} />
@@ -96,8 +99,6 @@ function App() {
       
       {/* Informe contable público para socios */}
       <Route path="/club/:clubId/informe-contable" element={<PublicFinancialReport />} />
-      {/* Inscripción pública al torneo (por teléfono, grupos, preferencia mañana/tarde) */}
-      <Route path="/club/:clubId/torneo/:tournamentId/inscribirse" element={<PublicInscription />} />
       
       {/* Ruta catch-all: redirigir al login si no hay ruta coincidente */}
       <Route path="*" element={<Navigate to="/login" replace />} />

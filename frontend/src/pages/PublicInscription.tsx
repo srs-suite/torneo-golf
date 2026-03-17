@@ -30,6 +30,8 @@ export default function PublicInscription() {
   const { clubId, tournamentId } = useParams<{ clubId: string; tournamentId: string }>();
   const [step, setStep] = useState<'phone' | 'inscribe' | 'already'>('phone');
   const [phone, setPhone] = useState('');
+  /** Teléfono o matrícula para el paso de identificación */
+  const [phoneOrMatricula, setPhoneOrMatricula] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [token, setToken] = useState('');
@@ -54,6 +56,7 @@ export default function PublicInscription() {
     setToken('');
     setMemberName('');
     setPhone('');
+    setPhoneOrMatricula('');
     setGroupChoice('none');
     setJoinGroupNumber('');
     setParticipantsWithoutGroup([]);
@@ -68,6 +71,7 @@ export default function PublicInscription() {
     setToken('');
     setMemberName('');
     setPhone('');
+    setPhoneOrMatricula('');
     setGroupChoice('none');
     setJoinGroupNumber('');
     setParticipantsWithoutGroup([]);
@@ -82,6 +86,7 @@ export default function PublicInscription() {
     setToken('');
     setMemberName('');
     setPhone('');
+    setPhoneOrMatricula('');
     setGroupChoice('none');
     setJoinGroupNumber('');
     setParticipantsWithoutGroup([]);
@@ -198,9 +203,17 @@ export default function PublicInscription() {
     e.preventDefault();
     setJustInscribed(false);
     setError('');
+    const value = (phoneOrMatricula || phone).trim();
+    if (!value) {
+      setError('Ingresá tu teléfono o número de matrícula.');
+      return;
+    }
     setLoading(true);
     try {
-      const res = await axios.post(`/api/public/inscription/${clubId}/verify`, { phone });
+      const res = await axios.post(`/api/public/inscription/${clubId}/verify`, {
+        phone: value,
+        member_number: value
+      });
       if (res.data.success) {
         const { token: newToken, memberName: name } = res.data;
         setToken(newToken);
@@ -210,7 +223,7 @@ export default function PublicInscription() {
         await loadTournamentAndGroups();
       }
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Teléfono no encontrado. Verificá que seas socio activo.');
+      setError(err.response?.data?.error || 'No encontrado. Verificá teléfono o matrícula y que seas socio activo.');
     } finally {
       setLoading(false);
     }
@@ -281,7 +294,7 @@ export default function PublicInscription() {
   }
 
   // Aceptar flyer_url o flyerUrl. En dev (mismo origin) usar path para que /uploads pase por el proxy.
-  const rawFlyer = (tournament?.flyer_url ?? tournament?.flyerUrl ?? '')?.trim?.() || '';
+  const rawFlyer = (tournament?.flyer_url ?? '')?.trim?.() || '';
   const flyerUrl = (() => {
     if (!rawFlyer) return '';
     try {
@@ -300,8 +313,8 @@ export default function PublicInscription() {
   })();
 
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-lg max-w-md w-full p-6">
+    <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4 pb-12 overflow-y-auto">
+      <div className="bg-white rounded-xl shadow-lg max-w-md w-full p-6 mb-6">
         {flyerUrl ? (
           <div className="mb-4 flex justify-center bg-gray-50 rounded-lg border border-gray-200 p-2 min-h-[120px]">
             <img
@@ -345,20 +358,26 @@ export default function PublicInscription() {
                 <p className="text-sm">Inscripción realizada. Ingresá el teléfono del próximo jugador para inscribirlo.</p>
               </div>
             )}
-            <p className="text-gray-600 mb-4">Ingresá tu número de teléfono (como está registrado en el club) para continuar.</p>
-            <div className="flex gap-2">
+            <p className="text-gray-600 mb-4">Ingresá tu teléfono o número de matrícula (como está en el club) para continuar.</p>
+            <div className="flex flex-col sm:flex-row gap-2">
               <input
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="Ej: 11 1234 5678"
-                className="flex-1 border border-gray-300 rounded-lg px-4 py-3"
+                type="text"
+                inputMode="numeric"
+                autoComplete="tel"
+                value={phoneOrMatricula || phone}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setPhoneOrMatricula(v);
+                  setPhone(v);
+                }}
+                placeholder="Ej: 11 1234 5678 o matrícula"
+                className="w-full sm:flex-1 min-w-0 border border-gray-300 rounded-lg px-4 py-3 text-base"
                 required
               />
               <button
                 type="submit"
                 disabled={loading}
-                className="bg-green-600 text-white px-4 py-3 rounded-lg font-medium flex items-center gap-2"
+                className="w-full sm:w-auto flex-shrink-0 bg-green-600 text-white px-4 py-3 rounded-lg font-medium flex items-center justify-center gap-2"
               >
                 <Smartphone className="w-5 h-5" />
                 {loading ? '...' : 'Continuar'}
