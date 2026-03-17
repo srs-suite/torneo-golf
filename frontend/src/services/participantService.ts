@@ -17,8 +17,8 @@ export const getTournamentParticipants = async (clubId: number, tournamentId: nu
 };
 
 export const addTournamentParticipant = async (
-  clubId: number, 
-  tournamentId: number, 
+  clubId: number,
+  tournamentId: number,
   participantData: any
 ): Promise<Participant> => {
   const response = await axios.post(`${API_URL}/${clubId}/tournaments/${tournamentId}/participants`, participantData);
@@ -54,6 +54,30 @@ export const updateParticipantHandicap = async (
     data
   );
   return response.data.data;
+};
+
+/** Obtiene la URL de WhatsApp para enviar confirmación de inscripción al jugador */
+export const getParticipantWhatsAppInscriptionUrl = async (
+  clubId: number,
+  tournamentId: number,
+  participantId: number
+): Promise<{ whatsappUrl: string }> => {
+  const response = await axios.get(
+    `${API_URL}/${clubId}/tournaments/${tournamentId}/participants/${participantId}/whatsapp-inscription`
+  );
+  return { whatsappUrl: response.data.whatsappUrl };
+};
+
+/** Obtiene la URL de WhatsApp para enviar confirmación de pago al jugador */
+export const getParticipantWhatsAppPaymentUrl = async (
+  clubId: number,
+  tournamentId: number,
+  participantId: number
+): Promise<{ whatsappUrl: string }> => {
+  const response = await axios.get(
+    `${API_URL}/${clubId}/tournaments/${tournamentId}/participants/${participantId}/whatsapp-payment`
+  );
+  return { whatsappUrl: response.data.whatsappUrl };
 };
 
 export const updateParticipantPayment = async (

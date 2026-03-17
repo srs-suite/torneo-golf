@@ -62,6 +62,8 @@ import {
 // WhatsApp service
 import {
     generatePaymentReceiptMessage,
+    generateInscriptionConfirmationMessage,
+    generateInscriptionPaymentMessage,
     generateWhatsAppUrl,
     isValidPhoneNumber
 } from './services/whatsapp.js';
@@ -496,6 +498,49 @@ async function handleClubAPI(req, res, pathParts) {
                         { handicap_index: body.handicap_index, handicap_local: body.handicap_local }
                     );
                     sendJSON(res, { success: true, data: participants, message: 'Handicap actualizado' });
+                }
+                // GET .../participants/:id/whatsapp-inscription -> URL para enviar confirmación de inscripción
+                else if (method === 'GET' && participantId && action === 'whatsapp-inscription') {
+                    const participants = await getTournamentParticipants(parseInt(clubId), parseInt(resourceId));
+                    const participant = participants.find(p => String(p.participation_id) === String(participantId));
+                    if (!participant) return sendError(res, 'Participante no encontrado', 404);
+                    const phone = participant.player_phone || participant.phone;
+                    if (!phone) return sendError(res, 'El participante no tiene teléfono cargado', 400);
+                    const tournament = await getTournamentById(parseInt(clubId), parseInt(resourceId));
+                    const playerName = participant.player_name || 'Jugador/a';
+                    const message = generateInscriptionConfirmationMessage(
+                        tournament?.tournament_name || 'Torneo',
+                        tournament?.tournament_date,
+                        playerName,
+                        { startTime: tournament?.start_time, groupNumber: participant.group_number }
+                    );
+                    const result = generateWhatsAppUrl(phone, message);
+                    if (!result.success || !result.url) return sendError(res, result.error || 'Error al generar enlace', 500);
+                    sendJSON(res, { success: true, whatsappUrl: result.url });
+                    return;
+                }
+                // GET .../participants/:id/whatsapp-payment -> URL para enviar confirmación de pago
+                else if (method === 'GET' && participantId && action === 'whatsapp-payment') {
+                    const participants = await getTournamentParticipants(parseInt(clubId), parseInt(resourceId));
+                    const participant = participants.find(p => String(p.participation_id) === String(participantId));
+                    if (!participant) return sendError(res, 'Participante no encontrado', 404);
+                    const phone = participant.player_phone || participant.phone;
+                    if (!phone) return sendError(res, 'El participante no tiene teléfono cargado', 400);
+                    const tournament = await getTournamentById(parseInt(clubId), parseInt(resourceId));
+                    const playerName = participant.player_name || 'Jugador/a';
+                    const amount = Number(participant.paid_amount ?? participant.fee_amount ?? tournament?.entry_fee ?? 0);
+                    const currency = (participant.currency || 'ARS').toUpperCase();
+                    const message = generateInscriptionPaymentMessage(
+                        tournament?.tournament_name || 'Torneo',
+                        tournament?.tournament_date,
+                        playerName,
+                        amount,
+                        currency
+                    );
+                    const result = generateWhatsAppUrl(phone, message);
+                    if (!result.success || !result.url) return sendError(res, result.error || 'Error al generar enlace', 500);
+                    sendJSON(res, { success: true, whatsappUrl: result.url });
+                    return;
                 }
                 // Get all participants
                 else if (method === 'GET' && !participantId) {
@@ -1361,13 +1406,29 @@ async function handlePublicInscriptionAPI(req, res, pathParts) {
             if (!verification.success) return sendError(res, verification.message, 401);
             const memberId = verification.member_id;
             if (!memberId) return sendError(res, 'Sesión inválida', 401);
-            await addPublicInscription(clubIdNum, tid, memberId, {
+            const inscrResult = await addPublicInscription(clubIdNum, tid, memberId, {
                 createGroup: !!createGroup,
                 groupNumber: groupNumber != null ? parseInt(groupNumber) : undefined,
                 teeTimePreference: teeTimePreference || undefined,
                 addToGroup: Array.isArray(addToGroup) ? addToGroup : undefined
             });
-            sendJSON(res, { success: true, message: 'Inscripción realizada' });
+            let whatsappUrl = null;
+            try {
+                const member = await getMemberById(memberId);
+                if (member && member.phone) {
+                    const tournament = await getTournamentById(clubIdNum, tid);
+                    const playerName = [member.first_name, member.last_name].filter(Boolean).join(' ') || 'Jugador/a';
+                    const message = generateInscriptionConfirmationMessage(
+                        tournament?.tournament_name || 'Torneo',
+                        tournament?.tournament_date,
+                        playerName,
+                        { startTime: tournament?.start_time, groupNumber: inscrResult.group_number }
+                    );
+                    const result = generateWhatsAppUrl(member.phone, message);
+                    if (result.success && result.url) whatsappUrl = result.url;
+                }
+            } catch (e) { console.warn('WhatsApp URL after public inscription:', e?.message || e); }
+            sendJSON(res, { success: true, message: 'Inscripción realizada', whatsappUrl: whatsappUrl || undefined });
             return;
         }
 

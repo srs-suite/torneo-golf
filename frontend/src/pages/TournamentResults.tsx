@@ -281,10 +281,10 @@ export default function TournamentResults() {
       icon: Crown,
       filter: (s: any) => s.gender === 'F'
     } as Category] : []),
-    // Bandas de HCP: 5–7.9, 8–15.8, 15.9–54 (excluir damas si se separan)
+    // Bandas de HCP: 1ra (-5 a 7.9), 2da (8 a 13.9), 3ra (14 a 21.9), 4ta (22 a 54)
     {
       id: 'band_1',
-      name: 'HCP 5 a 7.9',
+      name: '1ra (-5 a 7.9)',
       description: 'Clasificación por neto dentro de banda',
       color: 'bg-blue-50 border-blue-200',
       icon: Trophy,
@@ -292,12 +292,12 @@ export default function TournamentResults() {
         if (separateLadies && s.gender === 'F') return false
         const hl = s.handicap_local, hi = s.handicap_index
         const val = hl !== null && hl !== undefined && hl !== '' ? parseFloat(hl) : (hi !== null && hi !== undefined && hi !== '' ? parseFloat(hi) : NaN)
-        return !isNaN(val) && val >= 5 && val <= 7.9
+        return !isNaN(val) && val >= -5 && val <= 7.9
       }
     },
     {
       id: 'band_2',
-      name: 'HCP 8 a 15.8',
+      name: '2da (8 a 13.9)',
       description: 'Clasificación por neto dentro de banda',
       color: 'bg-green-50 border-green-200',
       icon: Medal,
@@ -305,12 +305,12 @@ export default function TournamentResults() {
         if (separateLadies && s.gender === 'F') return false
         const hl = s.handicap_local, hi = s.handicap_index
         const val = hl !== null && hl !== undefined && hl !== '' ? parseFloat(hl) : (hi !== null && hi !== undefined && hi !== '' ? parseFloat(hi) : NaN)
-        return !isNaN(val) && val >= 8 && val <= 15.8
+        return !isNaN(val) && val >= 8 && val <= 13.9
       }
     },
     {
       id: 'band_3',
-      name: 'HCP 15.9 a 54',
+      name: '3ra (14 a 21.9)',
       description: 'Clasificación por neto dentro de banda',
       color: 'bg-purple-50 border-purple-200',
       icon: Award,
@@ -318,14 +318,27 @@ export default function TournamentResults() {
         if (separateLadies && s.gender === 'F') return false
         const hl = s.handicap_local, hi = s.handicap_index
         const val = hl !== null && hl !== undefined && hl !== '' ? parseFloat(hl) : (hi !== null && hi !== undefined && hi !== '' ? parseFloat(hi) : NaN)
-        return !isNaN(val) && val >= 15.9 && val <= 54
+        return !isNaN(val) && val >= 14 && val <= 21.9
+      }
+    },
+    {
+      id: 'band_4',
+      name: '4ta (22 a 54)',
+      description: 'Clasificación por neto dentro de banda',
+      color: 'bg-amber-50 border-amber-200',
+      icon: Award,
+      filter: (s: any) => {
+        if (separateLadies && s.gender === 'F') return false
+        const hl = s.handicap_local, hi = s.handicap_index
+        const val = hl !== null && hl !== undefined && hl !== '' ? parseFloat(hl) : (hi !== null && hi !== undefined && hi !== '' ? parseFloat(hi) : NaN)
+        return !isNaN(val) && val >= 22 && val <= 54
       }
     },
     // Damas por bandas si corresponde
     ...(separateLadies && ladiesByHcp ? [
       {
         id: 'damas_band_1',
-        name: 'Damas HCP 5 a 7.9',
+        name: 'Damas 1ra (-5 a 7.9)',
         description: 'Femenino por neto',
         color: 'bg-pink-50 border-pink-200',
         icon: Trophy,
@@ -333,12 +346,12 @@ export default function TournamentResults() {
           if (s.gender !== 'F') return false
           const hl = s.handicap_local, hi = s.handicap_index
           const val = hl !== null && hl !== undefined && hl !== '' ? parseFloat(hl) : (hi !== null && hi !== undefined && hi !== '' ? parseFloat(hi) : NaN)
-          return !isNaN(val) && val >= 5 && val <= 7.9
+          return !isNaN(val) && val >= -5 && val <= 7.9
         }
       } as Category,
       {
         id: 'damas_band_2',
-        name: 'Damas HCP 8 a 15.8',
+        name: 'Damas 2da (8 a 13.9)',
         description: 'Femenino por neto',
         color: 'bg-pink-50 border-pink-200',
         icon: Medal,
@@ -346,12 +359,12 @@ export default function TournamentResults() {
           if (s.gender !== 'F') return false
           const hl = s.handicap_local, hi = s.handicap_index
           const val = hl !== null && hl !== undefined && hl !== '' ? parseFloat(hl) : (hi !== null && hi !== undefined && hi !== '' ? parseFloat(hi) : NaN)
-          return !isNaN(val) && val >= 8 && val <= 15.8
+          return !isNaN(val) && val >= 8 && val <= 13.9
         }
       } as Category,
       {
         id: 'damas_band_3',
-        name: 'Damas HCP 15.9 a 54',
+        name: 'Damas 3ra (14 a 21.9)',
         description: 'Femenino por neto',
         color: 'bg-pink-50 border-pink-200',
         icon: Award,
@@ -359,7 +372,20 @@ export default function TournamentResults() {
           if (s.gender !== 'F') return false
           const hl = s.handicap_local, hi = s.handicap_index
           const val = hl !== null && hl !== undefined && hl !== '' ? parseFloat(hl) : (hi !== null && hi !== undefined && hi !== '' ? parseFloat(hi) : NaN)
-          return !isNaN(val) && val >= 15.9 && val <= 54
+          return !isNaN(val) && val >= 14 && val <= 21.9
+        }
+      } as Category,
+      {
+        id: 'damas_band_4',
+        name: 'Damas 4ta (22 a 54)',
+        description: 'Femenino por neto',
+        color: 'bg-pink-50 border-pink-200',
+        icon: Award,
+        filter: (s: any) => {
+          if (s.gender !== 'F') return false
+          const hl = s.handicap_local, hi = s.handicap_index
+          const val = hl !== null && hl !== undefined && hl !== '' ? parseFloat(hl) : (hi !== null && hi !== undefined && hi !== '' ? parseFloat(hi) : NaN)
+          return !isNaN(val) && val >= 22 && val <= 54
         }
       } as Category
     ] : [])

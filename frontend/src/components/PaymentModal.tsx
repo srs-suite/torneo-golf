@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { X, DollarSign } from 'lucide-react'
 import { Participant } from '@/types/participant'
 import { useUpdateParticipantPayment } from '@/hooks/useParticipants'
+import { getParticipantWhatsAppPaymentUrl } from '@/services/participantService'
+import { toast } from 'react-hot-toast'
 
 interface PaymentModalProps {
   isOpen: boolean
@@ -101,6 +103,15 @@ export function PaymentModal({ isOpen, onClose, participant, clubId, tournamentI
       paymentData: payload
     })
     onSaved?.()
+    if (paymentStatus === 'paid') {
+      try {
+        const { whatsappUrl } = await getParticipantWhatsAppPaymentUrl(clubId, tournamentId, participant.participant_id)
+        window.open(whatsappUrl, '_blank')
+        toast.success('Se abrió WhatsApp para enviar la confirmación de pago al jugador')
+      } catch (e: any) {
+        toast.error(e.response?.data?.error || 'No se pudo abrir WhatsApp (¿el jugador tiene teléfono cargado?)')
+      }
+    }
     onClose()
   }
 

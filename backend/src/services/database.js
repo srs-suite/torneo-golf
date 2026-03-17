@@ -3801,15 +3801,15 @@ async function searchPlayersForTournament(courseId, query) {
     }
 }
 
-// Bandas HCP para torneos scratch_bands (igual que en generateTournamentGroups)
+// Bandas HCP para torneos scratch_bands: 1ra (-5 a 7.9), 2da (8 a 13.9), 3ra (14 a 21.9), 4ta (22 a 54)
 function getBandFromHcp(hcp) {
     if (hcp == null || (typeof hcp !== 'number' && isNaN(Number(hcp)))) return 'noHcp';
     const n = Number(hcp);
     if (!Number.isFinite(n)) return 'noHcp';
-    if (n < 5) return 'scratch';
-    if (n <= 7.9) return 'band1';
-    if (n <= 15.8) return 'band2';
-    if (n <= 54) return 'band3';
+    if (n <= 7.9) return 'band1';   // -5 a 7.9
+    if (n <= 13.9) return 'band2';  // 8 a 13.9
+    if (n <= 21.9) return 'band3';  // 14 a 21.9
+    if (n <= 54) return 'band4';    // 22 a 54
     return 'noHcp';
 }
 
@@ -5198,26 +5198,25 @@ async function generateTournamentGroups(courseId, tournamentId, options = {}) {
         const resultsMode = (tournament && tournament.results_mode === 'scratch_bands') ? 'scratch_bands' : 'standard';
 
         if (byHcp && resultsMode === 'scratch_bands') {
-            // Modalidad Scratch + Bandas: no mezclar bandas. Scratch (HCP < 5) solo entre sí; banda 5–7.9, 8–15.8, 15.9–54 por separado.
-            // Así un jugador HCP 0 no queda con jugadores de banda 2 (ej. 13, 15).
+            // Modalidad Scratch + Bandas: 1ra (-5 a 7.9), 2da (8 a 13.9), 3ra (14 a 21.9), 4ta (22 a 54). No mezclar bandas.
             console.log('🔄 Regenerating groups by scratch_bands (no mixing bands)');
-            const scratchBand = [];   // HCP < 5
-            const band1 = [];         // 5 <= HCP <= 7.9
-            const band2 = [];         // 8 <= HCP <= 15.8
-            const band3 = [];         // 15.9 <= HCP <= 54
-            const noHcpBand = [];     // sin HCP
+            const band1 = [];   // -5 <= HCP <= 7.9
+            const band2 = [];   // 8 <= HCP <= 13.9
+            const band3 = [];   // 14 <= HCP <= 21.9
+            const band4 = [];   // 22 <= HCP <= 54
+            const noHcpBand = []; // sin HCP
 
             for (const p of sortedParticipants) {
                 const h = getEffectiveHcp(p);
                 if (h === null) noHcpBand.push(p);
-                else if (h < 5) scratchBand.push(p);
                 else if (h <= 7.9) band1.push(p);
-                else if (h <= 15.8) band2.push(p);
-                else if (h <= 54) band3.push(p);
+                else if (h <= 13.9) band2.push(p);
+                else if (h <= 21.9) band3.push(p);
+                else if (h <= 54) band4.push(p);
                 else noHcpBand.push(p);
             }
 
-            const bandOrder = [scratchBand, band1, band2, band3, noHcpBand];
+            const bandOrder = [band1, band2, band3, band4, noHcpBand];
             let nextGroupNumber = 1;
 
             for (const bandParticipants of bandOrder) {

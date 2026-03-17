@@ -620,7 +620,7 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                     className="w-full px-3 py-2 border border-gray-300 rounded-md"
                   >
                     <option value="standard">Estándar (0–7.9, 8–13.9, 14–21.9, 22–53.9)</option>
-                    <option value="scratch_bands">Scratch (Gross) + Bandas (5–7.9, 8–15.8, 15.9–54)</option>
+                    <option value="scratch_bands">Scratch (Gross) + Bandas (-5 a 7.9, 8 a 13.9, 14 a 21.9, 22 a 54)</option>
                   </select>
                   
                   {/* Descripción de la modalidad seleccionada */}
@@ -641,9 +641,10 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                         <p className="font-semibold text-blue-900">Modalidad Scratch:</p>
                         <ul className="list-disc list-inside space-y-0.5 ml-2">
                           <li><strong>Scratch (Gross):</strong> Ganador absoluto por score bruto</li>
-                          <li><strong>1ra Banda:</strong> HCP 5.0 - 7.9 (Net)</li>
-                          <li><strong>2da Banda:</strong> HCP 8.0 - 15.8 (Net)</li>
-                          <li><strong>3ra Banda:</strong> HCP 15.9 - 54.0 (Net)</li>
+                          <li><strong>1ra Banda:</strong> HCP -5 a 7.9 (Net)</li>
+                          <li><strong>2da Banda:</strong> HCP 8 a 13.9 (Net)</li>
+                          <li><strong>3ra Banda:</strong> HCP 14 a 21.9 (Net)</li>
+                          <li><strong>4ta Banda:</strong> HCP 22 a 54 (Net)</li>
                           <li><strong>Sin HCP:</strong> Jugadores sin handicap asignado (agrupados por separado)</li>
                         </ul>
                       </div>

@@ -84,6 +84,51 @@ Atentamente,
 }
 
 // ============================================
+// MENSAJE DE CONFIRMACIÓN DE INSCRIPCIÓN AL TORNEO
+// ============================================
+
+function generateInscriptionConfirmationMessage(tournamentName, tournamentDate, playerName, options = {}) {
+  const { startTime, groupNumber } = options;
+  const fecha = tournamentDate ? formatDate(tournamentDate) : '—';
+  const hora = startTime ? ` ${startTime}` : '';
+  const grupo = groupNumber != null && groupNumber !== '' ? `\n*Grupo:* ${groupNumber}` : '';
+
+  const message = `Hola *${playerName}*,
+
+Tu inscripción al torneo fue registrada correctamente.
+
+*Torneo:* ${tournamentName}
+*Fecha:* ${fecha}${hora}${grupo}
+
+Nos vemos en el campo.`;
+
+  return message;
+}
+
+// ============================================
+// MENSAJE DE CONFIRMACIÓN DE PAGO DE INSCRIPCIÓN
+// ============================================
+
+function generateInscriptionPaymentMessage(tournamentName, tournamentDate, playerName, amount, currency = 'ARS') {
+  const fecha = tournamentDate ? formatDate(tournamentDate) : '—';
+  const monto = currency === 'USD'
+    ? formatPriceUSD(amount)
+    : formatPrice(amount);
+
+  const message = `Hola *${playerName}*,
+
+Tu pago de la inscripción al torneo fue registrado correctamente.
+
+*Torneo:* ${tournamentName}
+*Fecha:* ${fecha}
+*Monto:* ${monto}
+
+Gracias. Nos vemos en el campo.`;
+
+  return message;
+}
+
+// ============================================
 // GENERADOR DE URL DE WHATSAPP
 // ============================================
 
@@ -183,6 +228,8 @@ function isValidPhoneNumber(phone) {
 
 export {
   generatePaymentReceiptMessage,
+  generateInscriptionConfirmationMessage,
+  generateInscriptionPaymentMessage,
   generateWhatsAppUrl,
   isValidPhoneNumber,
   formatPrice,

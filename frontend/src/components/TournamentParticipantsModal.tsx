@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { 
   X, 
   Plus, 
@@ -13,7 +13,7 @@ import {
   Users,
   Download,
   DollarSign,
-  Link2
+  MessageCircle
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { SearchInput } from './SearchInput'
@@ -23,6 +23,7 @@ import { LoadingSpinner } from '@/components/LoadingSpinner'
 import { useParticipants, useAddParticipant, useRemoveParticipant, useUpdateParticipantHandicap, useSearchPlayers, useExternalPlayers, useDeleteExternalPlayer } from '@/hooks/useParticipants'
 import { calculateHCPFromIndexDefault } from '@/utils/teeSelection'
 import { useTournamentGroups, useMovePlayerToGroup } from '@/hooks/useTournaments'
+import { getParticipantWhatsAppInscriptionUrl } from '@/services/participantService'
 import { CreateExternalPlayerModal } from '@/components/CreateExternalPlayerModal'
 import { PaymentModal } from '@/components/PaymentModal'
 import { toast } from 'react-hot-toast'
@@ -57,6 +58,18 @@ export function TournamentParticipantsModal({
   // Búsqueda/filtrado de participantes existentes
   const [participantSearch, setParticipantSearch] = useState('')
   const [paymentFilter, setPaymentFilter] = useState<'all' | 'pending' | 'paid' | 'waived'>('all')
+  const [showFilterPopover, setShowFilterPopover] = useState(false)
+  const filterPopoverRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!showFilterPopover) return
+    const onMouseDown = (e: MouseEvent) => {
+      if (filterPopoverRef.current && !filterPopoverRef.current.contains(e.target as Node)) {
+        setShowFilterPopover(false)
+      }
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [showFilterPopover])
 
   // Function to format names: Primera Letra Mayúscula y resto minúscula
   const formatName = (name: string): string => {
@@ -570,81 +583,48 @@ export function TournamentParticipantsModal({
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6 pb-8 rounded-b-lg">
-          {/* Enlace inscripción pública (visible en celular) */}
-          {((tournament as any)?.public_inscription === 1 || (tournament as any)?.public_inscription === true) && (
-            <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg flex flex-col sm:flex-row sm:items-center gap-3">
-              <div className="flex items-center gap-2 flex-1 min-w-0">
-                <Link2 className="w-5 h-5 text-blue-600 flex-shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-blue-900">Enlace para inscripción desde el celular</p>
-                  <p className="text-xs text-blue-700 truncate" title={`${typeof window !== 'undefined' ? window.location.origin : ''}/club/${clubId}/torneo/${tournament.tournament_id}/inscribirse`}>
-                    {typeof window !== 'undefined' ? window.location.origin : ''}/club/{clubId}/torneo/{tournament.tournament_id}/inscribirse
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  const url = `${window.location.origin}/club/${clubId}/torneo/${tournament.tournament_id}/inscribirse`
-                  navigator.clipboard.writeText(url).then(() => {
-                    toast.success('Enlace copiado. Compartilo por WhatsApp o redes.')
-                  }).catch(() => {
-                    toast.error('No se pudo copiar')
-                  })
-                }}
-                className="flex-shrink-0 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700"
-              >
-                Copiar enlace
-              </button>
-            </div>
-          )}
-          {/* Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-            <div 
-              className="bg-blue-50 p-4 rounded-lg cursor-pointer hover:bg-blue-100 transition-colors"
+        <div className="flex-1 overflow-y-auto p-4 pb-6 rounded-b-lg">
+          {/* Stats: más compactos */}
+          <div className="grid grid-cols-3 gap-2 mb-4">
+            <div
+              className="bg-blue-50 p-3 rounded-lg cursor-pointer hover:bg-blue-100 transition-colors"
               onClick={() => {
                 setStatusFilter('all')
                 setShowMembersList(false)
                 setShowExternalPlayersList(false)
               }}
             >
-              <div className="flex items-center">
-                <User className="w-8 h-8 text-blue-600" />
-                <div className="ml-3">
-                  <p className="text-sm font-medium text-blue-600">Total</p>
-                  <p className="text-2xl font-bold text-blue-900">{stats.total}</p>
+              <div className="flex items-center gap-2">
+                <User className="w-5 h-5 text-blue-600 flex-shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-blue-600">Total</p>
+                  <p className="text-lg font-bold text-blue-900">{stats.total}</p>
                 </div>
               </div>
             </div>
-            <div 
-              className="bg-yellow-50 p-4 rounded-lg cursor-pointer hover:bg-yellow-100 transition-colors"
+            <div
+              className="bg-yellow-50 p-3 rounded-lg cursor-pointer hover:bg-yellow-100 transition-colors"
               onClick={() => {
                 setStatusFilter('registered')
                 setShowMembersList(false)
                 setShowExternalPlayersList(false)
               }}
             >
-              <div className="flex flex-col">
-                <div className="flex items-center mb-2">
-                  <Clock className="w-8 h-8 text-yellow-600" />
-                  <div className="ml-3">
-                    <p className="text-sm font-medium text-yellow-600">Registrados</p>
-                    <p className="text-2xl font-bold text-yellow-900">{stats.registered}</p>
-                  </div>
-                </div>
-                <div className="flex gap-4 text-xs ml-11">
-                  <span className="text-green-700">✓ Pagados: {stats.paid}</span>
-                  <span className="text-orange-700">⏳ Pendientes: {stats.pending}</span>
+              <div className="flex items-center gap-2">
+                <Clock className="w-5 h-5 text-yellow-600 flex-shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-yellow-600">Registrados</p>
+                  <p className="text-lg font-bold text-yellow-900">{stats.registered}</p>
+                  <p className="text-[10px] text-yellow-700 mt-0.5">✓{stats.paid} pag · ⏳{stats.pending} pend</p>
                 </div>
               </div>
             </div>
-            <div className="bg-gray-50 p-4 rounded-lg">
-              <div className="flex items-center">
-                <Trophy className="w-8 h-8 text-gray-600" />
-                <div className="ml-3">
-                  <p className="text-sm font-medium text-gray-600">Cupos</p>
-                  <p className="text-2xl font-bold text-gray-900">
+            <div className="bg-gray-50 p-3 rounded-lg">
+              <div className="flex items-center gap-2">
+                <Trophy className="w-5 h-5 text-gray-600 flex-shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-gray-600">Cupos</p>
+                  <p className="text-lg font-bold text-gray-900">
                     {tournament.max_participants ? `${stats.total}/${tournament.max_participants}` : stats.total}
                   </p>
                 </div>
@@ -652,38 +632,36 @@ export function TournamentParticipantsModal({
             </div>
           </div>
 
-          {/* Controls */}
-          <div className="flex flex-col space-y-4 mb-6">
-            {/* Row 1: Acciones */}
-            <div className="flex items-center flex-wrap gap-3">
+          {/* Controls: una sola fila compacta */}
+          <div className="flex flex-wrap items-center gap-2 mb-4">
               {allowGroups && (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-gray-700">¿En qué turno agregás jugadores?</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-medium text-gray-600">Turno:</span>
                   <select
                     value={preferredSessionForAdd}
                     onChange={(e) => setPreferredSessionForAdd(e.target.value as 'morning' | 'afternoon')}
-                    className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-medium"
-                    title="Elegí Mañana o Tarde; el sistema lo pondrá en un grupo de ese turno con espacio, o creará uno nuevo"
+                    className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
+                    title="Mañana o Tarde"
                   >
                     <option value="morning">Mañana</option>
                     <option value="afternoon">Tarde</option>
                   </select>
                   {!groupsByHcp && (
                     <>
-                      <label className="text-sm font-medium text-gray-700">Asignar a grupo:</label>
+                      <span className="text-xs font-medium text-gray-600">Grupo:</span>
                       <select
                         value={addToGroupNumber}
                         onChange={(e) => setAddToGroupNumber(e.target.value === '' ? '' : Number(e.target.value))}
-                        className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                        className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
                       >
-                        <option value="">Sin grupo</option>
+                        <option value="">—</option>
                         {groupNumbers.map((num) => {
                           const g = tournamentGroups.find((g: any) => g.group_number === num)
                           const count = g?.participants_count ?? g?.participants?.length ?? 0
                           const full = count >= 4
                           return (
                             <option key={num} value={num} disabled={full}>
-                              Grupo {num}{full ? ' (completo)' : ''}
+                              {num}{full ? ' (lleno)' : ''}
                             </option>
                           )
                         })}
@@ -697,7 +675,7 @@ export function TournamentParticipantsModal({
                   setShowMembersList(!showMembersList)
                   setShowExternalPlayersList(false)
                 }}
-                className="flex items-center space-x-2 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-900 text-white rounded-lg hover:bg-gray-800 text-sm"
               >
                 <Users className="w-4 h-4" />
                 <span>Agregar Socio del Club</span>
@@ -707,7 +685,7 @@ export function TournamentParticipantsModal({
                   setShowExternalPlayersList(!showExternalPlayersList)
                   setShowMembersList(false)
                 }}
-                className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
               >
                 <UserX className="w-4 h-4" />
                 <span>Agregar Jugador Externo</span>
@@ -715,62 +693,73 @@ export function TournamentParticipantsModal({
               {participants.length > 0 && (
                 <button
                   onClick={handleExportToExcel}
-                  className="flex items-center space-x-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+                  className="flex items-center space-x-2 px-3 py-1.5 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm"
                   title={`Exportar ${participants.length} participante(s) a Excel`}
                 >
                   <Download className="w-4 h-4" />
-                  <span>Exportar Excel ({participants.length})</span>
+                  <span>Excel ({participants.length})</span>
                 </button>
               )}
-            </div>
-
-            {/* Row 2: Filtros */}
-            <div className="flex items-center flex-wrap gap-3">
-              <div className="flex items-center space-x-2">
+            <div className="relative" ref={filterPopoverRef}>
+              <button
+                type="button"
+                onClick={() => setShowFilterPopover(!showFilterPopover)}
+                className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 rounded-lg bg-white hover:bg-gray-50 text-gray-700 text-sm"
+                title="Filtros por estado y pago"
+              >
                 <Filter className="w-4 h-4 text-gray-500" />
-                <select
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value as 'all' | Participant['status'])}
-                  className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-gray-500 focus:border-transparent"
-                >
-                  <option value="all">Todos los estados</option>
-                  <option value="registered">Registrados</option>
-                  <option value="cancelled">Cancelados</option>
-                </select>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Filter className="w-4 h-4 text-gray-500" />
-                <select
-                  value={paymentFilter}
-                  onChange={(e) => setPaymentFilter(e.target.value as any)}
-                  className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-gray-500 focus:border-transparent"
-                >
-                  <option value="all">Pago: todos</option>
-                  <option value="pending">Pago: pendientes</option>
-                  <option value="paid">Pago: pagados</option>
-                  <option value="waived">Pago: bonificados</option>
-                </select>
-              </div>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Buscar participante o matrícula..."
-                  value={participantSearch}
-                  onChange={(e) => setParticipantSearch(e.target.value)}
-                  className="pl-10 pr-8 py-2 w-72 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
-                />
-                {participantSearch && (
-                  <button
-                    type="button"
-                    onClick={() => setParticipantSearch('')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                    title="Limpiar búsqueda"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
+                <span>Filtros</span>
+                {((statusFilter !== 'all' ? 1 : 0) + (paymentFilter !== 'all' ? 1 : 0)) > 0 && (
+                  <span className="bg-gray-200 text-gray-700 text-xs rounded-full px-1.5">
+                    {(statusFilter !== 'all' ? 1 : 0) + (paymentFilter !== 'all' ? 1 : 0)}
+                  </span>
                 )}
-              </div>
+              </button>
+              {showFilterPopover && (
+                <div className="absolute left-0 top-full mt-1 z-50 py-2 px-3 bg-white border border-gray-200 rounded-lg shadow-lg min-w-[200px]">
+                  <p className="text-xs font-medium text-gray-500 mb-2">Estado</p>
+                  <select
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value as 'all' | Participant['status'])}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-3 focus:ring-2 focus:ring-gray-500 focus:border-transparent"
+                  >
+                    <option value="all">Todos los estados</option>
+                    <option value="registered">Registrados</option>
+                    <option value="cancelled">Cancelados</option>
+                  </select>
+                  <p className="text-xs font-medium text-gray-500 mb-2">Pago</p>
+                  <select
+                    value={paymentFilter}
+                    onChange={(e) => setPaymentFilter(e.target.value as any)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-gray-500 focus:border-transparent"
+                  >
+                    <option value="all">Todos</option>
+                    <option value="pending">Pendientes</option>
+                    <option value="paid">Pagados</option>
+                    <option value="waived">Bonificados</option>
+                  </select>
+                </div>
+              )}
+            </div>
+            <div className="relative flex-1 min-w-[140px] max-w-[220px]">
+              <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Buscar participante o matrícula..."
+                value={participantSearch}
+                onChange={(e) => setParticipantSearch(e.target.value)}
+                className="pl-8 pr-7 py-1.5 w-full text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
+              />
+              {participantSearch && (
+                <button
+                  type="button"
+                  onClick={() => setParticipantSearch('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  title="Limpiar búsqueda"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
             </div>
           </div>
 
@@ -1350,7 +1339,22 @@ export function TournamentParticipantsModal({
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                             {new Date(participant.registration_date).toLocaleDateString('es-ES')}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium" style={{width: '140px'}}>
+                          <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium" style={{width: '180px'}}>
+                            <button
+                              onClick={async () => {
+                                try {
+                                  const { whatsappUrl } = await getParticipantWhatsAppInscriptionUrl(clubId, tournament.tournament_id, participant.participant_id);
+                                  window.open(whatsappUrl, '_blank');
+                                  toast.success('Se abrió WhatsApp para enviar la confirmación de inscripción');
+                                } catch (e: any) {
+                                  toast.error(e.response?.data?.error || 'No se pudo generar el enlace (¿tiene teléfono cargado?)');
+                                }
+                              }}
+                              className="inline-flex items-center px-2 py-1 text-xs font-medium text-green-700 hover:text-green-900 hover:bg-green-50 rounded border border-green-200 hover:border-green-300 transition-colors mr-2"
+                              title="Enviar confirmación de inscripción por WhatsApp"
+                            >
+                              <MessageCircle className="w-4 h-4" />
+                            </button>
                             <button
                               onClick={() => setPaymentEditing(participant)}
                               className={`inline-flex items-center px-2 py-1 text-xs font-medium rounded border transition-colors mr-2 ${
@@ -1378,24 +1382,15 @@ export function TournamentParticipantsModal({
                 </table>
               </div>
             ) : (
-              <div className="text-center py-12">
-                <User className="mx-auto h-12 w-12 text-gray-400" />
+              <div className="text-center py-8">
+                <User className="mx-auto h-10 w-10 text-gray-400" />
                 <h3 className="mt-2 text-sm font-medium text-gray-900">No hay participantes</h3>
                 <p className="mt-1 text-sm text-gray-500">
-                  {statusFilter !== 'all' 
-                    ? 'No se encontraron participantes con el filtro aplicado.' 
-                    : 'Comienza agregando el primer participante al torneo.'
+                  {statusFilter !== 'all'
+                    ? 'No se encontraron participantes con el filtro aplicado.'
+                    : 'Comienza agregando con los botones de arriba (Socio del Club o Jugador Externo).'
                   }
                 </p>
-                <div className="mt-6">
-                  <button
-                    onClick={() => setShowAddParticipant(true)}
-                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-gray-900 hover:bg-gray-800"
-                  >
-                    <Plus className="w-4 h-4 mr-2" />
-                    Agregar Primer Participante
-                  </button>
-                </div>
               </div>
             )}
           </div>

@@ -1,8 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'react-hot-toast';
-import { 
-  getTournamentParticipants, 
-  addTournamentParticipant, 
+import {
+  getTournamentParticipants,
+  addTournamentParticipant,
   removeTournamentParticipant,
   updateParticipantStatus,
   updateParticipantPayment,

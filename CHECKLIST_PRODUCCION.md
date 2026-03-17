@@ -1,5 +1,9 @@
 # Checklist: archivos para que producción quede igual que dev
 
+**¿Cómo actualizo en el futuro?** → Seguí los pasos de **`ACTUALIZAR_PRODUCCION.md`** (rutas del VPS, build, copiar dist, reiniciar solo teetracker-backend). En otro chat podés decir: "actualizá siguiendo ACTUALIZAR_PRODUCCION.md".
+
+---
+
 Revisá que **todos** estos archivos estén en el VPS (misma ruta que en tu proyecto). Si falta alguno, subilo con FileZilla.
 
 ---
