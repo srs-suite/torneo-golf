@@ -387,7 +387,10 @@ export default function TeeTimeManagerSimple() {
     }
     const sessionLabel = (g: { tee_time?: string | null; group_tee_preference?: string | null }) =>
       getGroupSession(g) === 'afternoon' ? 'Tarde' : 'Mañana'
-    const excelData = groups.map((group) => {
+    const tipoAgrupacion = (tournament as any)?.groups_by_hcp ? 'Por HCP (serpentina)' : 'Por grupos (inscripción)'
+    const excelData = [
+      { 'Grupo': 'Tipo de agrupación', 'Turno': tipoAgrupacion, 'Hora': '', 'Hoyo': '', 'Jugador 1': '', 'HCP 1': '', 'Jugador 2': '', 'HCP 2': '', 'Jugador 3': '', 'HCP 3': '', 'Jugador 4': '', 'HCP 4': '' },
+      ...groups.map((group) => {
       const participants = group.participants || []
       const row: Record<string, string | number> = {
         'Grupo': group.group_number,
@@ -401,7 +404,8 @@ export default function TeeTimeManagerSimple() {
         row[`HCP ${i}`] = p?.handicap_local != null ? p.handicap_local : ''
       })
       return row
-    })
+      })
+    ]
     const worksheet = XLSX.utils.json_to_sheet(excelData)
     const colWidths = [
       { wch: 6 }, { wch: 8 }, { wch: 8 }, { wch: 10 },
@@ -432,10 +436,10 @@ export default function TeeTimeManagerSimple() {
     <div style={{minHeight: '100vh', backgroundColor: '#f9fafb', padding: '20px'}}>
       <div style={{maxWidth: '1200px', margin: '0 auto'}}>
         
-        {/* Header */}
+        {/* Header: título con modo (Por Grupos) o (Por HCP) */}
         <div style={{backgroundColor: 'white', padding: '20px', borderRadius: '8px', marginBottom: '20px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)'}}>
-          <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between'}}>
-            <div style={{display: 'flex', alignItems: 'center'}}>
+          <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px'}}>
+            <div style={{display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '12px'}}>
               <button
                 onClick={() => navigate(`/club/${clubId}/admin`)}
                 style={{
@@ -445,15 +449,14 @@ export default function TeeTimeManagerSimple() {
                   backgroundColor: '#f3f4f6',
                   borderRadius: '6px',
                   border: 'none',
-                  cursor: 'pointer',
-                  marginRight: '20px'
+                  cursor: 'pointer'
                 }}
               >
                 <ArrowLeft size={20} />
                 <span style={{marginLeft: '8px'}}>Volver</span>
               </button>
               <h1 style={{fontSize: '24px', fontWeight: 'bold', margin: 0}}>
-                Gestión de Tee Times - {tournament.tournament_name}
+                Gestión de Tee Times - {tournament.tournament_name} ({(tournament as any)?.groups_by_hcp ? 'Por HCP' : 'Por Grupos'})
               </h1>
             </div>
           </div>
@@ -681,7 +684,7 @@ export default function TeeTimeManagerSimple() {
             boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
           }}>
             <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px'}}>
-              <div style={{display: 'flex', alignItems: 'center', gap: '15px'}}>
+              <div style={{display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap'}}>
                 <h2 style={{fontSize: '24px', fontWeight: 'bold', margin: 0}}>
                   Paso 3: Grupos con Tee Times Asignados
                 </h2>
@@ -708,9 +711,9 @@ export default function TeeTimeManagerSimple() {
                     }}
                     style={{
                       padding: '8px 14px',
-                      backgroundColor: (tournament as any)?.groups_by_hcp ? '#e0e7ff' : '#fef3c7',
-                      color: (tournament as any)?.groups_by_hcp ? '#3730a3' : '#92400e',
-                      border: (tournament as any)?.groups_by_hcp ? '1px solid #6366f1' : '1px solid #f59e0b',
+                      backgroundColor: '#374151',
+                      color: 'white',
+                      border: 'none',
                       borderRadius: '6px',
                       cursor: 'pointer',
                       fontSize: '14px',
@@ -1218,12 +1221,14 @@ export default function TeeTimeManagerSimple() {
                     const yyyy = d.getFullYear().toString()
                     return `${dd}/${mm}/${yyyy}`
                   }
+                  const tipoAgrupacionPrint = (tournament as any)?.groups_by_hcp ? 'Por HCP (serpentina)' : 'Por grupos (inscripción)'
                   const generateHeader = (sessionName: string, sessionIcon: string) => `
                     <div class="page-header">
                       <h1 style="text-align:center;">${sessionIcon} ${sessionName}</h1>
                       <div class="tournament-info">
                         <p><strong>Torneo:</strong> ${tournament?.tournament_name || 'N/A'}</p>
                         <p><strong>Fecha:</strong> ${formatDate(tournament?.tournament_date)}${tournament?.start_time ? ` - ${tournament.start_time}` : ''}</p>
+                        <p><strong>Tipo de agrupación:</strong> ${tipoAgrupacionPrint}</p>
                       </div>
                     </div>
                   `;

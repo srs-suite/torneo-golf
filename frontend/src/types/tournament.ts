@@ -122,6 +122,8 @@ export interface CreateTournamentData {
   preferred_session?: 'morning' | 'afternoon'
   tee_interval_minutes?: number
   enable_two_sessions?: boolean
+  /** 1 = agrupación por HCP (serpentina), 0 = por grupos (inscripción) */
+  groups_by_hcp?: number | boolean
 }
 
 export interface TournamentStats {

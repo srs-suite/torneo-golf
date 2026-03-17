@@ -2820,14 +2820,31 @@ async function getTournamentForPublicInscription(clubId, tournamentId) {
     const query = `
         SELECT t.tournament_id, t.tournament_name, t.tournament_date, t.registration_deadline, t.max_participants,
                COALESCE(t.public_inscription_allow_groups, 1) AS public_inscription_allow_groups,
-               t.flyer_url
+               t.flyer_url,
+               COALESCE(t.groups_by_hcp, 0) AS groups_by_hcp
         FROM tournaments t
         ${baseWhere}`;
-    const { rows } = await executeQuery(query, [clubId, tournamentId]);
-    const row = rows[0] || null;
+    let row;
+    try {
+        const { rows } = await executeQuery(query, [clubId, tournamentId]);
+        row = rows[0] || null;
+    } catch (e) {
+        if (e.code === 'ER_BAD_FIELD_ERROR') {
+            const fallback = `
+                SELECT t.tournament_id, t.tournament_name, t.tournament_date, t.registration_deadline, t.max_participants,
+                       COALESCE(t.public_inscription_allow_groups, 1) AS public_inscription_allow_groups,
+                       t.flyer_url
+                FROM tournaments t
+                ${baseWhere}`;
+            const { rows } = await executeQuery(fallback, [clubId, tournamentId]);
+            row = rows[0] || null;
+            if (row) row.groups_by_hcp = 0;
+        } else throw e;
+    }
     if (row) {
         row.public_inscription_allow_groups = row.public_inscription_allow_groups ?? 1;
         row.flyer_url = row.flyer_url ?? null;
+        row.groups_by_hcp = row.groups_by_hcp ?? 0;
     }
     return row;
 }
@@ -2840,14 +2857,31 @@ async function getTournamentForPublicInscriptionUnfiltered(clubId, tournamentId)
     const query = `
         SELECT t.tournament_id, t.tournament_name, t.tournament_date, t.registration_deadline, t.max_participants,
                COALESCE(t.public_inscription_allow_groups, 1) AS public_inscription_allow_groups,
-               t.flyer_url
+               t.flyer_url,
+               COALESCE(t.groups_by_hcp, 0) AS groups_by_hcp
         FROM tournaments t
         ${baseWhere}`;
-    const { rows } = await executeQuery(query, [clubId, tournamentId]);
-    const row = rows[0] || null;
+    let row;
+    try {
+        const { rows } = await executeQuery(query, [clubId, tournamentId]);
+        row = rows[0] || null;
+    } catch (e) {
+        if (e.code === 'ER_BAD_FIELD_ERROR') {
+            const fallback = `
+                SELECT t.tournament_id, t.tournament_name, t.tournament_date, t.registration_deadline, t.max_participants,
+                       COALESCE(t.public_inscription_allow_groups, 1) AS public_inscription_allow_groups,
+                       t.flyer_url
+                FROM tournaments t
+                ${baseWhere}`;
+            const { rows } = await executeQuery(fallback, [clubId, tournamentId]);
+            row = rows[0] || null;
+            if (row) row.groups_by_hcp = 0;
+        } else throw e;
+    }
     if (row) {
         row.public_inscription_allow_groups = row.public_inscription_allow_groups ?? 1;
         row.flyer_url = row.flyer_url ?? null;
+        row.groups_by_hcp = row.groups_by_hcp ?? 0;
     }
     return row;
 }
@@ -3002,6 +3036,16 @@ async function addPublicInscription(clubId, tournamentId, memberId, options = {}
                 [finalGroupNumber, participationId, tournamentIdNum]
             );
         }
+    }
+
+    // Si se inscribió eligiendo/unirse a un grupo, marcar torneo como "por grupos" (inscripción) para que Gestión de Tee Times muestre el tipo correcto
+    if (groupNumber != null || (createGroup && finalGroupNumber != null)) {
+        try {
+            await executeQuery(
+                'UPDATE tournaments SET groups_by_hcp = 0, updated_at = CURRENT_TIMESTAMP WHERE course_id = ? AND tournament_id = ?',
+                [clubId, tournamentIdNum]
+            );
+        } catch (e) { /* columna puede no existir en instalaciones antiguas */ }
     }
 
     return { success: true, group_number: finalGroupNumber };
@@ -3371,6 +3415,22 @@ async function createTournament(courseId, tournamentData) {
 
 async function updateTournament(courseId, tournamentId, tournamentData) {
     const whereParams = [courseId, tournamentId];
+
+    // Actualización solo de groups_by_hcp cuando el body trae únicamente ese campo (sin reorganizar)
+    const payloadKeys = Object.keys(tournamentData).filter(k => tournamentData[k] !== undefined);
+    if (payloadKeys.length === 1 && payloadKeys[0] === 'groups_by_hcp') {
+        const val = (tournamentData.groups_by_hcp === true || tournamentData.groups_by_hcp === 1) ? 1 : 0;
+        try {
+            await executeQuery(
+                'UPDATE tournaments SET groups_by_hcp = ?, updated_at = CURRENT_TIMESTAMP WHERE course_id = ? AND tournament_id = ?',
+                [val, courseId, tournamentId]
+            );
+            return await getTournamentById(courseId, tournamentId);
+        } catch (e) {
+            if (e.code === 'ER_BAD_FIELD_ERROR') { /* columna no existe, seguir con update completo */ }
+            else throw e;
+        }
+    }
 
     // Parámetros que suelen existir en todas las instalaciones
     const minimalParams = [

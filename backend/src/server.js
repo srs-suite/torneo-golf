@@ -1302,7 +1302,8 @@ async function handlePublicInscriptionAPI(req, res, pathParts) {
                 registration_deadline: tournament.registration_deadline ?? null,
                 max_participants: tournament.max_participants ?? null,
                 public_inscription_allow_groups: tournament.public_inscription_allow_groups ?? 1,
-                flyer_url: tournament.flyer_url != null && String(tournament.flyer_url).trim() !== '' ? String(tournament.flyer_url).trim() : null
+                flyer_url: tournament.flyer_url != null && String(tournament.flyer_url).trim() !== '' ? String(tournament.flyer_url).trim() : null,
+                groups_by_hcp: tournament.groups_by_hcp === 1 || tournament.groups_by_hcp === true ? 1 : 0
             };
             sendJSON(res, { success: true, tournament: payload });
             return;

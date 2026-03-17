@@ -11,6 +11,8 @@ interface TournamentInfo {
   max_participants?: number;
   /** 0 o false = solo inscripción individual (grupos asignados por el club/HCP); 1 o true = permitir crear/unirse a grupos */
   public_inscription_allow_groups?: number | boolean;
+  /** 1 = torneo organizado por HCP (no se puede elegir grupo en inscripción); 0 = por grupos */
+  groups_by_hcp?: number | boolean;
   /** URL de la imagen del flyer para mostrar en la página de inscripción */
   flyer_url?: string | null;
 }
@@ -161,14 +163,27 @@ export default function PublicInscription() {
     loadTournamentAndGroups();
   }, [clubId, tournamentId]);
 
-  // Si el torneo no permite formar grupos (organización por HCP), forzar inscripción solo individual
+  // Al volver a la pestaña o a la app (p. ej. en el celular), refrescar datos por si el club cambió la modalidad (por grupos / por HCP)
   useEffect(() => {
-    if (tournament && (tournament.public_inscription_allow_groups === 0 || tournament.public_inscription_allow_groups === false)) {
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible' && clubId && tournamentId) {
+        loadTournamentAndGroups();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [clubId, tournamentId]);
+
+  // Si el torneo no permite formar grupos (organización por HCP o allow_groups desactivado), forzar inscripción solo individual
+  const allowGroupSelection = tournament && tournament.public_inscription_allow_groups !== 0 && tournament.public_inscription_allow_groups !== false
+    && (tournament.groups_by_hcp !== 1 && tournament.groups_by_hcp !== true);
+  useEffect(() => {
+    if (tournament && !allowGroupSelection) {
       setGroupChoice('none');
       setJoinGroupNumber('');
       setAddToGroupIds([]);
     }
-  }, [tournament?.public_inscription_allow_groups]);
+  }, [tournament?.public_inscription_allow_groups, tournament?.groups_by_hcp]);
 
   // Al elegir "crear grupo", cargar lista de inscriptos sin grupo para poder sumarlos
   useEffect(() => {
@@ -245,13 +260,12 @@ export default function PublicInscription() {
     setInscribing(true);
     try {
       const body: any = { token };
-      const allowGroups = tournament && tournament.public_inscription_allow_groups !== 0 && tournament.public_inscription_allow_groups !== false;
-      if (allowGroups && groupChoice === 'create') {
+      if (allowGroupSelection && groupChoice === 'create') {
         body.createGroup = true;
         if (addToGroupIds.length > 0) body.addToGroup = addToGroupIds;
       }
-      if (allowGroups && groupChoice === 'join' && joinGroupNumber !== '') body.groupNumber = Number(joinGroupNumber);
-      if ((!allowGroups || groupChoice !== 'join') && teePreference) body.teeTimePreference = teePreference;
+      if (allowGroupSelection && groupChoice === 'join' && joinGroupNumber !== '') body.groupNumber = Number(joinGroupNumber);
+      if ((!allowGroupSelection || groupChoice !== 'join') && teePreference) body.teeTimePreference = teePreference;
       await axios.post(`/api/public/inscription/${clubId}/tournament/${tournamentId}/inscribe`, body);
       resetForNext();
     } catch (err: unknown) {
@@ -420,21 +434,19 @@ export default function PublicInscription() {
               </button>
             </div>
 
-            {(() => {
-              const allowGroups = tournament.public_inscription_allow_groups !== 0 && tournament.public_inscription_allow_groups !== false;
-              if (!allowGroups) {
-                return (
-                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
-                    <p className="text-sm text-amber-800 font-medium">Inscripción individual</p>
-                    <p className="text-sm text-amber-700 mt-0.5">Los grupos serán asignados por el club (por handicap). Solo podés inscribirte de forma individual.</p>
-                  </div>
-                );
-              }
-              return null;
-            })()}
+            {!allowGroupSelection && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
+                <p className="text-sm text-amber-800 font-medium">Inscripción individual</p>
+                <p className="text-sm text-amber-700 mt-0.5">
+                  {tournament.groups_by_hcp === 1 || tournament.groups_by_hcp === true
+                    ? 'Este torneo está organizado por handicap. Los grupos los asigna el club. Solo podés inscribirte de forma individual.'
+                    : 'Los grupos serán asignados por el club. Solo podés inscribirte de forma individual.'}
+                </p>
+              </div>
+            )}
 
             <div className="space-y-4 mb-4">
-              {(tournament.public_inscription_allow_groups !== 0 && tournament.public_inscription_allow_groups !== false) && (
+              {allowGroupSelection && (
                 <>
               <p className="font-medium text-gray-700">¿Querés armar o sumarte a un grupo? (máx. 4 por grupo)</p>
               <div className="flex flex-col gap-2">
@@ -499,6 +511,8 @@ export default function PublicInscription() {
                 </>
               )}
             </div>
+
+            <p className="text-xs text-gray-500 mb-2">Si un administrador cambió la modalidad del torneo (por grupos / por HCP), actualizá la página para ver las opciones actuales.</p>
 
             {groupChoice !== 'join' && (
               <div className="space-y-2 mb-6">
