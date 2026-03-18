@@ -1,4 +1,29 @@
 // Golf scoring utility functions
+
+/** Si el índice es negativo, el HCP se muestra con "+" (ej. +1) porque se suma al gross; si no, se muestra sin signo. */
+export function formatHcpForDisplay(
+  hcpValue: number | null | undefined,
+  handicapIndex?: number | null | undefined
+): string {
+  if (hcpValue === null || hcpValue === undefined || Number.isNaN(Number(hcpValue))) return '-';
+  const n = Math.round(Number(hcpValue));
+  const idx = handicapIndex !== null && handicapIndex !== undefined ? Number(handicapIndex) : null;
+  if (idx !== null && !Number.isNaN(idx) && idx < 0) return `+${Math.abs(n)}`;
+  return String(n);
+}
+
+/** Net = Gross - HCP normalmente; si índice negativo, Net = Gross + HCP (el HCP es "positivo" y se suma como penalidad). */
+export function computeNetScore(
+  gross: number,
+  hcp: number,
+  handicapIndex?: number | null | undefined
+): number {
+  const idx = handicapIndex !== null && handicapIndex !== undefined ? Number(handicapIndex) : null;
+  const h = Math.round(Number(hcp)) || 0;
+  if (idx !== null && !Number.isNaN(idx) && idx < 0) return gross + Math.abs(h);
+  return gross - h;
+}
+
 export function getScoreStyle(strokes: number, par: number) {
   if (strokes === 1) {
     // Hole in One

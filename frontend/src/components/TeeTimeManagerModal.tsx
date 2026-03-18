@@ -3,6 +3,7 @@ import { X, Clock, Play, RefreshCw, GripVertical, User, Trophy, Mail, Phone } fr
 import { Tournament } from '@/types/tournament'
 import { useGenerateGroups, useAssignTeeTimes, useTournamentGroups, useMovePlayerToGroup, useMoveGroupToHole } from '@/hooks/useTournaments'
 import { LoadingSpinner } from '@/components/LoadingSpinner'
+import { formatHcpForDisplay } from '@/utils/scoreUtils'
 
 interface TeeTimeManagerModalProps {
   isOpen: boolean
@@ -881,7 +882,7 @@ export function TeeTimeManagerModal({
                                 <div className="text-sm text-gray-600 space-y-1">
                                   <div className="flex items-center space-x-1">
                                     <Trophy className="w-3 h-3 text-gray-500" />
-                                    <span>HCP: {participant.handicap_local !== null && participant.handicap_local !== undefined ? participant.handicap_local : 'N/A'}</span>
+                                    <span>HCP: {formatHcpForDisplay(participant.handicap_local ?? (participant as any).handicap_index, (participant as any).handicap_index)}</span>
                                     {participant.player_type === 'external' && (
                                       <span className="ml-1 text-xs text-gray-600">(Externo)</span>
                                     )}

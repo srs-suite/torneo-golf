@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, FileText, User, CheckCircle, Search, X, Trophy, Printer, Edit } from 'lucide-react';
 import { useTournamentParticipants } from '../hooks/useTournaments';
 import { useTournamentScorecards } from '../hooks/useScorecards';
-import { getScoreStyle } from '../utils/scoreUtils';
+import { getScoreStyle, formatHcpForDisplay, computeNetScore } from '../utils/scoreUtils';
 
 // Score styling moved to shared utility
 
@@ -35,7 +35,7 @@ function ScorecardModal({ scorecard, onClose }: { scorecard: any, onClose: () =>
                 Tarjeta de {scorecard.player_name}
               </h2>
               <p className="text-sm text-gray-600">
-                {scorecard.player_type === 'external' ? 'Jugador Externo' : 'Socio'} • HCP: {Math.round(scorecard.handicap_local) || 'Sin HCP'}
+                {scorecard.player_type === 'external' ? 'Jugador Externo' : 'Socio'} • HCP: {formatHcpForDisplay(scorecard.handicap_local, scorecard.handicap_index)}
               </p>
             </div>
           </div>
@@ -87,7 +87,7 @@ function ScorecardModal({ scorecard, onClose }: { scorecard: any, onClose: () =>
               </div>
               <div>
                 <span className="text-gray-600">Handicap:</span>
-                <p className="font-medium">{Math.round(scorecard.handicap_local) || 'Sin HCP'}</p>
+                <p className="font-medium">{formatHcpForDisplay(scorecard.handicap_local, scorecard.handicap_index)}</p>
               </div>
               <div>
                 <span className="text-gray-600">Club:</span>
@@ -917,8 +917,8 @@ export default function ScorecardPlayerSelection() {
                             <span>
                               {participant.player_type === 'external' ? 'Externo' : 'Socio'}
                             </span>
-                            {participant.handicap_local !== null && (
-                              <span>HCP: {Math.round(participant.handicap_local)}</span>
+                            {(participant.handicap_local != null || (participant as any).handicap_index != null) && (
+                              <span>HCP: {formatHcpForDisplay(participant.handicap_local ?? (participant as any).handicap_index, (participant as any).handicap_index)}</span>
                             )}
                             {participant.member_number && (
                               <span>#{participant.member_number}</span>
@@ -938,8 +938,8 @@ export default function ScorecardPlayerSelection() {
                             {/* Score Summary for players with loaded scorecards - inline */}
                             {hasScorecard && participantScorecard && (() => {
                               const totalGolpes = (participantScorecard as any).total_gross || 0;
-                              const hcp = Math.round(participant.handicap_local) || 0;
-                              const neto = totalGolpes - hcp;
+                              const hcp = Math.round(participant.handicap_local ?? (participant as any).handicap_index) || 0;
+                              const neto = computeNetScore(totalGolpes, hcp, (participant as any).handicap_index);
                               
                               return (
                                 <div className="flex items-center gap-3 ml-4 px-3 py-1 bg-green-50 rounded-lg text-xs">
@@ -952,7 +952,7 @@ export default function ScorecardPlayerSelection() {
                                   <div className="text-center">
                                     <span className="text-gray-500">HCP:</span>
                                     <span className="font-bold text-gray-900 ml-1">
-                                      {hcp || 'N/A'}
+                                      {formatHcpForDisplay(participant.handicap_local ?? (participant as any).handicap_index, (participant as any).handicap_index)}
                                     </span>
                                   </div>
                                   <div className="text-center">

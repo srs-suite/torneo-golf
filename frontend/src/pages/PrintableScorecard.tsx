@@ -3,6 +3,7 @@ import { ArrowLeft, Printer } from 'lucide-react';
 import { useGetScorecardForPrint } from '../hooks/useScorecards';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect } from 'react';
+import { formatHcpForDisplay } from '@/utils/scoreUtils';
 
 export default function PrintableScorecard() {
   const { clubId, tournamentId, scorecardId } = useParams<{ 
@@ -66,11 +67,13 @@ export default function PrintableScorecard() {
     });
   };
 
-  // Calculate net score (Total Gross - HCP)
+  // Net = Gross − HCP; si índice negativo, Net = Gross + HCP
   const calculateNetScore = () => {
     if (!scorecard) return 0;
     const totalGross = scorecard.total_gross || 0;
     const hcp = Math.round(scorecard.handicap_local) || 0;
+    const idx = scorecard.handicap_index != null ? Number(scorecard.handicap_index) : null;
+    if (idx !== null && !Number.isNaN(idx) && idx < 0) return totalGross + hcp;
     return totalGross - hcp;
   };
 
@@ -228,7 +231,7 @@ export default function PrintableScorecard() {
                   </p>
                   <p className="text-sm text-gray-600">HCP: 
                     <span className="font-semibold text-gray-900 ml-1">
-                      {Math.round(scorecard.handicap_local) || 'N/A'}
+                      {formatHcpForDisplay(scorecard.handicap_local, scorecard.handicap_index)}
                     </span>
                   </p>
                 </div>
@@ -348,7 +351,7 @@ export default function PrintableScorecard() {
                       {/* HCP Local */}
                       <div className="bg-blue-50 p-3 rounded text-center border border-gray-300 print:p-2">
                         <h4 className="text-base font-semibold text-gray-900 print:text-sm">HCP LOCAL</h4>
-                        <div className="text-xl font-bold text-blue-600 mt-1 print:text-lg">{Math.round(scorecard.handicap_local) || 0}</div>
+                        <div className="text-xl font-bold text-blue-600 mt-1 print:text-lg">{formatHcpForDisplay(scorecard.handicap_local, scorecard.handicap_index)}</div>
                         <div className="text-xs text-gray-600">golpes</div>
                       </div>
 
@@ -363,7 +366,7 @@ export default function PrintableScorecard() {
                     {/* Additional Info */}
                     <div className="mt-3 text-center text-xs text-gray-600 print:text-xs">
                       <p>{formatDate(scorecard.created_at)} • {scorecard.entry_method || 'Manual'}</p>
-                      <p className="mt-1">Index: {scorecard.handicap_index || 0} • Cálculo: {scorecard.total_gross || 0} - {Math.round(scorecard.handicap_local) || 0} = {calculateNetScore()}</p>
+                      <p className="mt-1">Index: {scorecard.handicap_index ?? 0} • Cálculo: {scorecard.total_gross || 0} {(scorecard.handicap_index != null && Number(scorecard.handicap_index) < 0) ? '+' : '−'} {Math.abs(Math.round(scorecard.handicap_local) || 0)} = {calculateNetScore()}</p>
                     </div>
                   </div>
                 </div>

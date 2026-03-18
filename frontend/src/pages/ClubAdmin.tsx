@@ -47,6 +47,7 @@ import { FinancialReportQR } from '@/components/FinancialReportQR'
 import { Member } from '@/types/member'
 import { Tournament } from '@/types/tournament'
 import { toast } from 'react-hot-toast'
+import { formatHcpForDisplay } from '@/utils/scoreUtils'
 
 interface ClubData {
   course_id: number
@@ -697,12 +698,12 @@ export function ClubAdmin() {
                                   className="hover:bg-gray-100 px-2 py-1 rounded"
                                   title="Hacer clic para editar HCP manualmente"
                                 >
-                                  {member.handicap_local !== null && member.handicap_local !== undefined ? Math.round(member.handicap_local) : '-'}
+                                  {formatHcpForDisplay(member.handicap_local, member.handicap_index)}
                                 </button>
                               )
                             ) : (
-                              // Show calculated HCP when field characteristics are enabled
-                              <span title="HCP calculado automáticamente">{calculateHCP(member)}</span>
+                              // Show calculated HCP when field characteristics are enabled (con + si índice negativo)
+                              <span title="HCP calculado automáticamente">{formatHcpForDisplay(calculateHCP(member) === '-' ? null : (calculateHCP(member) as number), member.handicap_index)}</span>
                             )}
                           </div>
                           <div className="text-sm text-gray-500 flex items-center">

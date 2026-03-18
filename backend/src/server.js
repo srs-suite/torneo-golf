@@ -31,7 +31,7 @@ import {
     // Tournament functions
     getAllTournaments, getTournamentById, createTournament, updateTournament, deleteTournament,
     getTournamentParticipants, getTournamentParticipantsById, addTournamentParticipant, removeTournamentParticipant,
-    updateParticipantHandicap, updateParticipantPayment,
+    updateParticipantHandicap, updateParticipantTeePreference, updateParticipantPayment,
     getExternalPlayers, createExternalPlayer, updateExternalPlayer, deleteExternalPlayer, findDuplicateExternalPlayers,
     // Tee time and groups functions
     getTournamentGroups, generateTournamentGroups, assignTeeTimesToGroups, rebalanceGroupsByHcp,
@@ -488,16 +488,20 @@ async function handleClubAPI(req, res, pathParts) {
                     );
                     sendJSON(res, { success: true, message: 'Pago actualizado exitosamente' });
                 }
-                // Update participant handicap: PUT /participants/{id} with body { handicap_index?, handicap_local? }
+                // Update participant: PUT /participants/{id} with body { handicap_index?, handicap_local?, preferred_session? }
                 else if (method === 'PUT' && participantId && !action) {
                     const body = await parseBody(req);
-                    const participants = await updateParticipantHandicap(
-                        parseInt(clubId),
-                        parseInt(resourceId),
-                        parseInt(participantId),
-                        { handicap_index: body.handicap_index, handicap_local: body.handicap_local }
-                    );
-                    sendJSON(res, { success: true, data: participants, message: 'Handicap actualizado' });
+                    const clubIdNum = parseInt(clubId);
+                    const tournamentIdNum = parseInt(resourceId);
+                    const participantIdNum = parseInt(participantId);
+                    if (body.handicap_index !== undefined || body.handicap_local !== undefined) {
+                        await updateParticipantHandicap(clubIdNum, tournamentIdNum, participantIdNum, { handicap_index: body.handicap_index, handicap_local: body.handicap_local });
+                    }
+                    if (body.preferred_session !== undefined || body.tee_time_preference !== undefined) {
+                        await updateParticipantTeePreference(clubIdNum, tournamentIdNum, participantIdNum, { preferred_session: body.preferred_session, tee_time_preference: body.tee_time_preference });
+                    }
+                    const participants = await getTournamentParticipants(clubIdNum, tournamentIdNum);
+                    sendJSON(res, { success: true, data: participants, message: 'Participante actualizado' });
                 }
                 // GET .../participants/:id/whatsapp-inscription -> URL para enviar confirmación de inscripción
                 else if (method === 'GET' && participantId && action === 'whatsapp-inscription') {

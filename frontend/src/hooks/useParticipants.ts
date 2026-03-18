@@ -7,6 +7,7 @@ import {
   updateParticipantStatus,
   updateParticipantPayment,
   updateParticipantHandicap,
+  updateParticipantTeePreference,
   searchPlayersForTournament,
   createExternalPlayer,
   updateExternalPlayer,
@@ -106,6 +107,24 @@ export const useUpdateParticipantHandicap = (clubId: number, tournamentId: numbe
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.message || error.response?.data?.error || 'Error al actualizar handicap');
+    },
+  });
+};
+
+export const useUpdateParticipantTeePreference = (clubId: number, tournamentId: number) => {
+  const queryClient = useQueryClient();
+  return useMutation<Participant[], Error, { participantId: number; preferred_session: 'morning' | 'afternoon' | null }>({
+    mutationFn: ({ participantId, preferred_session }) =>
+      updateParticipantTeePreference(clubId, tournamentId, participantId, preferred_session),
+    onSuccess: (data) => {
+      const key = QUERY_KEYS.participants(clubId, tournamentId);
+      const normalized = data.map((p: any) => ({ ...p, participant_id: p.participation_id ?? p.participant_id }));
+      queryClient.setQueryData(key, normalized);
+      queryClient.invalidateQueries({ queryKey: ['tournament-groups', clubId, tournamentId] });
+      toast.success('Turno actualizado');
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.message || error.response?.data?.error || 'Error al actualizar turno');
     },
   });
 };

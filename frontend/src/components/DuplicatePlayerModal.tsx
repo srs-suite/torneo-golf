@@ -1,4 +1,5 @@
 import { AlertTriangle, User, MapPin, Hash, Trophy } from 'lucide-react';
+import { formatHcpForDisplay } from '@/utils/scoreUtils';
 
 interface DuplicatePlayer {
   external_id: number;
@@ -102,7 +103,7 @@ export default function DuplicatePlayerModal({
                     {(byMatricula.handicap_local || byMatricula.handicap_index) && (
                       <div className="flex items-center gap-1">
                         <Trophy className="w-3 h-3" />
-                        <span>HCP: {byMatricula.handicap_local || byMatricula.handicap_index}</span>
+                        <span>HCP: {formatHcpForDisplay(byMatricula.handicap_local ?? byMatricula.handicap_index, byMatricula.handicap_index)}</span>
                       </div>
                     )}
                   </div>
@@ -158,7 +159,7 @@ export default function DuplicatePlayerModal({
                         {(player.handicap_local || player.handicap_index) && (
                           <div className="flex items-center gap-1">
                             <Trophy className="w-3 h-3" />
-                            <span>HCP: {player.handicap_local || player.handicap_index}</span>
+                            <span>HCP: {formatHcpForDisplay(player.handicap_local ?? player.handicap_index, player.handicap_index)}</span>
                           </div>
                         )}
                       </div>

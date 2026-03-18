@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Trophy, Medal, Award, Crown, Printer } from 'lucide-react';
 import { useTournamentScorecards } from '../hooks/useScorecards';
 import { useTournaments } from '../hooks/useTournaments';
+import { formatHcpForDisplay } from '@/utils/scoreUtils';
 
 interface CategoryResult {
   position: number;
@@ -429,11 +430,14 @@ export default function TournamentResults() {
             if (category.id.startsWith('scratch')) {
               return scorecard.total_gross || 0
             }
-            return (scorecard.total_gross || 0) - (
-              (scorecard as any).handicap_local !== null && (scorecard as any).handicap_local !== undefined
-                ? Math.round((scorecard as any).handicap_local)
-                : Math.round(scorecard.handicap_index || 0)
-            )
+            const gross = scorecard.total_gross || 0
+            const hcp = (scorecard as any).handicap_local !== null && (scorecard as any).handicap_local !== undefined
+              ? Math.round((scorecard as any).handicap_local)
+              : Math.round(scorecard.handicap_index || 0)
+            // Índice negativo: net = gross + HCP; si no: net = gross - HCP
+            const idx = scorecard.handicap_index != null ? Number(scorecard.handicap_index) : null
+            if (idx !== null && !Number.isNaN(idx) && idx < 0) return gross + hcp
+            return gross - hcp
           })(),
           front_nine: scorecard.front_nine || 0,
           back_nine: scorecard.back_nine || 0,
@@ -615,13 +619,10 @@ export default function TournamentResults() {
                             {result.total_net}
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap text-center text-sm text-gray-900">
-                            {(() => {
-                              const hl = result.handicap_local
-                              const hi = result.handicap_index
-                              if (hl !== null && hl !== undefined) return Math.round(Number(hl))
-                              if (hi !== null && hi !== undefined) return Math.round(Number(hi))
-                              return 'N/A'
-                            })()}
+                            {formatHcpForDisplay(
+                              result.handicap_local != null ? Number(result.handicap_local) : (result.handicap_index != null ? Math.round(Number(result.handicap_index)) : null),
+                              result.handicap_index
+                            )}
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap text-center text-sm text-gray-900 font-medium">
                             {result.total_gross}
@@ -647,7 +648,7 @@ export default function TournamentResults() {
 
         {/* Nota al pie */}
         <div className="mt-8 text-center text-sm text-gray-500 print:mt-12">
-          <p>Resultados ordenados por score neto (Total Gross - HCP)</p>
+          <p>Resultados ordenados por score neto (Gross − HCP; si índice negativo: Gross + HCP)</p>
           <p className="mt-1">Generado el {new Date().toLocaleDateString('es-ES')} a las {new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false })}</p>
         </div>
       </div>

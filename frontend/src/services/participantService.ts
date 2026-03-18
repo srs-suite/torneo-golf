@@ -56,6 +56,20 @@ export const updateParticipantHandicap = async (
   return response.data.data;
 };
 
+/** Actualiza el turno (Mañana/Tarde) del participante */
+export const updateParticipantTeePreference = async (
+  clubId: number,
+  tournamentId: number,
+  participantId: number,
+  preferred_session: 'morning' | 'afternoon' | null
+): Promise<Participant[]> => {
+  const response = await axios.put(
+    `${API_URL}/${clubId}/tournaments/${tournamentId}/participants/${participantId}`,
+    { preferred_session }
+  );
+  return response.data.data;
+};
+
 /** Obtiene la URL de WhatsApp para enviar confirmación de inscripción al jugador */
 export const getParticipantWhatsAppInscriptionUrl = async (
   clubId: number,

@@ -4338,6 +4338,16 @@ async function updateParticipantHandicap(courseId, tournamentId, participationId
     return await getTournamentParticipants(courseId, tournamentId);
 }
 
+async function updateParticipantTeePreference(courseId, tournamentId, participationId, data) {
+    const raw = data?.preferred_session ?? data?.tee_time_preference;
+    const value = raw === 'afternoon' || raw === 'morning' ? raw : null;
+    await executeQuery(
+        'UPDATE tournament_participants SET tee_time_preference = ? WHERE participation_id = ? AND tournament_id = ?',
+        [value, participationId, tournamentId]
+    );
+    return await getTournamentParticipants(courseId, tournamentId);
+}
+
 async function updateParticipantStatus(courseId, tournamentId, participantId, status) {
     const query = `
         UPDATE tournament_participants 
@@ -7304,7 +7314,7 @@ export {
     // Tournament functions
     getAllTournaments, getTournamentById, createTournament, updateTournament, deleteTournament,
     getTournamentParticipants, getTournamentParticipantsById, addTournamentParticipant, removeTournamentParticipant,
-    updateParticipantHandicap,
+    updateParticipantHandicap, updateParticipantTeePreference,
     updateParticipantStatus, updateParticipantPayment, getTournamentStats, searchPlayersForTournament, findDuplicateExternalPlayers, createExternalPlayer, updateExternalPlayer, getExternalPlayers, deleteExternalPlayer,
     
     // Tournament groups functions

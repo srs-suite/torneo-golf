@@ -20,8 +20,9 @@ import { SearchInput } from './SearchInput'
 import { Tournament } from '@/types/tournament'
 import { Participant, PlayerSearchResult } from '@/types/participant'
 import { LoadingSpinner } from '@/components/LoadingSpinner'
-import { useParticipants, useAddParticipant, useRemoveParticipant, useUpdateParticipantHandicap, useSearchPlayers, useExternalPlayers, useDeleteExternalPlayer } from '@/hooks/useParticipants'
+import { useParticipants, useAddParticipant, useRemoveParticipant, useUpdateParticipantHandicap, useUpdateParticipantTeePreference, useSearchPlayers, useExternalPlayers, useDeleteExternalPlayer } from '@/hooks/useParticipants'
 import { calculateHCPFromIndexDefault } from '@/utils/teeSelection'
+import { formatHcpForDisplay } from '@/utils/scoreUtils'
 import { useTournamentGroups } from '@/hooks/useTournaments'
 import { getParticipantWhatsAppInscriptionUrl } from '@/services/participantService'
 import { CreateExternalPlayerModal } from '@/components/CreateExternalPlayerModal'
@@ -98,6 +99,7 @@ export function TournamentParticipantsModal({
   const addParticipant = useAddParticipant(clubId, tournament.tournament_id)
   const removeParticipant = useRemoveParticipant(clubId, tournament.tournament_id)
   const updateParticipantHandicap = useUpdateParticipantHandicap(clubId, tournament.tournament_id)
+  const updateParticipantTeePreference = useUpdateParticipantTeePreference(clubId, tournament.tournament_id)
   const deleteExternalPlayer = useDeleteExternalPlayer(clubId)
   const searchPlayers = useSearchPlayers(clubId)
   // const createExternalPlayer = useCreateExternalPlayer(clubId)
@@ -277,7 +279,7 @@ export function TournamentParticipantsModal({
       'Nombre y Apellido': participant.player_name,
       'Matrícula': participant.member_number || '',
       'Index': participant.handicap_index || '',
-      'HCP': participant.handicap_local || '',
+      'HCP': formatHcpForDisplay(participant.handicap_local ?? (participant as any).handicap_index, (participant as any).handicap_index),
       'Club': participant.player_club || '',
       'Tipo': participant.player_type === 'member' ? 'Socio' : 'Externo',
       'Estado': participant.status === 'registered' ? 'Registrado' : 
@@ -343,7 +345,8 @@ export function TournamentParticipantsModal({
     message += ` - ${timeStr}`
     message += '\n\n'
     list.forEach((p, i) => {
-      const hcp = p.handicap_local != null ? Math.round(Number(p.handicap_local)) : (p.handicap_index != null ? p.handicap_index : '-')
+      const hcpVal = p.handicap_local != null ? Math.round(Number(p.handicap_local)) : (p.handicap_index != null ? Math.round(Number(p.handicap_index)) : null)
+      const hcp = formatHcpForDisplay(hcpVal, (p as any).handicap_index)
       const turnoRaw = (p as any).tee_time_preference ?? (p as any).teeTimePreference ?? (p as any).preferred_session
       const turno = turnoRaw === 'afternoon' || turnoRaw === 'tarde' ? 'Tarde' : turnoRaw === 'morning' || turnoRaw === 'mañana' ? 'Mañana' : '-'
       message += `${i + 1}. ${formatName(p.player_name || '')} - HCP ${hcp} - ${turno}\n`
@@ -987,7 +990,7 @@ export function TournamentParticipantsModal({
                           <div className="text-sm text-gray-500">
                             {member.member_number && `N°: ${member.member_number} • `}
                             Index: {member.handicap_index !== null && member.handicap_index !== undefined && member.handicap_index !== 0 ? member.handicap_index : 'N/A'}
-                            {' '}• HCP: {member.handicap_local !== null && member.handicap_local !== undefined ? member.handicap_local : 'N/A'}
+                            {' '}• HCP: {formatHcpForDisplay(member.handicap_local, (member as any).handicap_index)}
                           </div>
                         </div>
                       </div>
@@ -1155,7 +1158,7 @@ export function TournamentParticipantsModal({
                           <div className="text-sm text-gray-500">
                             {player.member_number && `N°: ${player.member_number} • `}
                             Index: {player.handicap_index !== null && player.handicap_index !== undefined && player.handicap_index !== 0 ? player.handicap_index : 'N/A'}
-                            {' '}• HCP: {player.handicap_local !== null && player.handicap_local !== undefined ? player.handicap_local : 'N/A'}
+                            {' '}• HCP: {formatHcpForDisplay(player.handicap_local, (player as any).handicap_index)}
                           </div>
                           <div className="text-xs text-gray-400">
                             {player.player_club}
@@ -1326,7 +1329,7 @@ export function TournamentParticipantsModal({
                             )}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                            {participant.handicap_local !== null && participant.handicap_local !== undefined ? participant.handicap_local : 'N/A'}
+                            {formatHcpForDisplay(participant.handicap_local ?? (participant as any).handicap_index, (participant as any).handicap_index)}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
                             <div className="flex items-center space-x-2">
@@ -1336,10 +1339,25 @@ export function TournamentParticipantsModal({
                             </div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                            {(() => {
-                              const turnoRaw = (participant as any).tee_time_preference ?? (participant as any).teeTimePreference ?? (participant as any).preferred_session
-                              return turnoRaw === 'afternoon' || turnoRaw === 'tarde' ? 'Tarde' : turnoRaw === 'morning' || turnoRaw === 'mañana' ? 'Mañana' : '—'
-                            })()}
+                            <select
+                              value={(() => {
+                                const turnoRaw = (participant as any).tee_time_preference ?? (participant as any).teeTimePreference ?? (participant as any).preferred_session
+                                return turnoRaw === 'afternoon' || turnoRaw === 'tarde' ? 'afternoon' : turnoRaw === 'morning' || turnoRaw === 'mañana' ? 'morning' : ''
+                              })()}
+                              onChange={(e) => {
+                                const v = e.target.value
+                                updateParticipantTeePreference.mutate({
+                                  participantId: participant.participant_id,
+                                  preferred_session: v === '' ? null : (v as 'morning' | 'afternoon')
+                                })
+                              }}
+                              className="border border-gray-300 rounded px-2 py-1 text-sm min-w-[100px] bg-white"
+                              title="Elegir o cambiar turno (Mañana/Tarde)"
+                            >
+                              <option value="">Sin definir</option>
+                              <option value="morning">Mañana</option>
+                              <option value="afternoon">Tarde</option>
+                            </select>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                             {new Date(participant.registration_date).toLocaleDateString('es-ES')}
