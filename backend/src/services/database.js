@@ -3229,7 +3229,28 @@ async function updateMember(memberId, memberData) {
     const query = `UPDATE members SET ${updateFields.join(', ')} WHERE member_id = ?`;
     params.push(memberId);
     
-    const { rows } = await executeQuery(query, params);
+    await executeQuery(query, params);
+
+    // Si se actualizó index o HCP del socio, propagar solo a torneos que aún no se cerraron/jugaron
+    // No tocar torneos completed/closed/cancelled para mantener el histórico
+    const didUpdateHandicap = memberData.handicap_local !== undefined || memberData.handicap_index !== undefined;
+    if (didUpdateHandicap) {
+        const newHcpUsed = memberData.handicap_local !== undefined && memberData.handicap_local !== null
+            ? Number(memberData.handicap_local)
+            : (memberData.handicap_index !== undefined && memberData.handicap_index !== null
+                ? Math.round(Number(memberData.handicap_index))
+                : null);
+        if (newHcpUsed !== null && !Number.isNaN(newHcpUsed)) {
+            await executeQuery(
+                `UPDATE tournament_participants tp
+                 INNER JOIN tournaments t ON t.tournament_id = tp.tournament_id
+                 SET tp.handicap_used = ?
+                 WHERE tp.member_id = ? AND t.status IN ('draft', 'open', 'in_progress')`,
+                [newHcpUsed, memberId]
+            );
+        }
+    }
+
     return { member_id: memberId, ...memberData };
 }
 
@@ -4307,67 +4328,7 @@ async function updateParticipantHandicap(courseId, tournamentId, participationId
         [hcpUsed, participationId, tournamentId]
     );
 
-    // Si el torneo es por HCP (scratch_bands), reacomodar al participante en un grupo que tenga alguien de su banda
-    try {
-        const tournament = await getTournamentById(courseId, tournamentId);
-        if (tournament && tournament.results_mode === 'scratch_bands') {
-            const playerBand = getBandFromHcp(hcpUsed);
-            const toGn = (v) => (v != null && v !== '' ? Number(v) : null);
-            const { rows: partRows } = await executeQuery(
-                'SELECT group_number FROM tournament_participants WHERE participation_id = ? AND tournament_id = ?',
-                [participationId, tournamentId]
-            );
-            const currentGroup = partRows && partRows[0] ? toGn(partRows[0].group_number) : null;
-            const { rows: allInGroups } = await executeQuery(
-                'SELECT group_number, handicap_used FROM tournament_participants WHERE tournament_id = ? AND group_number IS NOT NULL AND participation_id != ?',
-                [tournamentId, participationId]
-            );
-            const groupCount = {};
-            const groupBands = {};
-            for (const r of allInGroups || []) {
-                const gn = toGn(r.group_number);
-                if (gn == null || !Number.isFinite(gn)) continue;
-                groupCount[gn] = (groupCount[gn] || 0) + 1;
-                const band = getBandFromHcp(r.handicap_used != null && r.handicap_used !== '' ? Number(r.handicap_used) : null);
-                if (!groupBands[gn]) groupBands[gn] = new Set();
-                groupBands[gn].add(band);
-            }
-            // Grupos con esta banda y con espacio (< 4); priorizar número de grupo más bajo (3 antes que 4)
-            const candidatesSameBand = playerBand ? Object.keys(groupCount).map(Number).filter(gn => {
-                const cnt = groupCount[gn] || 0;
-                const hasBand = groupBands[gn] && groupBands[gn].has(playerBand);
-                return hasBand && cnt < 4;
-            }).sort((a, b) => {
-                const n = a - b;
-                if (n !== 0) return n;
-                return (groupCount[a] || 0) - (groupCount[b] || 0);
-            }) : [];
-            const currentGroupHasPlayerBand = currentGroup != null && groupBands[currentGroup] && groupBands[currentGroup].has(playerBand);
-            const needsMove = !currentGroupHasPlayerBand;
-            const bestOther = candidatesSameBand.find(gn => gn !== currentGroup);
-            const shouldMove = playerBand && (needsMove || bestOther != null);
-            if (shouldMove) {
-                let targetGroup;
-                if (bestOther != null) {
-                    targetGroup = bestOther;
-                } else if (candidatesSameBand.length > 0) {
-                    targetGroup = candidatesSameBand[0];
-                } else {
-                    const numbers = Object.keys(groupCount).map(Number).filter(Boolean).sort((a, b) => a - b);
-                    targetGroup = numbers.length ? Math.max(...numbers) + 1 : 1;
-                }
-                if (targetGroup !== currentGroup) {
-                    await executeQuery(
-                        'UPDATE tournament_participants SET group_number = ? WHERE participation_id = ? AND tournament_id = ?',
-                        [targetGroup, participationId, tournamentId]
-                    );
-                    console.log(`✅ Participante ${participationId} reasignado al grupo ${targetGroup} (banda ${playerBand})`);
-                }
-            }
-        }
-    } catch (reassignErr) {
-        console.warn('⚠️ Reasignar grupo por HCP:', reassignErr?.message || reassignErr);
-    }
+    // No asignar ni reasignar grupo al actualizar el índice; el grupo se asigna al gestionar tee times.
 
     return await getTournamentParticipants(courseId, tournamentId);
 }

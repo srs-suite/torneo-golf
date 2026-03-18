@@ -233,10 +233,14 @@ export function ClubAdmin() {
     try {
       // Si está vacío, usar 0, sino parsear el valor
       const indexValue = editingIndex.value.trim() === '' ? 0 : parseFloat(editingIndex.value)
+      const finalIndex = isNaN(indexValue) ? 0 : indexValue
+      // Al actualizar el index también actualizamos el HCP (handicap_local) con el redondeo del index
+      const hcpFromIndex = Math.round(finalIndex)
       
       await updateMemberMutation.mutateAsync({
         memberId,
-        handicap_index: isNaN(indexValue) ? 0 : indexValue
+        handicap_index: finalIndex,
+        handicap_local: hcpFromIndex
       })
       setEditingIndex(null)
     } catch (error) {
