@@ -22,7 +22,7 @@ import { Participant, PlayerSearchResult } from '@/types/participant'
 import { LoadingSpinner } from '@/components/LoadingSpinner'
 import { useParticipants, useAddParticipant, useRemoveParticipant, useUpdateParticipantHandicap, useSearchPlayers, useExternalPlayers, useDeleteExternalPlayer } from '@/hooks/useParticipants'
 import { calculateHCPFromIndexDefault } from '@/utils/teeSelection'
-import { useTournamentGroups, useMovePlayerToGroup } from '@/hooks/useTournaments'
+import { useTournamentGroups } from '@/hooks/useTournaments'
 import { getParticipantWhatsAppInscriptionUrl } from '@/services/participantService'
 import { CreateExternalPlayerModal } from '@/components/CreateExternalPlayerModal'
 import { PaymentModal } from '@/components/PaymentModal'
@@ -105,14 +105,12 @@ export function TournamentParticipantsModal({
   const [paymentEditing, setPaymentEditing] = useState<Participant | null>(null)
   const [addToGroupNumber, setAddToGroupNumber] = useState<number | ''>('')
   const [preferredSessionForAdd, setPreferredSessionForAdd] = useState<'morning' | 'afternoon'>('morning')
-  const [movingParticipantId, setMovingParticipantId] = useState<number | null>(null)
   const [editingIndexParticipantId, setEditingIndexParticipantId] = useState<number | null>(null)
   const [editingIndexValue, setEditingIndexValue] = useState<string>('')
   const [savingIndexParticipantId, setSavingIndexParticipantId] = useState<number | null>(null)
   const allowGroups = (tournament as any)?.public_inscription_allow_groups !== 0 && (tournament as any)?.public_inscription_allow_groups !== false
   const groupsByHcp = (tournament as any)?.results_mode === 'scratch_bands'
   const { data: tournamentGroups = [] } = useTournamentGroups(clubId, tournament.tournament_id)
-  const movePlayerToGroup = useMovePlayerToGroup(clubId, tournament.tournament_id)
   const groupNumbers = Array.from(new Set(tournamentGroups.map((g: any) => g.group_number).filter((n: number) => n != null))).sort((a, b) => (a as number) - (b as number)) as number[]
 
   // Sanitize to ASCII like other pages
@@ -544,20 +542,6 @@ export function TournamentParticipantsModal({
       } catch (error) {
         console.error('Error removing participant:', error)
       }
-    }
-  }
-
-  const handleChangeParticipantGroup = async (participant: Participant, newGroupNumber: number) => {
-    const participationId = (participant as any).participation_id ?? participant.participant_id
-    if (!participationId) return
-    setMovingParticipantId(participationId)
-    try {
-      await movePlayerToGroup.mutateAsync({ participationId, newGroupNumber })
-      refetch()
-    } catch (error) {
-      console.error('Error moving participant to group:', error)
-    } finally {
-      setMovingParticipantId(null)
     }
   }
 
