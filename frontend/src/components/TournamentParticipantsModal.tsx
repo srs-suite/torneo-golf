@@ -319,6 +319,43 @@ export function TournamentParticipantsModal({
     XLSX.writeFile(workbook, filename)
   }
 
+  /** Arma un texto con el listado de inscriptos y abre WhatsApp para enviarlo (grupo o contacto). */
+  const handleSendListByWhatsApp = () => {
+    const baseList = filteredParticipants.length > 0 ? filteredParticipants : participants
+    const list = [...baseList].sort((a, b) => {
+      const fullA = formatName(a.player_name || '').trim()
+      const fullB = formatName(b.player_name || '').trim()
+      const lastA = fullA.split(' ').filter(Boolean).slice(-1)[0]?.toLowerCase() || fullA.toLowerCase()
+      const lastB = fullB.split(' ').filter(Boolean).slice(-1)[0]?.toLowerCase() || fullB.toLowerCase()
+      const byLast = lastA.localeCompare(lastB)
+      if (byLast !== 0) return byLast
+      return fullA.toLowerCase().localeCompare(fullB.toLowerCase())
+    })
+    if (list.length === 0) {
+      toast.error('No hay participantes para enviar.')
+      return
+    }
+    const dateStr = tournament.tournament_date
+      ? new Date(tournament.tournament_date).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+      : ''
+    const now = new Date()
+    const timeStr = now.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' })
+    let message = `📋 Inscriptos - ${tournament.tournament_name}`
+    if (dateStr) message += ` - ${dateStr}`
+    message += ` - ${timeStr}`
+    message += '\n\n'
+    list.forEach((p, i) => {
+      const hcp = p.handicap_local != null ? Math.round(Number(p.handicap_local)) : (p.handicap_index != null ? p.handicap_index : '-')
+      const turnoRaw = (p as any).tee_time_preference ?? (p as any).teeTimePreference ?? (p as any).preferred_session
+      const turno = turnoRaw === 'afternoon' || turnoRaw === 'tarde' ? 'Tarde' : turnoRaw === 'morning' || turnoRaw === 'mañana' ? 'Mañana' : '-'
+      message += `${i + 1}. ${formatName(p.player_name || '')} - HCP ${hcp} - ${turno}\n`
+    })
+    message += `\nTotal: ${list.length} inscripto(s)`
+    const url = `https://wa.me/?text=${encodeURIComponent(message)}`
+    window.open(url, '_blank')
+    toast.success('Se abrió WhatsApp con el listado. Elegí el chat o grupo y enviá.')
+  }
+
   const handleToggleSelectMember = (memberId: number) => {
     const newSelected = new Set(selectedMembers)
     if (newSelected.has(memberId)) {
@@ -691,14 +728,24 @@ export function TournamentParticipantsModal({
                 <span>Agregar Jugador Externo</span>
               </button>
               {participants.length > 0 && (
-                <button
-                  onClick={handleExportToExcel}
-                  className="flex items-center space-x-2 px-3 py-1.5 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm"
-                  title={`Exportar ${participants.length} participante(s) a Excel`}
-                >
-                  <Download className="w-4 h-4" />
-                  <span>Excel ({participants.length})</span>
-                </button>
+                <>
+                  <button
+                    onClick={handleSendListByWhatsApp}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
+                    title="Enviar listado de inscriptos por WhatsApp (al grupo o contacto que elijas)"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    <span>Listado WhatsApp</span>
+                  </button>
+                  <button
+                    onClick={handleExportToExcel}
+                    className="flex items-center space-x-2 px-3 py-1.5 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm"
+                    title={`Exportar ${participants.length} participante(s) a Excel`}
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Excel ({participants.length})</span>
+                  </button>
+                </>
               )}
             <div className="relative" ref={filterPopoverRef}>
               <button
@@ -1215,11 +1262,9 @@ export function TournamentParticipantsModal({
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Estado
                       </th>
-                      {allowGroups && (
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Grupo
-                        </th>
-                      )}
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Turno
+                      </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Fecha
                       </th>
@@ -1306,36 +1351,12 @@ export function TournamentParticipantsModal({
                               </span>
                             </div>
                           </td>
-                          {allowGroups && (
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              {groupsByHcp ? (
-                                <span className="text-sm text-gray-600">{participant.group_number != null ? `Grupo ${participant.group_number}` : '—'}</span>
-                              ) : (
-                                <select
-                                  value={participant.group_number ?? ''}
-                                  onChange={(e) => {
-                                    const v = e.target.value
-                                    if (v === '') return
-                                    handleChangeParticipantGroup(participant, Number(v))
-                                  }}
-                                  disabled={movingParticipantId === ((participant as any).participation_id ?? participant.participant_id)}
-                                  className="border border-gray-300 rounded px-2 py-1 text-sm w-28"
-                                >
-                                  <option value="">Sin grupo</option>
-                                  {groupNumbers.map((num) => {
-                                    const g = tournamentGroups.find((g: any) => g.group_number === num)
-                                    const count = g?.participants_count ?? g?.participants?.length ?? 0
-                                    const full = count >= 4 && (participant as any).group_number !== num
-                                    return (
-                                      <option key={num} value={num} disabled={full}>
-                                        Grupo {num}{full ? ' (completo)' : ''}
-                                      </option>
-                                    )
-                                  })}
-                                </select>
-                              )}
-                            </td>
-                          )}
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {(() => {
+                              const turnoRaw = (participant as any).tee_time_preference ?? (participant as any).teeTimePreference ?? (participant as any).preferred_session
+                              return turnoRaw === 'afternoon' || turnoRaw === 'tarde' ? 'Tarde' : turnoRaw === 'morning' || turnoRaw === 'mañana' ? 'Mañana' : '—'
+                            })()}
+                          </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                             {new Date(participant.registration_date).toLocaleDateString('es-ES')}
                           </td>

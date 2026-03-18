@@ -115,45 +115,27 @@ export function ClubAdmin() {
   // Get current club data to check field characteristics
   const currentClub = clubs.find(club => club.course_id === parseInt(clubId || '0'))
   
-  // Calculate HCP using correct formula with appropriate tee or show manual HCP
+  // Fórmula San Jerónimo del Rey (y clubes que usen esta convención):
+  // Hombres: HCP = round(Index * 130/113 + 0.6)
+  // Damas:   HCP = round(Index * 128/113 - 0.5)
+  const computeHCPFromIndex = (handicapIndex: number, gender: string | undefined): number => {
+    if (!handicapIndex || handicapIndex === 0) return 0;
+    if (gender === 'F') {
+      const hcp = handicapIndex * (128 / 113) - 0.5;
+      return Math.round(hcp);
+    }
+    // Por defecto (M u otro): fórmula de hombres
+    const hcp = handicapIndex * (130 / 113) + 0.6;
+    return Math.round(hcp);
+  };
+
+  // Calculate HCP: si el club tiene características de cancha desactivadas, mostrar HCP manual; si no, usar fórmula por género.
   const calculateHCP = (member: any) => {
-    // If field characteristics are disabled, show manual HCP
-    if (!currentClub?.enable_field_characteristics) {
+    if (currentClub?.enable_field_characteristics === false) {
       return member.handicap_local !== null && member.handicap_local !== undefined ? Math.round(member.handicap_local) : '-';
     }
-    
-    // Calculate HCP automatically when field characteristics are enabled
     if (!member.handicap_index || member.handicap_index === 0) return '-';
-    
-    // Simple tee selection logic (can be enhanced later)
-    // For now, use default values based on gender
-    let slopeRating = 125;
-    let courseRating = 72.3;
-    let par = 72;
-    
-    if (member.gender === 'F') {
-      // Red tees for women
-      slopeRating = 118;
-      courseRating = 69.8;
-    } else if (member.gender === 'M') {
-      // Select tee based on handicap
-      if (member.handicap_index <= 0) {
-        // Black tees (Professional)
-        slopeRating = 135;
-        courseRating = 74.2;
-      } else if (member.handicap_index <= 10) {
-        // Blue tees (Low handicap)
-        slopeRating = 130;
-        courseRating = 72.8;
-      } else {
-        // White tees (Medium/High handicap)
-        slopeRating = 125;
-        courseRating = 71.5;
-      }
-    }
-    
-    const hcp = member.handicap_index * (slopeRating / 113) + (courseRating - par);
-    return Math.round(hcp);
+    return computeHCPFromIndex(member.handicap_index, member.gender);
   };
 
   const { 
@@ -231,11 +213,14 @@ export function ClubAdmin() {
     if (!editingIndex) return
     
     try {
-      // Si está vacío, usar 0, sino parsear el valor
       const indexValue = editingIndex.value.trim() === '' ? 0 : parseFloat(editingIndex.value)
       const finalIndex = isNaN(indexValue) ? 0 : indexValue
-      // Al actualizar el index también actualizamos el HCP (handicap_local) con el redondeo del index
-      const hcpFromIndex = Math.round(finalIndex)
+      // Usar la misma fórmula del club (slope/course por género). Si el club no tiene la bandera, aplicamos fórmula por defecto (ej. San Jerónimo del Ray).
+      const member = members.find(m => m.member_id === memberId)
+      const useClubFormula = currentClub?.enable_field_characteristics !== false
+      const hcpFromIndex = useClubFormula && member
+        ? computeHCPFromIndex(finalIndex, member.gender)
+        : Math.round(finalIndex)
       
       await updateMemberMutation.mutateAsync({
         memberId,

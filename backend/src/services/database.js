@@ -3658,7 +3658,8 @@ async function getTournamentParticipants(courseId, tournamentId) {
                        gc.club_name
                END as player_club,
                tp.player_type,
-               CASE WHEN tp.player_type = 'external' THEN ep.gender ELSE NULL END as gender
+               CASE WHEN tp.player_type = 'external' THEN ep.gender ELSE NULL END as gender,
+               tp.tee_time_preference
         FROM tournament_participants tp
         LEFT JOIN members m ON tp.member_id = m.member_id AND tp.player_type IN ('member', 'visitor')
         LEFT JOIN external_players ep ON tp.external_player_id = ep.external_id AND tp.player_type = 'external'
@@ -3903,6 +3904,7 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
 
     let query, params;
     const groupForInsert = isByHcp ? null : requestedGroup;
+    const teePreference = (participantData.preferred_session === 'afternoon' || participantData.preferred_session === 'morning') ? participantData.preferred_session : null;
     
     if (isVisitor) {
         // Para visitantes (socios de otros clubes) - obtener handicap del club original
@@ -3923,8 +3925,8 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
         
         query = `
             INSERT INTO tournament_participants (
-                tournament_id, member_id, handicap_used, player_type, status, payment_status, notes, group_number
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                tournament_id, member_id, handicap_used, player_type, status, payment_status, notes, group_number, tee_time_preference
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
         
         params = [
@@ -3935,7 +3937,8 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
             participantData.status || 'registered',
             participantData.payment_status || 'pending',
             participantData.notes || null,
-            groupForInsert
+            groupForInsert,
+            teePreference
         ];
         
     } else if (isExternalPlayer) {
@@ -3959,8 +3962,8 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
         query = `
             INSERT INTO tournament_participants (
                 tournament_id, external_player_id, player_name, player_email, player_phone,
-                handicap_used, player_club, player_type, status, payment_status, notes, group_number
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                handicap_used, player_club, player_type, status, payment_status, notes, group_number, tee_time_preference
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
         
         params = [
@@ -3975,7 +3978,8 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
             participantData.status || 'registered',
             participantData.payment_status || 'pending',
             participantData.notes || null,
-            groupForInsert
+            groupForInsert,
+            teePreference
         ];
         
     } else if (isHomeMember) {
@@ -3997,8 +4001,8 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
         
         query = `
             INSERT INTO tournament_participants (
-                tournament_id, member_id, handicap_used, player_type, status, payment_status, notes, group_number
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                tournament_id, member_id, handicap_used, player_type, status, payment_status, notes, group_number, tee_time_preference
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
         
         params = [
@@ -4009,7 +4013,8 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
             participantData.status || 'registered',
             participantData.payment_status || 'pending',
             participantData.notes || null,
-            groupForInsert
+            groupForInsert,
+            teePreference
         ];
         
     } else {
@@ -4021,8 +4026,8 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
     const { rows } = await executeQuery(query, params);
     console.log('✅ Participant added successfully, insertId:', rows.insertId);
 
-    // Auto-asignación a grupo: 1) Turno (mañana/tarde) 2) Buscar grupo de ese turno con espacio 3) Si no hay, crear grupo nuevo
-    const needAutoAssign = isByHcp || requestedGroup == null;
+    // Auto-asignación a grupo desactivada: los grupos se gestionan solo desde Gestión de Tee Times.
+    const needAutoAssign = false;
     if (needAutoAssign) {
         try {
             const toGroupNum = (v) => (v != null && v !== '' ? Number(v) : null);
