@@ -252,7 +252,9 @@ export default function ExternalPlayers() {
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-700">{genderLabel(row.gender)}</td>
                       <td className="px-4 py-3 text-sm text-gray-700">
-                        {row.handicap_index != null && row.handicap_index !== '' ? row.handicap_index : '—'}
+                        {row.handicap_index != null && Number.isFinite(row.handicap_index)
+                          ? row.handicap_index
+                          : '—'}
                       </td>
                       <td
                         className="px-4 py-3 text-sm text-gray-700"

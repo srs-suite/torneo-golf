@@ -32,14 +32,14 @@ export function formatHcpDisplayForClubPlayer(
 ): string {
   if (club?.enable_field_characteristics === false) {
     const hl = opts.handicap_local
-    if (hl != null && hl !== '' && Number.isFinite(Number(hl))) {
+    if (hl != null && Number.isFinite(Number(hl))) {
       return formatHcpForDisplay(Number(hl), opts.handicap_index)
     }
     return '—'
   }
 
   const raw = opts.handicap_index
-  if (raw == null || raw === '') return '—'
+  if (raw == null) return '—'
   const idx = Number(raw)
   if (!Number.isFinite(idx)) return '—'
   // Misma regla que ClubAdmin: índice 0 → no se muestra HCP calculado en tabla
