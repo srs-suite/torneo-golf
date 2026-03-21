@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Calendar, DollarSign, Users, Trophy, Settings, Award, Camera, ChevronDown, LogOut, Filter, X, User, Pencil, Download, MessageCircle } from 'lucide-react'
+import { Calendar, DollarSign, Users, Trophy, Settings, Award, Camera, ChevronDown, LogOut, Filter, X, User, UserCircle2, Pencil, Download, MessageCircle } from 'lucide-react'
 import { paymentsService } from '@/services/paymentsService'
 import { accountsService } from '@/services/accountsService'
 import { DateInput } from '@/components/DateInput'
@@ -10,12 +10,13 @@ import { useTournaments } from '@/hooks/useTournaments'
 import { useUserPermissions } from '@/hooks/useUserPermissions'
 import { toast } from 'react-hot-toast'
 import * as XLSX from 'xlsx'
+import { LoadingSpinner } from '@/components/LoadingSpinner'
 
 export default function Payments() {
   const { clubId } = useParams<{ clubId: string }>() 
   const navigate = useNavigate()
   const clubIdNum = clubId ? parseInt(clubId) : 0
-  const { permissions } = useUserPermissions(clubId)
+  const { permissions, isLoading: permissionsLoading } = useUserPermissions(clubId)
 
   // Función helper para obtener la fecha local en formato YYYY-MM-DD
   const getLocalDateString = () => {
@@ -1115,6 +1116,11 @@ export default function Payments() {
     permissions.canViewCurrencyExchanges || 
     permissions.canViewAccounting
 
+  // Mientras cargan permisos, el estado inicial es "todo false" → sin esto se ve "Acceso denegado" un instante
+  if (permissionsLoading) {
+    return <LoadingSpinner />
+  }
+
   if (!hasAnyAccountingPermission) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -1217,6 +1223,15 @@ export default function Payments() {
               >
                 <Settings className="h-4 w-4" />
                 Configuración
+              </button>
+            )}
+            {permissions.canViewMembers && (
+              <button
+                onClick={() => navigate(`/club/${clubId}/external-players`)}
+                className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:border-gray-300 border-b-2 border-transparent transition-colors"
+              >
+                <UserCircle2 className="h-4 w-4" />
+                Jugadores externos
               </button>
             )}
             <button
