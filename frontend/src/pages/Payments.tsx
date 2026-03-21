@@ -1182,10 +1182,10 @@ export default function Payments() {
       {/* Tabs de navegación */}
       <div className="bg-white border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex gap-1 -mb-px">
+          <div className="flex flex-wrap gap-1 -mb-px items-center">
             <button
               onClick={() => navigate(`/club/${clubId}/admin?tab=members`)}
-              className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:border-gray-300 border-b-2 border-transparent transition-colors"
+              className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:border-gray-300 border-b-2 border-transparent transition-colors shrink-0"
             >
               <Users className="h-4 w-4" />
               Socios
@@ -1195,6 +1195,15 @@ export default function Payments() {
                 </span>
               )}
             </button>
+            {permissions.canViewMembers && (
+              <button
+                onClick={() => navigate(`/club/${clubId}/external-players`)}
+                className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:border-gray-300 border-b-2 border-transparent transition-colors shrink-0"
+              >
+                <UserCircle2 className="h-4 w-4" />
+                Jugadores externos
+              </button>
+            )}
             <button
               onClick={() => navigate(`/club/${clubId}/admin?tab=tournaments`)}
               className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:border-gray-300 border-b-2 border-transparent transition-colors"
@@ -1219,19 +1228,10 @@ export default function Payments() {
             {permissions.canViewSettings && (
               <button
                 onClick={() => navigate(`/club/${clubId}/admin?tab=settings`)}
-                className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:border-gray-300 border-b-2 border-transparent transition-colors"
+                className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:border-gray-300 border-b-2 border-transparent transition-colors shrink-0"
               >
                 <Settings className="h-4 w-4" />
                 Configuración
-              </button>
-            )}
-            {permissions.canViewMembers && (
-              <button
-                onClick={() => navigate(`/club/${clubId}/external-players`)}
-                className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:border-gray-300 border-b-2 border-transparent transition-colors"
-              >
-                <UserCircle2 className="h-4 w-4" />
-                Jugadores externos
               </button>
             )}
             <button
