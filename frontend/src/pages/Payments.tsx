@@ -994,6 +994,41 @@ export default function Payments() {
     }
     load()
   }, [clubIdNum, from, to, permissions.canViewFinancialTotals])
+
+  /** Pestañas que el usuario puede usar (evita dejar `tab='balance'` sin botón ni contenido → pantalla gris) */
+  const allowedAccountingTabs = useMemo((): Array<
+    'balance' | 'ingresos' | 'otros_ingresos' | 'gastos' | 'conversiones' | 'cuentas'
+  > => {
+    const list: Array<'balance' | 'ingresos' | 'otros_ingresos' | 'gastos' | 'conversiones' | 'cuentas'> = []
+    if (permissions.canViewTournamentIncomes) list.push('ingresos')
+    if (permissions.canViewOtherIncomes) list.push('otros_ingresos')
+    if (permissions.canViewExpenses) list.push('gastos')
+    if (permissions.canViewCurrencyExchanges) list.push('conversiones')
+    if (permissions.canViewAccounting) list.push('cuentas')
+    if (permissions.canViewBalance && permissions.canViewFinancialTotals) list.push('balance')
+    // Tesorería: acceso por can_manage_payments sin filas granulares en BD
+    if (list.length === 0 && permissions.canManagePayments) {
+      return ['ingresos', 'otros_ingresos', 'gastos', 'conversiones', 'cuentas']
+    }
+    return list
+  }, [
+    permissions.canViewTournamentIncomes,
+    permissions.canViewOtherIncomes,
+    permissions.canViewExpenses,
+    permissions.canViewCurrencyExchanges,
+    permissions.canViewAccounting,
+    permissions.canViewBalance,
+    permissions.canViewFinancialTotals,
+    permissions.canManagePayments,
+  ])
+
+  useEffect(() => {
+    if (permissionsLoading) return
+    if (allowedAccountingTabs.length === 0) return
+    if (!allowedAccountingTabs.includes(tab)) {
+      setTab(allowedAccountingTabs[0])
+    }
+  }, [permissionsLoading, allowedAccountingTabs, tab])
   
   // Cargar transacciones cuando se selecciona la pestaña Cuentas
   useEffect(() => {
@@ -1265,9 +1300,15 @@ export default function Payments() {
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
         <div className="bg-white rounded-lg border p-4 space-y-4">
+          {allowedAccountingTabs.length === 0 && (
+            <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3">
+              No hay pestañas de contabilidad habilitadas para tu usuario. Un administrador del club debe asignarte permisos
+              (contabilidad o gestión de pagos).
+            </p>
+          )}
           <div className="flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-3">
-              {permissions.canViewBalance && permissions.canViewFinancialTotals && (
+              {allowedAccountingTabs.includes('balance') && (
                 <button
                   onClick={() => setTab('balance')}
                   className={`px-3 py-2 rounded ${tab==='balance' ? 'bg-gray-900 text-white' : 'border'}`}
@@ -1275,7 +1316,7 @@ export default function Payments() {
                   Balance
                 </button>
               )}
-              {permissions.canViewTournamentIncomes && (
+              {allowedAccountingTabs.includes('ingresos') && (
                 <button
                   onClick={() => setTab('ingresos')}
                   className={`px-3 py-2 rounded ${tab==='ingresos' ? 'bg-gray-900 text-white' : 'border'}`}
@@ -1283,7 +1324,7 @@ export default function Payments() {
                   Ingresos Torneos
                 </button>
               )}
-              {permissions.canViewOtherIncomes && (
+              {allowedAccountingTabs.includes('otros_ingresos') && (
                 <button
                   onClick={() => setTab('otros_ingresos')}
                   className={`px-3 py-2 rounded ${tab==='otros_ingresos' ? 'bg-gray-900 text-white' : 'border'}`}
@@ -1291,7 +1332,7 @@ export default function Payments() {
                   Otros Ingresos
                 </button>
               )}
-              {permissions.canViewExpenses && (
+              {allowedAccountingTabs.includes('gastos') && (
                 <button
                   onClick={() => setTab('gastos')}
                   className={`px-3 py-2 rounded ${tab==='gastos' ? 'bg-gray-900 text-white' : 'border'}`}
@@ -1299,7 +1340,7 @@ export default function Payments() {
                   Gastos
                 </button>
               )}
-              {permissions.canViewCurrencyExchanges && (
+              {allowedAccountingTabs.includes('conversiones') && (
                 <button
                   onClick={() => setTab('conversiones')}
                   className={`px-3 py-2 rounded ${tab==='conversiones' ? 'bg-gray-900 text-white' : 'border'}`}
@@ -1307,7 +1348,7 @@ export default function Payments() {
                   Conversiones
                 </button>
               )}
-              {permissions.canViewAccounting && (
+              {allowedAccountingTabs.includes('cuentas') && (
                 <button
                   onClick={() => setTab('cuentas')}
                   className={`px-3 py-2 rounded ${tab==='cuentas' ? 'bg-gray-900 text-white' : 'border'}`}
