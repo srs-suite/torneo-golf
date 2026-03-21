@@ -68,6 +68,67 @@ pm2 restart teetracker-backend
 
 ---
 
+## Verificar que todo subió bien (si no ves los cambios)
+
+Ejecutá estos comandos **por SSH en el VPS** para ver en qué paso falló.
+
+**1. ¿Los archivos fuente están en el servidor con el código nuevo?**
+
+```bash
+# Debe mostrar una línea con "formatHcpForDisplay" y "Math.abs"
+grep -l "formatHcpForDisplay\|Math.abs" /home/retailso/torneogolf-source/frontend/src/utils/scoreUtils.ts 2>/dev/null && echo "OK: scoreUtils tiene el código nuevo" || echo "FALTA: subí frontend/src/utils/scoreUtils.ts por FileZilla"
+```
+
+Si sale "FALTA", subí de nuevo por FileZilla los archivos del frontend que te indicaron y volvé a correr estos pasos.
+
+**2. ¿Se hizo el build después de subir?**
+
+```bash
+# Fecha de los archivos en dist (deben ser recientes)
+ls -la /home/retailso/torneogolf-source/frontend/dist/assets/*.js 2>/dev/null | head -3
+```
+
+Si no existe `dist/` o los archivos son viejos, ejecutá en el VPS:
+
+```bash
+cd /home/retailso/torneogolf-source/frontend
+npm run build
+```
+
+**3. ¿Se copió el build a la carpeta que sirve Nginx?**
+
+```bash
+# Fecha de los archivos que sirve la web (deben ser recientes)
+ls -la /home/retailso/torneogolf.retailsolutionstimetracker.com/assets/*.js 2>/dev/null | head -3
+```
+
+Si los archivos son viejos o no existen, ejecutá:
+
+```bash
+cp -r /home/retailso/torneogolf-source/frontend/dist/* /home/retailso/torneogolf.retailsolutionstimetracker.com/
+```
+
+**4. Backend: ¿están los archivos del backend?**
+
+```bash
+grep -l "updateParticipantTeePreference" /home/retailso/torneogolf-source/backend/src/server.js 2>/dev/null && echo "OK: server.js actualizado" || echo "FALTA: subí backend/src/server.js"
+```
+
+Si salió "FALTA", subí los archivos del backend por FileZilla y luego:
+
+```bash
+pm2 restart teetracker-backend
+```
+
+**5. Navegador**
+
+- Probá en **ventana de incógnito** o **Ctrl+Shift+R** (recarga forzada).
+- En Chrome: F12 → pestaña **Red** → marcar **Deshabilitar caché** → recargar la página.
+
+**Resumen:** Si no ves los cambios, casi siempre es: (A) no se subieron todos los archivos por FileZilla, (B) no se corrió `npm run build` después de subir, (C) no se corrió `cp -r dist/* ...`, o (D) caché del navegador. Los comandos de arriba te dicen cuál es.
+
+---
+
 ## Confirmar que estás en el lugar correcto (diagnóstico en el VPS)
 
 En el proyecto hay **dos esquemas** posibles. Ejecutá por SSH estos comandos para ver cuál usa tu servidor:
@@ -123,6 +184,21 @@ Si en producción seguís viendo la versión vieja (por ejemplo en **Editar torn
    ```bash
    pm2 restart teetracker-backend
    ```
+
+---
+
+## Sync masivo AAG semanal (cron en backend)
+
+Si desplegás esta funcionalidad:
+
+1. Subí `backend/src/schedulers/aagWeeklySyncScheduler.js` y los cambios en `backend/src/server.js`, `backend/package.json`.
+2. **Base de datos:** ejecutá en MySQL el script `backend/migrations/add_aag_sync_logs.sql` (tabla `aag_sync_logs` para historial del cron).
+3. En el VPS: `cd /home/retailso/torneogolf-source/backend && npm install` (instala `node-cron`).
+4. En el **`.env.prod` del servidor** (no subir el archivo por Git; editarlo en el VPS o por FileZilla con cuidado):
+   - `AAG_WEEKLY_SYNC_ENABLED=true` para activar (solo con `NODE_ENV=production`).
+   - Opcional: `AAG_WEEKLY_SYNC_CRON=0 6 * * 4` (jueves 06:00, hora del servidor).
+   - Opcional: `AAG_WEEKLY_SYNC_CLUB_ID=1` (club a sincronizar).
+5. `pm2 restart teetracker-backend` y revisá logs: debe aparecer `[AAG weekly sync] Scheduler activo` o el mensaje de deshabilitado.
 
 ---
 

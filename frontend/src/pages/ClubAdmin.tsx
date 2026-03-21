@@ -27,7 +27,8 @@ import {
   Camera,
   QrCode,
   DollarSign,
-  Link2
+  Link2,
+  UserCircle2
 
 } from 'lucide-react'
 import { useMembers, useClearClubMembers, useUpdateMember, useDeleteMember, useUpdateMemberStatus } from '@/hooks/useMembers'
@@ -44,10 +45,12 @@ import { ExcelImportModal } from '@/components/ExcelImportModal'
 import { LoadingSpinner } from '@/components/LoadingSpinner'
 import { UserManagement } from '@/components/UserManagement'
 import { FinancialReportQR } from '@/components/FinancialReportQR'
+import { AagMassSyncPanel } from '@/components/AagMassSyncPanel'
 import { Member } from '@/types/member'
 import { Tournament } from '@/types/tournament'
 import { toast } from 'react-hot-toast'
 import { formatHcpForDisplay } from '@/utils/scoreUtils'
+import { computeHcpFromIndexSanJeronimo, formatHcpDisplayForClubPlayer } from '@/utils/clubHandicap'
 
 interface ClubData {
   course_id: number
@@ -116,29 +119,6 @@ export function ClubAdmin() {
   // Get current club data to check field characteristics
   const currentClub = clubs.find(club => club.course_id === parseInt(clubId || '0'))
   
-  // Fórmula San Jerónimo del Rey (y clubes que usen esta convención):
-  // Hombres: HCP = round(Index * 130/113 + 0.6)
-  // Damas:   HCP = round(Index * 128/113 - 0.5)
-  const computeHCPFromIndex = (handicapIndex: number, gender: string | undefined): number => {
-    if (!handicapIndex || handicapIndex === 0) return 0;
-    if (gender === 'F') {
-      const hcp = handicapIndex * (128 / 113) - 0.5;
-      return Math.round(hcp);
-    }
-    // Por defecto (M u otro): fórmula de hombres
-    const hcp = handicapIndex * (130 / 113) + 0.6;
-    return Math.round(hcp);
-  };
-
-  // Calculate HCP: si el club tiene características de cancha desactivadas, mostrar HCP manual; si no, usar fórmula por género.
-  const calculateHCP = (member: any) => {
-    if (currentClub?.enable_field_characteristics === false) {
-      return member.handicap_local !== null && member.handicap_local !== undefined ? Math.round(member.handicap_local) : '-';
-    }
-    if (!member.handicap_index || member.handicap_index === 0) return '-';
-    return computeHCPFromIndex(member.handicap_index, member.gender);
-  };
-
   const { 
     data: tournaments = [], 
     isLoading: tournamentsLoading,
@@ -220,7 +200,7 @@ export function ClubAdmin() {
       const member = members.find(m => m.member_id === memberId)
       const useClubFormula = currentClub?.enable_field_characteristics !== false
       const hcpFromIndex = useClubFormula && member
-        ? computeHCPFromIndex(finalIndex, member.gender)
+        ? computeHcpFromIndexSanJeronimo(finalIndex, member.gender)
         : Math.round(finalIndex)
       
       await updateMemberMutation.mutateAsync({
@@ -453,6 +433,15 @@ export function ClubAdmin() {
               </button>
             ))}
             {/* Enlaces externos en la misma línea */}
+            {permissions.canViewMembers && (
+              <button
+                onClick={() => navigate(`/club/${clubId}/external-players`)}
+                className="flex items-center space-x-2 py-4 px-1 border-b-2 font-medium text-sm transition-colors border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+              >
+                <UserCircle2 className="w-4 h-4" />
+                <span>Jugadores externos</span>
+              </button>
+            )}
             {permissions.canViewTournaments && (
               <button
                 onClick={() => navigate(`/club/${clubId}/rankings`)}
@@ -486,13 +475,18 @@ export function ClubAdmin() {
                 <p className="text-gray-600">Administra los socios de tu club</p>
               </div>
               {permissions.canEditMembers && (
-                <div className="flex items-center space-x-3">
+                <div className="flex items-center space-x-3 flex-wrap gap-y-2">
                   <button 
                     onClick={() => setShowExcelImportModal(true)}
                     className="flex items-center space-x-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
                     <Upload className="w-4 h-4" />
                     <span>Importar Excel</span>
                   </button>
+                  <AagMassSyncPanel
+                    clubId={parseInt(clubId || '0', 10)}
+                    enabled={permissions.canEditMembers}
+                    onAfterSync={() => refetchMembers()}
+                  />
                   {permissions.canDeleteMembers && (
                     <button
                       onClick={() => {
@@ -703,7 +697,13 @@ export function ClubAdmin() {
                               )
                             ) : (
                               // Show calculated HCP when field characteristics are enabled (con + si índice negativo)
-                              <span title="HCP calculado automáticamente">{formatHcpForDisplay(calculateHCP(member) === '-' ? null : (calculateHCP(member) as number), member.handicap_index)}</span>
+                              <span title="HCP calculado automáticamente">
+                                {formatHcpDisplayForClubPlayer(currentClub, {
+                                  handicap_index: member.handicap_index,
+                                  handicap_local: member.handicap_local,
+                                  gender: member.gender
+                                })}
+                              </span>
                             )}
                           </div>
                           <div className="text-sm text-gray-500 flex items-center">

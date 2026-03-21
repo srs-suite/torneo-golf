@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { Participant, PlayerSearchResult } from '@/types/participant';
+import type { ExternalPlayerRegistry } from '@/types/externalPlayer';
 
 const API_URL = '/api/club';
 
@@ -129,6 +130,12 @@ export const createExternalPlayer = async (clubId: number, playerData: any): Pro
 
 export const getExternalPlayers = async (clubId: number): Promise<PlayerSearchResult[]> => {
   const response = await axios.get(`${API_URL}/${clubId}/external-players`);
+  return response.data.data;
+};
+
+/** Solo registros de `external_players` (con columnas AAG) para gestión administrativa */
+export const getExternalPlayersRegistry = async (clubId: number): Promise<ExternalPlayerRegistry[]> => {
+  const response = await axios.get(`${API_URL}/${clubId}/external-players/registry`);
   return response.data.data;
 };
 

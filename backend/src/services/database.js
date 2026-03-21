@@ -3017,7 +3017,7 @@ async function addPublicInscription(clubId, tournamentId, memberId, options = {}
             group_number, tee_time_preference, tee_time, starting_hole
         ) VALUES (?, ?, ?, 'member', 'registered', 'pending', ?, ?, ?, ?)
     `;
-    await executeQuery(insertQuery, [
+    const insertPublicResult = await executeQuery(insertQuery, [
         tournamentIdNum,
         memberId,
         currentHandicap,
@@ -3026,6 +3026,8 @@ async function addPublicInscription(clubId, tournamentId, memberId, options = {}
         groupTeeTime,
         groupStartingHole
     ]);
+    const newPublicParticipationId = insertPublicResult.rows && insertPublicResult.rows.insertId;
+    await syncHandicapIndexUsedForNewParticipantIfSealed(clubIdNum, tournamentIdNum, newPublicParticipationId);
 
     // Si creó grupo y eligió inscriptos para sumar, asignarlos al nuevo grupo (máx 3 para no superar 4)
     if (createGroup && finalGroupNumber != null && Array.isArray(addToGroup) && addToGroup.length > 0) {
@@ -3616,6 +3618,171 @@ async function updateTournamentStatus(courseId, tournamentId, status) {
     return null;
 }
 
+/**
+ * Sellado histórico de handicaps para un torneo.
+ *
+ * - player_type 'member' → members.handicap_index (vía member_id).
+ * - player_type 'external' o 'visitor' → external_players.handicap_index (vía external_player_id).
+ * - Completa tournament_participants.handicap_index_used SOLO cuando está NULL.
+ * - No toca tournament_participants.handicap_used.
+ * - No vuelve a sellar si tournaments.handicaps_sealed_at ya tiene valor.
+ * - Tolera jugadores sin handicap/index (deja NULL).
+ * - Pensado para llamarse cuando se cierran inscripciones / se asignan tee times
+ *   o se cambia el estado del torneo a in_progress/completed.
+ *
+ * Devuelve un resumen informativo o null si la instalación no tiene las columnas.
+ */
+async function sealTournamentHandicaps(courseId, tournamentId) {
+    try {
+        // 1) Ver si ya está sellado
+        const checkQuery = `
+            SELECT status, handicaps_sealed_at
+            FROM tournaments
+            WHERE course_id = ? AND tournament_id = ?
+            LIMIT 1
+        `;
+        const { rows: tRows } = await executeQuery(checkQuery, [courseId, tournamentId]);
+        if (!tRows || tRows.length === 0) {
+            return null;
+        }
+        const tournament = tRows[0];
+        if (tournament.handicaps_sealed_at) {
+            // Idempotente: ya sellado, no hacer nada
+            return { alreadySealed: true };
+        }
+
+        // 2) Socios: solo player_type = 'member' → index desde members
+        const sealMembersQuery = `
+            UPDATE tournament_participants tp
+            LEFT JOIN members m
+                ON tp.member_id = m.member_id
+               AND tp.player_type = 'member'
+            SET tp.handicap_index_used = m.handicap_index
+            WHERE tp.tournament_id = ?
+              AND tp.handicap_index_used IS NULL
+              AND m.handicap_index IS NOT NULL
+        `;
+        await executeQuery(sealMembersQuery, [tournamentId]);
+
+        // 3) Externos y visitantes (futuro): index desde external_players vía external_player_id
+        const sealExternalsQuery = `
+            UPDATE tournament_participants tp
+            LEFT JOIN external_players ep
+                ON tp.external_player_id = ep.external_id
+               AND tp.player_type IN ('external', 'visitor')
+            SET tp.handicap_index_used = ep.handicap_index
+            WHERE tp.tournament_id = ?
+              AND tp.handicap_index_used IS NULL
+              AND ep.handicap_index IS NOT NULL
+        `;
+        await executeQuery(sealExternalsQuery, [tournamentId]);
+
+        // 4) Resumen de participantes
+        const summaryQuery = `
+            SELECT
+                COUNT(*) AS total_participants,
+                SUM(CASE WHEN handicap_index_used IS NOT NULL THEN 1 ELSE 0 END) AS sealed_with_index,
+                SUM(CASE WHEN handicap_index_used IS NULL THEN 1 ELSE 0 END) AS without_index,
+                SUM(CASE WHEN player_type = 'member' THEN 1 ELSE 0 END) AS member_count,
+                SUM(CASE WHEN player_type IN ('external', 'visitor') THEN 1 ELSE 0 END) AS external_count
+            FROM tournament_participants
+            WHERE tournament_id = ?
+        `;
+        const { rows: sRows } = await executeQuery(summaryQuery, [tournamentId]);
+        const summary = sRows && sRows[0] ? sRows[0] : null;
+
+        // 5) Marcar torneo como sellado (aunque haya jugadores sin handicap/index)
+        const sealTournamentQuery = `
+            UPDATE tournaments
+            SET handicaps_sealed_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE course_id = ? AND tournament_id = ? AND handicaps_sealed_at IS NULL
+        `;
+        await executeQuery(sealTournamentQuery, [courseId, tournamentId]);
+
+        try {
+            await logActivity(
+                courseId,
+                null,
+                'club_admin',
+                'tournament_handicaps_sealed',
+                'tournament',
+                tournamentId,
+                summary,
+                null,
+                null
+            );
+        } catch (e) {
+            // No romper por problemas de logging
+        }
+
+        return { alreadySealed: false, ...summary };
+    } catch (e) {
+        // Si la instalación no tiene las columnas nuevas, no romper el flujo
+        if (e && (e.code === 'ER_BAD_FIELD_ERROR' || e.code === 'ER_NO_SUCH_TABLE')) {
+            console.warn('⚠️ sealTournamentHandicaps: columnas o tablas faltantes, se omite sellado:', e.message);
+            return null;
+        }
+        throw e;
+    }
+}
+
+/**
+ * Si el torneo ya tiene handicaps sellados (handicaps_sealed_at), completa
+ * handicap_index_used solo para el participation_id recién insertado.
+ * No modifica handicap_used ni otros participantes. Idempotente por fila (solo si handicap_index_used IS NULL).
+ */
+async function syncHandicapIndexUsedForNewParticipantIfSealed(courseId, tournamentId, participationId) {
+    if (!participationId) return;
+    try {
+        const { rows: tRows } = await executeQuery(
+            `SELECT handicaps_sealed_at FROM tournaments WHERE course_id = ? AND tournament_id = ? LIMIT 1`,
+            [courseId, tournamentId]
+        );
+        if (!tRows || !tRows[0] || !tRows[0].handicaps_sealed_at) {
+            return;
+        }
+
+        const memberUpdate = `
+            UPDATE tournament_participants tp
+            INNER JOIN members m ON tp.member_id = m.member_id
+            SET tp.handicap_index_used = m.handicap_index
+            WHERE tp.participation_id = ?
+              AND tp.tournament_id = ?
+              AND tp.player_type = 'member'
+              AND tp.handicap_index_used IS NULL
+              AND m.handicap_index IS NOT NULL
+        `;
+        const { rows: rMember } = await executeQuery(memberUpdate, [participationId, tournamentId]);
+
+        const extUpdate = `
+            UPDATE tournament_participants tp
+            INNER JOIN external_players ep ON tp.external_player_id = ep.external_id
+            SET tp.handicap_index_used = ep.handicap_index
+            WHERE tp.participation_id = ?
+              AND tp.tournament_id = ?
+              AND tp.player_type IN ('external', 'visitor')
+              AND tp.handicap_index_used IS NULL
+              AND ep.handicap_index IS NOT NULL
+        `;
+        const { rows: rExt } = await executeQuery(extUpdate, [participationId, tournamentId]);
+
+        const affected = (rMember && rMember.affectedRows ? Number(rMember.affectedRows) : 0)
+            + (rExt && rExt.affectedRows ? Number(rExt.affectedRows) : 0);
+        if (affected > 0) {
+            console.log(
+                `📌 participant snapshot after sealing: participation_id=${participationId} tournament_id=${tournamentId} rows_updated=${affected}`
+            );
+        }
+    } catch (e) {
+        if (e && (e.code === 'ER_BAD_FIELD_ERROR' || e.code === 'ER_NO_SUCH_TABLE')) {
+            console.warn('⚠️ syncHandicapIndexUsedForNewParticipantIfSealed: columnas/tablas faltantes, omitido:', e.message);
+            return;
+        }
+        throw e;
+    }
+}
+
 async function getTournamentParticipants(courseId, tournamentId) {
     const query = `
         SELECT tp.*, 
@@ -4025,6 +4192,8 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
     
     const { rows } = await executeQuery(query, params);
     console.log('✅ Participant added successfully, insertId:', rows.insertId);
+
+    await syncHandicapIndexUsedForNewParticipantIfSealed(courseId, tournamentId, rows.insertId);
 
     // Auto-asignación a grupo desactivada: los grupos se gestionan solo desde Gestión de Tee Times.
     const needAutoAssign = false;
@@ -4681,6 +4850,35 @@ async function getExternalPlayers(clubId) {
     return [...(customRows || []), ...(visitorRows || [])];
 }
 
+/**
+ * Solo jugadores externos de `external_players` (sin visitantes de otros clubes).
+ * Incluye campos AAG para gestión administrativa.
+ */
+async function getExternalPlayersRegistry(_clubId) {
+    const query = `
+        SELECT 
+            ep.external_id,
+            ep.full_name,
+            ep.email,
+            ep.phone,
+            ep.gender,
+            ep.handicap_index,
+            ep.handicap_local,
+            ep.member_number,
+            ep.home_club,
+            ep.notes,
+            ep.aag_last_check_at,
+            ep.aag_sync_status,
+            ep.aag_sync_message,
+            ep.created_at,
+            ep.updated_at
+        FROM external_players ep
+        ORDER BY ep.full_name
+    `;
+    const { rows } = await executeQuery(query, []);
+    return rows || [];
+}
+
 async function updateExternalPlayer(playerId, playerData) {
     const query = `
         UPDATE external_players 
@@ -5306,6 +5504,14 @@ function toHHMM(v) {
 
 // Función para asignar tee times a los grupos
 async function assignTeeTimesToGroups(courseId, tournamentId, teeTimeData) {
+    // Antes de asignar horarios, sellar handicaps para congelar el histórico del torneo.
+    // Esto es idempotente y NO falla si la instalación no tiene las columnas nuevas.
+    try {
+        await sealTournamentHandicaps(courseId, tournamentId);
+    } catch (e) {
+        console.error('❌ Error al sellar handicaps del torneo antes de asignar tee times:', e);
+        // No impedir la asignación de tee times por un problema de sellado.
+    }
     const raw = {
         start_time: teeTimeData.start_time ?? '08:00',
         interval_minutes: teeTimeData.interval_minutes ?? 12,
@@ -7314,8 +7520,8 @@ export {
     // Tournament functions
     getAllTournaments, getTournamentById, createTournament, updateTournament, deleteTournament,
     getTournamentParticipants, getTournamentParticipantsById, addTournamentParticipant, removeTournamentParticipant,
-    updateParticipantHandicap, updateParticipantTeePreference,
-    updateParticipantStatus, updateParticipantPayment, getTournamentStats, searchPlayersForTournament, findDuplicateExternalPlayers, createExternalPlayer, updateExternalPlayer, getExternalPlayers, deleteExternalPlayer,
+    updateParticipantHandicap, updateParticipantTeePreference, sealTournamentHandicaps,
+    updateParticipantStatus, updateParticipantPayment, getTournamentStats, searchPlayersForTournament, findDuplicateExternalPlayers, createExternalPlayer, updateExternalPlayer, getExternalPlayers, getExternalPlayersRegistry, deleteExternalPlayer,
     
     // Tournament groups functions
     getTournamentGroups, generateTournamentGroups, assignTeeTimesToGroups, rebalanceGroupsByHcp, movePlayerToGroup, moveGroupToHole, swapGroupNumbers, createEmptyGroup, deleteEmptyGroup,

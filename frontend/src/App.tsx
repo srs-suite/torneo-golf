@@ -21,6 +21,7 @@ import HolesManagement from '@/pages/HolesManagement'
 import TeesManagement from '@/pages/TeesManagement'
 import TournamentResults from '@/pages/TournamentResults'
 import Rankings from '@/pages/Rankings'
+import ExternalPlayers from '@/pages/ExternalPlayers'
 import Payments from '@/pages/Payments'
 import PublicFinancialReport from '@/pages/PublicFinancialReport'
 import PublicInscription from '@/pages/PublicInscription'
@@ -91,6 +92,9 @@ function App() {
       
       {/* Rankings del club */}
       <Route path="/club/:clubId/rankings" element={<Rankings />} />
+
+      {/* Jugadores externos (gestión) */}
+      <Route path="/club/:clubId/external-players" element={<ExternalPlayers />} />
       
       {/* Contabilidad del club (incluye cobros) */}
       <Route path="/club/:clubId/accounting" element={<Payments />} />

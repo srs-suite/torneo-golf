@@ -12,14 +12,17 @@ import {
   createExternalPlayer,
   updateExternalPlayer,
   getExternalPlayers,
+  getExternalPlayersRegistry,
   deleteExternalPlayer
 } from '@/services/participantService';
 import { Participant, PlayerSearchResult } from '@/types/participant';
+import type { ExternalPlayerRegistry } from '@/types/externalPlayer';
 
 const QUERY_KEYS = {
   participants: (clubId: number, tournamentId: number) => ['participants', clubId, tournamentId],
   playerSearch: (clubId: number, query: string) => ['player-search', clubId, query],
   externalPlayers: (clubId: number) => ['external-players', clubId],
+  externalPlayersRegistry: (clubId: number) => ['external-players-registry', clubId],
 };
 
 export const useParticipants = (clubId: number, tournamentId: number) => {
@@ -148,13 +151,24 @@ export const useExternalPlayers = (clubId: number, enabled: boolean = true) => {
   });
 };
 
+/** Lista administrativa: solo `external_players` con columnas AAG */
+export const useExternalPlayersRegistry = (clubId: number, enabled: boolean = true) => {
+  return useQuery<ExternalPlayerRegistry[], Error>({
+    queryKey: QUERY_KEYS.externalPlayersRegistry(clubId),
+    queryFn: () => getExternalPlayersRegistry(clubId),
+    enabled: enabled && clubId > 0,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+  });
+};
+
 export const useCreateExternalPlayer = (clubId: number) => {
   const queryClient = useQueryClient();
   return useMutation<any, Error, any>({
     mutationFn: (playerData) => createExternalPlayer(clubId, playerData),
     onSuccess: () => {
-      // Invalidate external players list to refresh it
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.externalPlayers(clubId) });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.externalPlayersRegistry(clubId) });
       toast.success('Jugador externo creado exitosamente!');
     },
     onError: (error: any) => {
@@ -169,8 +183,8 @@ export const useUpdateExternalPlayer = (clubId: number) => {
   return useMutation<any, Error, { playerId: number; playerData: any }>({
     mutationFn: ({ playerId, playerData }) => updateExternalPlayer(clubId, playerId, playerData),
     onSuccess: () => {
-      // Invalidate external players list to refresh it
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.externalPlayers(clubId) });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.externalPlayersRegistry(clubId) });
       toast.success('Jugador externo actualizado exitosamente!');
     },
     onError: (error: any) => {
@@ -185,8 +199,8 @@ export const useDeleteExternalPlayer = (clubId: number) => {
   return useMutation<void, Error, number>({
     mutationFn: (playerId) => deleteExternalPlayer(clubId, playerId),
     onSuccess: () => {
-      // Invalidate external players list to refresh it
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.externalPlayers(clubId) });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.externalPlayersRegistry(clubId) });
       toast.success('Jugador externo eliminado exitosamente!');
     },
     onError: (error: any) => {

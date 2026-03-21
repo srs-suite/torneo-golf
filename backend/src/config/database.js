@@ -3,14 +3,11 @@ import mysql from 'mysql2/promise';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import dotenv from 'dotenv';
+// Variables: cargar solo desde server.js → ./config/env.js (no duplicar dotenv aquí)
 
 // Define __dirname for ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-// Cargar .env desde la raíz del proyecto (igual que antes)
-dotenv.config({ path: path.join(__dirname, '../../../.env') });
 
 // Database configuration
 const DB_CONFIG = {

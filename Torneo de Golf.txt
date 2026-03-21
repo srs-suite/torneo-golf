@@ -15,3 +15,30 @@ en ssh
 cd /home/retailso/torneogolf-source
    pm2 restart teetracker-backend
 
+
+--------------------------
+esto es importante para decirle a cursor si el Sistema no se actualiza
+
+# 1. Build (en la carpeta donde tenés el código)
+cd /home/retailso/torneogolf-source/frontend
+npm run build
+
+# 2. Copiar el contenido de dist a la carpeta que sirve Nginx
+cp -r /home/retailso/torneogolf-source/frontend/dist/* /home/retailso/torneogolf.retailsolutionstimetracker.com/
+
+# 3. Opcional: reiniciar solo si Nginx cachea (normalmente no hace falta)
+# systemctl reload nginx
+
+
+
+__________________________________
+
+Ver los cambios: Nginx sirve el frontend desde /home/retailso/torneogolf.retailsolutionstimetracker.com, no desde torneogolf-source. Por eso había que copiar ahí el dist después del build. De ahora en adelante, cada vez que hagas npm run build en torneogolf-source/frontend, hay que volver a copiar el contenido de dist a esa carpeta.
+
+ESTO ES LO IMPORTANTE <------
+Para la próxima vez que actualices el frontend en el VPS:
+
+cd /home/retailso/torneogolf-source/frontend
+npm run build
+cp -r dist/* /home/retailso/torneogolf.retailsolutionstimetracker.com/
+pm2 restart teetracker-backend

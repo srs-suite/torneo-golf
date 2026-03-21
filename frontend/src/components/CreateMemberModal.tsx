@@ -1,10 +1,13 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { X, User } from 'lucide-react';
+import { X, User, Loader2 } from 'lucide-react';
+import { toast } from 'react-hot-toast';
 import { useCreateMember, useUpdateMember } from '@/hooks/useMembers';
 import type { Member } from '@/types/member';
+import { lookupAagByMemberNumber } from '@/services/aagLookupService';
+import { calculateHCPFromIndexDefault } from '@/utils/teeSelection';
 
 const memberSchema = z.object({
   first_name: z.string().min(1, 'El nombre es requerido'),
@@ -35,11 +38,14 @@ export function CreateMemberModal({ isOpen, onClose, clubId, editMember }: Creat
   const createMember = useCreateMember(clubId);
   const updateMember = useUpdateMember(clubId);
 
+  const [aagLookupLoading, setAagLookupLoading] = useState(false);
+
   const {
     register,
     handleSubmit,
     reset,
     setValue,
+    getValues,
     formState: { errors, isSubmitting },
   } = useForm<MemberFormData>({
     resolver: zodResolver(memberSchema),
@@ -110,6 +116,39 @@ export function CreateMemberModal({ isOpen, onClose, clubId, editMember }: Creat
     reset();
   };
 
+  const handleConsultarAag = async () => {
+    const mn = String(getValues('member_number') || '').trim();
+    if (!mn) {
+      toast.error('Ingresá una matrícula para consultar AAG');
+      return;
+    }
+    setAagLookupLoading(true);
+    try {
+      const res = await lookupAagByMemberNumber(clubId, 'member', mn);
+      if (!res.success) {
+        toast.error(res.error?.message || 'No se pudo consultar AAG');
+        return;
+      }
+      const d = res.data;
+      if (d.found && d.handicapIndex != null) {
+        setValue('handicap_index', d.handicapIndex);
+        const hcp = calculateHCPFromIndexDefault(d.handicapIndex, getValues('gender'));
+        if (hcp !== null) setValue('handicap_local', hcp);
+        toast.success(d.message || 'Index obtenido desde AAG');
+      } else if (d.aagStatus === 'ERROR') {
+        toast.error(d.message || 'Error al consultar AAG');
+      } else {
+        toast(d.message || 'Sin índice o no encontrado en AAG', { icon: 'ℹ️' });
+      }
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { error?: { message?: string } } }; message?: string };
+      const msg = err?.response?.data?.error?.message || err?.message || 'Error de red al consultar AAG';
+      toast.error(msg);
+    } finally {
+      setAagLookupLoading(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -166,15 +205,37 @@ export function CreateMemberModal({ isOpen, onClose, clubId, editMember }: Creat
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
+              <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Número de Socio
+                  Número de Socio / Matrícula
                 </label>
-                <input
-                  {...register('member_number')}
-                  type="text"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-black focus:border-black"
-                />
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    {...register('member_number')}
+                    type="text"
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter') return
+                      e.preventDefault()
+                      e.stopPropagation()
+                      if (aagLookupLoading) return
+                      void handleConsultarAag()
+                    }}
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:ring-black focus:border-black"
+                    placeholder="Matrícula federativa"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleConsultarAag}
+                    disabled={aagLookupLoading}
+                    className="px-4 py-2 text-sm font-medium text-gray-900 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 disabled:opacity-50 whitespace-nowrap flex items-center justify-center gap-2"
+                  >
+                    {aagLookupLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                    Consultar AAG
+                  </button>
+                </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  Completá el índice y HCP local según AAG (el guardado sigue la lógica actual del club).
+                </p>
               </div>
 
               <div>

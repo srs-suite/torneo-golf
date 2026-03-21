@@ -4,14 +4,11 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
-import dotenv from 'dotenv';
+import './config/env.js';
 
 // Define __dirname for ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-// Cargar .env desde la raíz del proyecto (igual que antes)
-dotenv.config({ path: path.join(__dirname, '../../.env') });
 
 // Database functions (using real exports)
 import {
@@ -32,7 +29,7 @@ import {
     getAllTournaments, getTournamentById, createTournament, updateTournament, deleteTournament,
     getTournamentParticipants, getTournamentParticipantsById, addTournamentParticipant, removeTournamentParticipant,
     updateParticipantHandicap, updateParticipantTeePreference, updateParticipantPayment,
-    getExternalPlayers, createExternalPlayer, updateExternalPlayer, deleteExternalPlayer, findDuplicateExternalPlayers,
+    getExternalPlayers, getExternalPlayersRegistry, createExternalPlayer, updateExternalPlayer, deleteExternalPlayer, findDuplicateExternalPlayers,
     // Tee time and groups functions
     getTournamentGroups, generateTournamentGroups, assignTeeTimesToGroups, rebalanceGroupsByHcp,
     movePlayerToGroup, moveGroupToHole, swapGroupNumbers, createEmptyGroup, deleteEmptyGroup,
@@ -58,6 +55,10 @@ import {
     // System functions
     getSystemStats, getRecentActivity
 } from './services/database.js';
+
+import { syncPlayerHandicapFromAag, syncAllHandicapsFromAag } from './services/aagSync.js';
+import { lookupAagByMemberNumberForForm } from './services/aagFormLookup.js';
+import { startAagWeeklySyncScheduler } from './schedulers/aagWeeklySyncScheduler.js';
 
 // WhatsApp service
 import {
@@ -257,6 +258,57 @@ async function handleClubAPI(req, res, pathParts) {
             if (method === 'GET') {
                 const club = await getClubById(parseInt(clubId));
                 sendJSON(res, { success: true, data: club });
+            } else {
+                sendError(res, 'Método no permitido', 405);
+            }
+            return;
+        }
+
+        // AAG: sincronización manual de índice (proveedor mock / futuro API real)
+        // POST /api/club/:clubId/aag/sync-player-handicap
+        if (resource === 'aag' && resourceId === 'sync-player-handicap') {
+            if (method === 'POST') {
+                const body = await parseBody(req);
+                const result = await syncPlayerHandicapFromAag({
+                    courseId: parseInt(clubId, 10),
+                    playerType: body.playerType,
+                    playerId: body.playerId
+                });
+                const status = result.httpStatus || (result.success ? 200 : 400);
+                sendJSON(res, result, status);
+            } else {
+                sendError(res, 'Método no permitido', 405);
+            }
+            return;
+        }
+
+        // POST /api/club/:clubId/aag/lookup-by-member-number
+        if (resource === 'aag' && resourceId === 'lookup-by-member-number') {
+            if (method === 'POST') {
+                const body = await parseBody(req);
+                const result = await lookupAagByMemberNumberForForm({
+                    courseId: parseInt(clubId, 10),
+                    playerType: body.playerType,
+                    memberNumber: body.memberNumber
+                });
+                const status = result.httpStatus || (result.success ? 200 : 400);
+                sendJSON(res, result.success ? { success: true, data: result.data } : { success: false, error: result.error }, status);
+            } else {
+                sendError(res, 'Método no permitido', 405);
+            }
+            return;
+        }
+
+        // POST /api/club/:clubId/aag/sync-all-handicaps
+        if (resource === 'aag' && resourceId === 'sync-all-handicaps') {
+            if (method === 'POST') {
+                const result = await syncAllHandicapsFromAag(parseInt(clubId, 10));
+                if (!result.success) {
+                    const status = result.httpStatus || 400;
+                    sendJSON(res, { success: false, error: result.error }, status);
+                } else {
+                    sendJSON(res, { success: true, data: result.data });
+                }
             } else {
                 sendError(res, 'Método no permitido', 405);
             }
@@ -1000,7 +1052,10 @@ async function handleClubAPI(req, res, pathParts) {
 
         else if (resource === 'external-players') {
             const cId = parseInt(clubId);
-            if (method === 'GET' && !resourceId) {
+            if (method === 'GET' && resourceId === 'registry') {
+                const list = await getExternalPlayersRegistry(cId);
+                sendJSON(res, { success: true, data: list });
+            } else if (method === 'GET' && !resourceId) {
                 const list = await getExternalPlayers(cId);
                 sendJSON(res, { success: true, data: list });
             } else if (method === 'POST' && resourceId === 'check-duplicates') {
@@ -1681,6 +1736,8 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log('✅ SISTEMA COMPLETO FUNCIONANDO:');
     console.log('   http://localhost:5173');
     console.log('');
+
+    startAagWeeklySyncScheduler();
 });
 
 export { server };

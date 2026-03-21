@@ -1,0 +1,27 @@
+Si querés cambiar de entorno, arrancá el backend con NODE_ENV=production o NODE_ENV=development antes de npm run dev/start.
+
+Torneo Golf
+
+Si cambias el frontend: compila con npm run build y copia los archivos a /home/retailso/torneogolf.retailsolutionstimetracker.com/
+Si cambias el backend: reinicia con pm2 restart teetracker-backend
+Si cambias Nginx: prueba con sudo nginx -t antes de recargar
+
+
+frontend/src/App.tsx
+frontend/src/components/HistorialInventario.tsx
+frontend/src/components/StockVendedoresView.tsx
+frontend/src/config/api.ts
+frontend/src/contexts/AuthContext.tsx
+frontend/src/main.tsx
+frontend/src/pages/BolsasIngresoPage.tsx
+frontend/src/pages/ClientesPage.tsx
+frontend/src/pages/ComisionesDistribuidoresPage.tsx
+frontend/src/pages/PedidosPage.tsx
+frontend/src/pages/ProductividadPage.tsx  ⚠️ IMPORTANTE
+frontend/src/pages/QRLoginPage.tsx
+frontend/src/pages/StockPage.tsx
+frontend/src/pages/StockVendedoresPage.tsx
+frontend/src/pages/UsuariosPage.tsx
+frontend/src/utils/api.ts  ⚠️ IMPORTANTE
+frontend/src/utils/format.ts
+frontend/vite.config.js

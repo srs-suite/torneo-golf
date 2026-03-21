@@ -2,10 +2,12 @@ import { useState, useEffect, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
-import { X, UserX, Plus, User, Trash2 } from 'lucide-react'
+import { X, UserX, Plus, User, Trash2, Loader2 } from 'lucide-react'
+import { toast } from 'react-hot-toast'
 import { useCreateExternalPlayer, useExternalPlayers, useDeleteExternalPlayer, useUpdateExternalPlayer } from '@/hooks/useParticipants'
 import { checkDuplicateExternalPlayers } from '@/services/participantService'
 import { calculateHCPFromIndexDefault } from '@/utils/teeSelection'
+import { lookupAagByMemberNumber } from '@/services/aagLookupService'
 import { SearchInput } from './SearchInput'
 import DuplicatePlayerModal from './DuplicatePlayerModal'
 
@@ -36,6 +38,8 @@ interface CreateExternalPlayerModalProps {
   clubId: number
   initialName?: string
   editingPlayer?: any
+  /** Si true, abre directo el formulario de alta (p. ej. desde gestión de externos) */
+  openDirectlyToCreateForm?: boolean
 }
 
 export function CreateExternalPlayerModal({ 
@@ -44,7 +48,8 @@ export function CreateExternalPlayerModal({
   onSuccess, 
   clubId,
   initialName = '',
-  editingPlayer = null
+  editingPlayer = null,
+  openDirectlyToCreateForm = false
 }: CreateExternalPlayerModalProps) {
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
@@ -53,6 +58,7 @@ export function CreateExternalPlayerModal({
   const [showDuplicateModal, setShowDuplicateModal] = useState(false)
   const [duplicateData, setDuplicateData] = useState<any>(null)
   const [pendingPlayerData, setPendingPlayerData] = useState<any>(null)
+  const [aagLookupLoading, setAagLookupLoading] = useState(false)
   // editingPlayer is now received as a prop
   
   const { data: externalPlayers = [], isLoading, refetch: refetchExternalPlayers } = useExternalPlayers(clubId)
@@ -64,6 +70,7 @@ export function CreateExternalPlayerModal({
     register,
     watch,
     setValue,
+    getValues,
     handleSubmit,
     formState: { errors, isSubmitting },
     reset
@@ -115,9 +122,22 @@ export function CreateExternalPlayerModal({
           home_club: '',
           notes: ''
         })
+      } else if (openDirectlyToCreateForm) {
+        setShowCreateForm(true)
+        reset({
+          full_name: '',
+          member_number: '',
+          email: '',
+          phone: '',
+          gender: undefined,
+          handicap_index: null,
+          handicap_local: null,
+          home_club: '',
+          notes: ''
+        })
       }
     }
-  }, [editingPlayer, initialName, isOpen, reset])
+  }, [editingPlayer, initialName, isOpen, openDirectlyToCreateForm, reset])
 
   // Auto-calcular HCP local cuando el usuario cambia el Index (no sobrescribir al abrir/editar)
   const indexVal = watch('handicap_index')
@@ -153,6 +173,40 @@ export function CreateExternalPlayerModal({
       })
     }
   }, [initialName, showCreateForm, editingPlayer, reset])
+
+  const handleConsultarAag = async () => {
+    const mn = String(getValues('member_number') || '').trim()
+    if (!mn) {
+      toast.error('Ingresá una matrícula para consultar AAG')
+      return
+    }
+    setAagLookupLoading(true)
+    try {
+      const res = await lookupAagByMemberNumber(clubId, 'external', mn)
+      if (!res.success) {
+        toast.error(res.error?.message || 'No se pudo consultar AAG')
+        return
+      }
+      const d = res.data
+      if (d.found && d.handicapIndex != null) {
+        setValue('handicap_index', d.handicapIndex)
+        const g = getValues('gender')
+        const calculated = calculateHCPFromIndexDefault(d.handicapIndex, g || undefined)
+        if (calculated !== null) setValue('handicap_local', calculated)
+        toast.success(d.message || 'Index obtenido desde AAG')
+      } else if (d.aagStatus === 'ERROR') {
+        toast.error(d.message || 'Error al consultar AAG')
+      } else {
+        toast(d.message || 'Sin índice o no encontrado en AAG', { icon: 'ℹ️' })
+      }
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { error?: { message?: string } } }; message?: string }
+      const msg = err?.response?.data?.error?.message || err?.message || 'Error de red al consultar AAG'
+      toast.error(msg)
+    } finally {
+      setAagLookupLoading(false)
+    }
+  }
 
   const checkForDuplicates = async (data: ExternalPlayerFormData) => {
     try {
@@ -393,12 +447,33 @@ export function CreateExternalPlayerModal({
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Número de Matrícula (Opcional)
             </label>
-            <input
-              type="text"
-              {...register('member_number')}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
-              placeholder="Ej: EXT001, A123, etc."
-            />
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="text"
+                {...register('member_number')}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter') return
+                  e.preventDefault()
+                  e.stopPropagation()
+                  if (aagLookupLoading) return
+                  void handleConsultarAag()
+                }}
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
+                placeholder="Ej: matrícula federativa"
+              />
+              <button
+                type="button"
+                onClick={handleConsultarAag}
+                disabled={aagLookupLoading}
+                className="px-4 py-2 text-sm font-medium text-gray-900 bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 disabled:opacity-50 whitespace-nowrap flex items-center justify-center gap-2"
+              >
+                {aagLookupLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                Consultar AAG
+              </button>
+            </div>
+            <p className="mt-1 text-xs text-gray-500">
+              El HCP local se recalcula con el índice y el género (fórmula por defecto del sistema).
+            </p>
             {errors.member_number && (
               <p className="mt-1 text-sm text-red-600">{errors.member_number.message}</p>
             )}
