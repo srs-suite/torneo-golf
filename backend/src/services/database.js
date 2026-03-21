@@ -314,11 +314,13 @@ async function authenticateAdmin(username, password) {
  * Get all users with their permissions for a club
  */
 async function getClubUsers(clubId) {
+    // up.* primero y ca.* después: si no hay fila en user_permissions, up.admin_id es NULL
+    // y en drivers JS el último campo homónimo gana — así ca.admin_id no queda pisado por NULL.
     const query = `
         SELECT 
-            ca.*,
             up.*,
-            ca.admin_id as user_id
+            ca.*,
+            ca.admin_id AS user_id
         FROM club_administrators ca
         LEFT JOIN user_permissions up ON ca.admin_id = up.admin_id 
             AND up.permission_id = (

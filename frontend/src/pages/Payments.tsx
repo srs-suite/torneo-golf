@@ -1107,14 +1107,15 @@ export default function Payments() {
   if (false) { console.log(custodians, showCustodianDropdown, totalAllIncomes, totalExpenses) }
 
   // Verificar si el usuario tiene al menos un permiso de contabilidad
-  const hasAnyAccountingPermission = 
-    permissions.canViewBalance || 
-    permissions.canViewFinancialTotals || 
-    permissions.canViewTournamentIncomes || 
-    permissions.canViewOtherIncomes || 
-    permissions.canViewExpenses || 
-    permissions.canViewCurrencyExchanges || 
-    permissions.canViewAccounting
+  const hasAnyAccountingPermission =
+    permissions.canViewBalance ||
+    permissions.canViewFinancialTotals ||
+    permissions.canViewTournamentIncomes ||
+    permissions.canViewOtherIncomes ||
+    permissions.canViewExpenses ||
+    permissions.canViewCurrencyExchanges ||
+    permissions.canViewAccounting ||
+    permissions.canManagePayments
 
   // Mientras cargan permisos, el estado inicial es "todo false" → sin esto se ve "Acceso denegado" un instante
   if (permissionsLoading) {

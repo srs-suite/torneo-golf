@@ -27,6 +27,16 @@ export interface UserPermissions {
   canManageCurrencyExchanges: boolean
 }
 
+/** Compara IDs de admin/user aunque vengan como string (MySQL) o number */
+function sameAdminId(a: unknown, b: unknown): boolean {
+  if (a === null || a === undefined || a === '' || b === null || b === undefined || b === '') {
+    return false
+  }
+  const na = Number(a)
+  const nb = Number(b)
+  return Number.isFinite(na) && Number.isFinite(nb) && na === nb
+}
+
 const DEFAULT_PERMISSIONS: UserPermissions = {
   canViewMembers: false,
   canEditMembers: false,
@@ -52,43 +62,54 @@ const DEFAULT_PERMISSIONS: UserPermissions = {
   canManageCurrencyExchanges: false,
 }
 
-// Función para inicializar permisos desde localStorage
-const getInitialPermissions = (): UserPermissions => {
+const FULL_PERMISSIONS: UserPermissions = {
+  canViewMembers: true,
+  canEditMembers: true,
+  canDeleteMembers: true,
+  canViewTournaments: true,
+  canEditTournaments: true,
+  canDeleteTournaments: true,
+  canViewSettings: true,
+  canViewAccounting: true,
+  canManagePayments: true,
+  canViewRankings: true,
+  canViewPhotos: true,
+  canManagePhotos: true,
+  canViewFinancialTotals: true,
+  canViewBalance: true,
+  canViewTournamentIncomes: true,
+  canManageTournamentIncomes: true,
+  canViewOtherIncomes: true,
+  canManageOtherIncomes: true,
+  canViewExpenses: true,
+  canManageExpenses: true,
+  canViewCurrencyExchanges: true,
+  canManageCurrencyExchanges: true,
+}
+
+/** Primer render: system_admin = todo; club_admin = último snapshot guardado (evita “todo false” hasta el GET) */
+function readInitialPermissionsFromBrowser(): UserPermissions {
+  if (typeof window === 'undefined') return DEFAULT_PERMISSIONS
   const adminRole = localStorage.getItem('adminRole')
   if (adminRole === 'system_admin') {
-    // Solo system_admin tiene todos los permisos automáticamente
-    return {
-      canViewMembers: true,
-      canEditMembers: true,
-      canDeleteMembers: true,
-      canViewTournaments: true,
-      canEditTournaments: true,
-      canDeleteTournaments: true,
-      canViewSettings: true,
-      canViewAccounting: true,
-      canManagePayments: true,
-      canViewRankings: true,
-      canViewPhotos: true,
-      canManagePhotos: true,
-      canViewFinancialTotals: true,
-      canViewBalance: true,
-      canViewTournamentIncomes: true,
-      canManageTournamentIncomes: true,
-      canViewOtherIncomes: true,
-      canManageOtherIncomes: true,
-      canViewExpenses: true,
-      canManageExpenses: true,
-      canViewCurrencyExchanges: true,
-      canManageCurrencyExchanges: true,
-    }
+    return { ...FULL_PERMISSIONS }
   }
-  
-  // Para club_admin, verificar permisos en la base de datos (a menos que sea primary_admin)
+  try {
+    const raw = localStorage.getItem('userPermissions')
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<UserPermissions>
+      if (parsed && typeof parsed === 'object') {
+        return { ...DEFAULT_PERMISSIONS, ...parsed }
+      }
+    }
+  } catch {
+    /* ignore */
+  }
   return DEFAULT_PERMISSIONS
 }
 
 export function useUserPermissions(clubId: string | undefined) {
-  const [permissions, setPermissions] = useState<UserPermissions>(getInitialPermissions)
+  const [permissions, setPermissions] = useState<UserPermissions>(() => readInitialPermissionsFromBrowser())
   const [isLoading, setIsLoading] = useState(true)
   const [isAdmin, setIsAdmin] = useState(false) // Se actualiza después de cargar permisos
 
@@ -107,30 +128,7 @@ export function useUserPermissions(clubId: string | undefined) {
         
         if (adminRole === 'system_admin') {
           // Admin del sistema tiene todos los permisos
-          updatePermissions({
-            canViewMembers: true,
-            canEditMembers: true,
-            canDeleteMembers: true,
-            canViewTournaments: true,
-            canEditTournaments: true,
-            canDeleteTournaments: true,
-            canViewSettings: true,
-            canViewAccounting: true,
-            canManagePayments: true,
-            canViewRankings: true,
-            canViewPhotos: true,
-            canManagePhotos: true,
-            canViewFinancialTotals: true,
-            canViewBalance: true,
-            canViewTournamentIncomes: true,
-            canManageTournamentIncomes: true,
-            canViewOtherIncomes: true,
-            canManageOtherIncomes: true,
-            canViewExpenses: true,
-            canManageExpenses: true,
-            canViewCurrencyExchanges: true,
-            canManageCurrencyExchanges: true,
-          })
+          updatePermissions({ ...FULL_PERMISSIONS })
           setIsAdmin(true)
           setIsLoading(false)
           return
@@ -149,12 +147,19 @@ export function useUserPermissions(clubId: string | undefined) {
 
         // Obtener los usuarios del club
         const response = await api.get(`/club/${clubId}/users`)
-        const users = response.data.data || []
-        
-        // Buscar el usuario actual (puede estar en admin_id o user_id)
-        const currentUser = users.find((u: any) => 
-          u.admin_id === parseInt(adminId) || u.user_id === parseInt(adminId)
+        const rawList = response.data?.data ?? response.data
+        const users = Array.isArray(rawList) ? rawList : []
+
+        // Buscar el usuario actual (puede estar en admin_id o user_id).
+        let currentUser = users.find(
+          (u: any) => sameAdminId(u.admin_id, adminId) || sameAdminId(u.user_id, adminId)
         )
+        // Respaldo: si el ID no matchea (drivers / columnas duplicadas en SQL), matchear por usuario logueado
+        const adminUsername = localStorage.getItem('adminUsername')
+        if (!currentUser && adminUsername && users.length > 0) {
+          const un = adminUsername.trim().toLowerCase()
+          currentUser = users.find((u: any) => String(u.username || '').trim().toLowerCase() === un)
+        }
         
         if (currentUser) {
           // Si no tiene permission_id (permisos en null), dar permisos completos por defecto
@@ -162,35 +167,13 @@ export function useUserPermissions(clubId: string | undefined) {
           
           // Verificar si es administrador principal del club o si no tiene permisos configurados
           if (currentUser.is_primary_admin || hasNoPermissions) {
-            updatePermissions({
-              canViewMembers: true,
-              canEditMembers: true,
-              canDeleteMembers: true,
-              canViewTournaments: true,
-              canEditTournaments: true,
-              canDeleteTournaments: true,
-              canViewSettings: true,
-              canViewAccounting: true,
-              canManagePayments: true,
-              canViewRankings: true,
-              canViewPhotos: true,
-              canManagePhotos: true,
-              canViewFinancialTotals: true,
-              canViewBalance: true,
-              canViewTournamentIncomes: true,
-              canManageTournamentIncomes: true,
-              canViewOtherIncomes: true,
-              canManageOtherIncomes: true,
-              canViewExpenses: true,
-              canManageExpenses: true,
-              canViewCurrencyExchanges: true,
-              canManageCurrencyExchanges: true,
-            })
+            updatePermissions({ ...FULL_PERMISSIONS })
             setIsAdmin(true)
           } else {
             // Usuario con permisos limitados
             setIsAdmin(false)
-            updatePermissions({
+            const pay = !!(currentUser.can_manage_payments || false)
+            const next: UserPermissions = {
               canViewMembers: currentUser.can_view_members || false,
               canEditMembers: currentUser.can_edit_members || false,
               canDeleteMembers: currentUser.can_delete_members || false,
@@ -198,8 +181,9 @@ export function useUserPermissions(clubId: string | undefined) {
               canEditTournaments: currentUser.can_edit_tournaments || false,
               canDeleteTournaments: currentUser.can_delete_tournaments || false,
               canViewSettings: currentUser.can_view_settings || false,
-              canViewAccounting: currentUser.can_view_accounting || false,
-              canManagePayments: currentUser.can_manage_payments || false,
+              // Legacy: muchos usuarios tienen solo can_manage_payments sin flags granulares ni can_view_accounting
+              canViewAccounting: !!(currentUser.can_view_accounting || currentUser.can_manage_payments),
+              canManagePayments: pay,
               canViewRankings: currentUser.can_view_rankings || false,
               canViewPhotos: currentUser.can_view_photos || false,
               canManagePhotos: currentUser.can_manage_photos || false,
@@ -213,8 +197,24 @@ export function useUserPermissions(clubId: string | undefined) {
               canManageExpenses: currentUser.can_manage_expenses || false,
               canViewCurrencyExchanges: currentUser.can_view_currency_exchanges || false,
               canManageCurrencyExchanges: currentUser.can_manage_currency_exchanges || false,
-            })
-            setIsAdmin(false)
+            }
+            const hasGranularAcct =
+              next.canViewBalance ||
+              next.canViewFinancialTotals ||
+              next.canViewTournamentIncomes ||
+              next.canViewOtherIncomes ||
+              next.canViewExpenses ||
+              next.canViewCurrencyExchanges
+            // Quien gestiona cobros debe ver contabilidad aunque la BD no tenga columnas nuevas en true
+            if (pay && !hasGranularAcct) {
+              next.canViewBalance = true
+              next.canViewFinancialTotals = true
+              next.canViewTournamentIncomes = true
+              next.canViewOtherIncomes = true
+              next.canViewExpenses = true
+              next.canViewCurrencyExchanges = true
+            }
+            updatePermissions(next)
           }
         }
 
