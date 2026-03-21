@@ -49,17 +49,15 @@ export default function ExternalPlayers() {
   const queryClient = useQueryClient()
   const clubId = clubIdParam ? parseInt(clubIdParam, 10) : 0
 
-  const { permissions, isLoading: permissionsLoading, isAdmin } = useUserPermissions(clubIdParam)
+  const { permissions, isLoading: permissionsLoading, showExternalPlayersNav } = useUserPermissions(clubIdParam)
   const { data: clubs = [] } = useClubs()
   const club = clubs.find((c) => c.course_id === clubId)
 
-  const canAccessExternalPlayers =
-    permissions.canViewMembers || permissions.canManagePayments || isAdmin
   const canEditExternalPlayers = permissions.canEditMembers || permissions.canManagePayments
 
   const { data: players = [], isLoading, refetch, isRefetching } = useExternalPlayersRegistry(
     clubId,
-    canAccessExternalPlayers && !permissionsLoading
+    showExternalPlayersNav && !permissionsLoading
   )
 
   const deletePlayer = useDeleteExternalPlayer(clubId)
@@ -140,7 +138,7 @@ export default function ExternalPlayers() {
     )
   }
 
-  if (!canAccessExternalPlayers) {
+  if (!showExternalPlayersNav) {
     return (
       <div className="min-h-screen bg-gray-50 p-8">
         <p className="text-gray-700">No tenés permiso para ver esta sección.</p>

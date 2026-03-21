@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { api } from '@/lib/api'
 
 export interface UserPermissions {
@@ -228,6 +228,20 @@ export function useUserPermissions(clubId: string | undefined) {
     fetchPermissions()
   }, [clubId])
 
-  return { permissions, isLoading, isAdmin }
+  /**
+   * Enlace "Jugadores externos" en la barra del club: sesión válida + contexto club.
+   * No depender solo de canViewMembers (API/caché a veces lo deja en false).
+   * La página /external-players usa la misma bandera para listar; edición sigue con canEditMembers / canManagePayments.
+   */
+  const showExternalPlayersNav = useMemo(() => {
+    if (typeof window === 'undefined') return false
+    if (!clubId) return false
+    const role = localStorage.getItem('adminRole')
+    const adminId = localStorage.getItem('adminId')
+    if (role === 'system_admin') return true
+    return role === 'club_admin' && !!adminId
+  }, [clubId])
+
+  return { permissions, isLoading, isAdmin, showExternalPlayersNav }
 }
 

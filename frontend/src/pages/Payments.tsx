@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Calendar, DollarSign, Users, Trophy, Settings, Award, Camera, ChevronDown, LogOut, Filter, X, User, UserCircle2, Pencil, Download, MessageCircle } from 'lucide-react'
+import { Calendar, DollarSign, Users, Trophy, Settings, Camera, ChevronDown, LogOut, Filter, X, User, UserCircle2, Pencil, Download, MessageCircle } from 'lucide-react'
 import { paymentsService } from '@/services/paymentsService'
 import { accountsService } from '@/services/accountsService'
 import { DateInput } from '@/components/DateInput'
@@ -16,7 +16,7 @@ export default function Payments() {
   const { clubId } = useParams<{ clubId: string }>() 
   const navigate = useNavigate()
   const clubIdNum = clubId ? parseInt(clubId) : 0
-  const { permissions, isLoading: permissionsLoading, isAdmin } = useUserPermissions(clubId)
+  const { permissions, isLoading: permissionsLoading, showExternalPlayersNav } = useUserPermissions(clubId)
 
   /** Misma condición que la puerta de acceso a Contabilidad (reutilizada en pestañas) */
   const hasAnyAccountingPermission = useMemo(
@@ -40,10 +40,6 @@ export default function Payments() {
       permissions.canManagePayments,
     ]
   )
-
-  /** Ver socios, tesorería o admin principal → enlace a jugadores externos (alineado con ExternalPlayers) */
-  const canNavigateExternalPlayers =
-    permissions.canViewMembers || permissions.canManagePayments || isAdmin
 
   // Función helper para obtener la fecha local en formato YYYY-MM-DD
   const getLocalDateString = () => {
@@ -1221,6 +1217,7 @@ export default function Payments() {
                 </span>
               </div>
               <button
+                type="button"
                 onClick={() => navigate('/')}
                 className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
               >
@@ -1236,7 +1233,9 @@ export default function Payments() {
       <div className="bg-white border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-wrap gap-1 -mb-px items-center">
+            {/* Mismo orden que ClubAdmin: Socios → Torneos → Fotos → Config → Jugadores externos → Ranking → Contabilidad */}
             <button
+              type="button"
               onClick={() => navigate(`/club/${clubId}/admin?tab=members`)}
               className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:border-gray-300 border-b-2 border-transparent transition-colors shrink-0"
             >
@@ -1248,18 +1247,10 @@ export default function Payments() {
                 </span>
               )}
             </button>
-            {canNavigateExternalPlayers && (
-              <button
-                onClick={() => navigate(`/club/${clubId}/external-players`)}
-                className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:border-gray-300 border-b-2 border-transparent transition-colors shrink-0"
-              >
-                <UserCircle2 className="h-4 w-4" />
-                Jugadores externos
-              </button>
-            )}
             <button
+              type="button"
               onClick={() => navigate(`/club/${clubId}/admin?tab=tournaments`)}
-              className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:border-gray-300 border-b-2 border-transparent transition-colors"
+              className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:border-gray-300 border-b-2 border-transparent transition-colors shrink-0"
             >
               <Trophy className="h-4 w-4" />
               Torneos
@@ -1271,8 +1262,9 @@ export default function Payments() {
             </button>
             {permissions.canViewPhotos && (
               <button
+                type="button"
                 onClick={() => navigate(`/club/${clubId}/admin?tab=photos`)}
-                className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:border-gray-300 border-b-2 border-transparent transition-colors"
+                className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:border-gray-300 border-b-2 border-transparent transition-colors shrink-0"
               >
                 <Camera className="h-4 w-4" />
                 Fotos
@@ -1280,6 +1272,7 @@ export default function Payments() {
             )}
             {permissions.canViewSettings && (
               <button
+                type="button"
                 onClick={() => navigate(`/club/${clubId}/admin?tab=settings`)}
                 className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:border-gray-300 border-b-2 border-transparent transition-colors shrink-0"
               >
@@ -1287,16 +1280,30 @@ export default function Payments() {
                 Configuración
               </button>
             )}
+            {showExternalPlayersNav && (
+              <button
+                type="button"
+                onClick={() => navigate(`/club/${clubId}/external-players`)}
+                className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:border-gray-300 border-b-2 border-transparent transition-colors shrink-0"
+              >
+                <UserCircle2 className="h-4 w-4" />
+                Jugadores externos
+              </button>
+            )}
+            {permissions.canViewTournaments && (
+              <button
+                type="button"
+                onClick={() => navigate(`/club/${clubId}/rankings`)}
+                className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:border-gray-300 border-b-2 border-transparent transition-colors shrink-0"
+              >
+                <Trophy className="h-4 w-4" />
+                Ranking
+              </button>
+            )}
             <button
-              onClick={() => navigate(`/club/${clubId}/rankings`)}
-              className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:border-gray-300 border-b-2 border-transparent transition-colors"
-            >
-              <Award className="h-4 w-4" />
-              Ranking
-            </button>
-            <button
+              type="button"
               onClick={() => navigate(`/club/${clubId}/accounting`)}
-              className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-900 border-b-2 border-gray-900 transition-colors"
+              className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-900 border-b-2 border-gray-900 transition-colors shrink-0"
             >
               <DollarSign className="h-4 w-4" />
               Contabilidad

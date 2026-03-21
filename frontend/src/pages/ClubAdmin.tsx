@@ -66,7 +66,7 @@ export function ClubAdmin() {
   const { clubId } = useParams<{ clubId: string }>()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const { permissions, isLoading: permissionsLoading, isAdmin } = useUserPermissions(clubId)
+  const { permissions, isLoading: permissionsLoading, showExternalPlayersNav } = useUserPermissions(clubId)
   
   const [activeTab, setActiveTab] = useState(() => {
     // Check if there's a tab parameter in the URL
@@ -433,7 +433,7 @@ export function ClubAdmin() {
               </button>
             ))}
             {/* Enlaces externos en la misma línea */}
-            {(permissions.canViewMembers || permissions.canManagePayments || isAdmin) && (
+            {showExternalPlayersNav && (
               <button
                 onClick={() => navigate(`/club/${clubId}/external-players`)}
                 className="flex items-center space-x-2 py-4 px-1 border-b-2 font-medium text-sm transition-colors border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
