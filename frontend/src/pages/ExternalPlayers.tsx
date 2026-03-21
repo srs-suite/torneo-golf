@@ -49,13 +49,17 @@ export default function ExternalPlayers() {
   const queryClient = useQueryClient()
   const clubId = clubIdParam ? parseInt(clubIdParam, 10) : 0
 
-  const { permissions, isLoading: permissionsLoading } = useUserPermissions(clubIdParam)
+  const { permissions, isLoading: permissionsLoading, isAdmin } = useUserPermissions(clubIdParam)
   const { data: clubs = [] } = useClubs()
   const club = clubs.find((c) => c.course_id === clubId)
 
+  const canAccessExternalPlayers =
+    permissions.canViewMembers || permissions.canManagePayments || isAdmin
+  const canEditExternalPlayers = permissions.canEditMembers || permissions.canManagePayments
+
   const { data: players = [], isLoading, refetch, isRefetching } = useExternalPlayersRegistry(
     clubId,
-    permissions.canViewMembers && !permissionsLoading
+    canAccessExternalPlayers && !permissionsLoading
   )
 
   const deletePlayer = useDeleteExternalPlayer(clubId)
@@ -136,7 +140,7 @@ export default function ExternalPlayers() {
     )
   }
 
-  if (!permissions.canViewMembers) {
+  if (!canAccessExternalPlayers) {
     return (
       <div className="min-h-screen bg-gray-50 p-8">
         <p className="text-gray-700">No tenés permiso para ver esta sección.</p>
@@ -176,7 +180,7 @@ export default function ExternalPlayers() {
               </div>
             </div>
           </div>
-          {permissions.canEditMembers && (
+          {canEditExternalPlayers && (
             <button
               type="button"
               onClick={openCreate}
@@ -274,7 +278,7 @@ export default function ExternalPlayers() {
                       </td>
                       <td className="px-4 py-3 text-right text-sm">
                         <div className="flex items-center justify-end gap-1 flex-wrap">
-                          {permissions.canEditMembers && (
+                          {canEditExternalPlayers && (
                             <>
                               <button
                                 type="button"

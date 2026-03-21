@@ -16,7 +16,34 @@ export default function Payments() {
   const { clubId } = useParams<{ clubId: string }>() 
   const navigate = useNavigate()
   const clubIdNum = clubId ? parseInt(clubId) : 0
-  const { permissions, isLoading: permissionsLoading } = useUserPermissions(clubId)
+  const { permissions, isLoading: permissionsLoading, isAdmin } = useUserPermissions(clubId)
+
+  /** Misma condición que la puerta de acceso a Contabilidad (reutilizada en pestañas) */
+  const hasAnyAccountingPermission = useMemo(
+    () =>
+      permissions.canViewBalance ||
+      permissions.canViewFinancialTotals ||
+      permissions.canViewTournamentIncomes ||
+      permissions.canViewOtherIncomes ||
+      permissions.canViewExpenses ||
+      permissions.canViewCurrencyExchanges ||
+      permissions.canViewAccounting ||
+      permissions.canManagePayments,
+    [
+      permissions.canViewBalance,
+      permissions.canViewFinancialTotals,
+      permissions.canViewTournamentIncomes,
+      permissions.canViewOtherIncomes,
+      permissions.canViewExpenses,
+      permissions.canViewCurrencyExchanges,
+      permissions.canViewAccounting,
+      permissions.canManagePayments,
+    ]
+  )
+
+  /** Ver socios, tesorería o admin principal → enlace a jugadores externos (alineado con ExternalPlayers) */
+  const canNavigateExternalPlayers =
+    permissions.canViewMembers || permissions.canManagePayments || isAdmin
 
   // Función helper para obtener la fecha local en formato YYYY-MM-DD
   const getLocalDateString = () => {
@@ -1006,12 +1033,13 @@ export default function Payments() {
     if (permissions.canViewCurrencyExchanges) list.push('conversiones')
     if (permissions.canViewAccounting) list.push('cuentas')
     if (permissions.canViewBalance && permissions.canViewFinancialTotals) list.push('balance')
-    // Tesorería: acceso por can_manage_payments sin filas granulares en BD
-    if (list.length === 0 && permissions.canManagePayments) {
+    // Entró a Contabilidad (hasAny) pero la BD no marcó pestañas concretas (ej. solo balance sin totales)
+    if (list.length === 0 && hasAnyAccountingPermission) {
       return ['ingresos', 'otros_ingresos', 'gastos', 'conversiones', 'cuentas']
     }
     return list
   }, [
+    hasAnyAccountingPermission,
     permissions.canViewTournamentIncomes,
     permissions.canViewOtherIncomes,
     permissions.canViewExpenses,
@@ -1141,17 +1169,6 @@ export default function Payments() {
   // Suprimir warnings TS6133 de variables no usadas temporalmente
   if (false) { console.log(custodians, showCustodianDropdown, totalAllIncomes, totalExpenses) }
 
-  // Verificar si el usuario tiene al menos un permiso de contabilidad
-  const hasAnyAccountingPermission =
-    permissions.canViewBalance ||
-    permissions.canViewFinancialTotals ||
-    permissions.canViewTournamentIncomes ||
-    permissions.canViewOtherIncomes ||
-    permissions.canViewExpenses ||
-    permissions.canViewCurrencyExchanges ||
-    permissions.canViewAccounting ||
-    permissions.canManagePayments
-
   // Mientras cargan permisos, el estado inicial es "todo false" → sin esto se ve "Acceso denegado" un instante
   if (permissionsLoading) {
     return <LoadingSpinner />
@@ -1231,7 +1248,7 @@ export default function Payments() {
                 </span>
               )}
             </button>
-            {permissions.canViewMembers && (
+            {canNavigateExternalPlayers && (
               <button
                 onClick={() => navigate(`/club/${clubId}/external-players`)}
                 className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:border-gray-300 border-b-2 border-transparent transition-colors shrink-0"
