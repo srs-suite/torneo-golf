@@ -32,7 +32,7 @@ import {
     getExternalPlayers, getExternalPlayersRegistry, createExternalPlayer, updateExternalPlayer, deleteExternalPlayer, findDuplicateExternalPlayers,
     // Tee time and groups functions
     getTournamentGroups, generateTournamentGroups, assignTeeTimesToGroups, rebalanceGroupsByHcp,
-    movePlayerToGroup, moveGroupToHole, swapGroupNumbers, createEmptyGroup, deleteEmptyGroup,
+    movePlayerToGroup, moveGroupToHole, swapGroupNumbers, createEmptyGroup, deleteEmptyGroup, clearTournamentGroups,
     
     // Scorecard functions
     saveScorecard, getScorecardsByTournament, getScorecardByPlayer, updateScorecard, deleteScorecard, getScorecardForPrint,
@@ -511,6 +511,14 @@ async function handleClubAPI(req, res, pathParts) {
                     const { groupNumber } = body || {};
                     await deleteEmptyGroup(parseInt(resourceId), groupNumber);
                     sendJSON(res, { success: true, message: 'Grupo vacío eliminado exitosamente' });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
+            }
+            else if (subResource === 'clear-groups') {
+                if (method === 'POST') {
+                    await clearTournamentGroups(parseInt(clubId), parseInt(resourceId));
+                    sendJSON(res, { success: true, message: 'Grupos desarmados exitosamente' });
                 } else {
                     sendError(res, 'Método no permitido', 405);
                 }

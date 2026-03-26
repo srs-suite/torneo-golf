@@ -321,15 +321,21 @@ export function TournamentParticipantsModal({
 
   /** Arma un texto con el listado de inscriptos y abre WhatsApp para enviarlo (grupo o contacto). */
   const handleSendListByWhatsApp = () => {
-    const baseList = filteredParticipants.length > 0 ? filteredParticipants : participants
-    const list = [...baseList].sort((a, b) => {
-      const fullA = formatName(a.player_name || '').trim()
-      const fullB = formatName(b.player_name || '').trim()
-      const lastA = fullA.split(' ').filter(Boolean).slice(-1)[0]?.toLowerCase() || fullA.toLowerCase()
-      const lastB = fullB.split(' ').filter(Boolean).slice(-1)[0]?.toLowerCase() || fullB.toLowerCase()
-      const byLast = lastA.localeCompare(lastB)
-      if (byLast !== 0) return byLast
-      return fullA.toLowerCase().localeCompare(fullB.toLowerCase())
+    // Orden de inscripción: primero el que se inscribió primero.
+    const source = filteredParticipants.length > 0 ? filteredParticipants : participants
+    const list = [...source].sort((a, b) => {
+      const tsA = Date.parse(String(a.registration_date || ''))
+      const tsB = Date.parse(String(b.registration_date || ''))
+      const hasA = Number.isFinite(tsA)
+      const hasB = Number.isFinite(tsB)
+
+      if (hasA && hasB && tsA !== tsB) return tsA - tsB
+      if (hasA && !hasB) return -1
+      if (!hasA && hasB) return 1
+
+      const idA = Number((a as any).participation_id ?? a.participant_id ?? 0)
+      const idB = Number((b as any).participation_id ?? b.participant_id ?? 0)
+      return idA - idB
     })
     if (list.length === 0) {
       toast.error('No hay participantes para enviar.')

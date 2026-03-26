@@ -257,6 +257,7 @@ export function useMovePlayerToGroup(clubId: number, tournamentId: number) {
     onSuccess: () => {
       console.log('✅ Jugador movido exitosamente')
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.tournamentGroups(clubId, tournamentId) })
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.tournamentParticipants(clubId, tournamentId) })
       toast.success('Jugador movido exitosamente')
     },
     onError: (error: any) => {
@@ -322,12 +323,14 @@ export function useCreateEmptyGroup(clubId: number, tournamentId: number) {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (config?: { hole: number; time: string | null }) => 
+    mutationFn: (config?: { hole?: number; time?: string | null; silent?: boolean }) => 
       tournamentService.createEmptyGroup(clubId, tournamentId, config),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       console.log('✅ Grupo vacío creado exitosamente')
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.tournamentGroups(clubId, tournamentId) })
-      toast.success('Grupo vacío creado exitosamente')
+      if (!variables?.silent) {
+        toast.success('Grupo vacío creado exitosamente')
+      }
     },
     onError: (error: any) => {
       console.error('❌ Error al crear grupo vacío:', error)
@@ -350,6 +353,23 @@ export function useDeleteEmptyGroup(clubId: number, tournamentId: number) {
     onError: (error: any) => {
       console.error('❌ Error al eliminar grupo vacío:', error)
       toast.error(error.response?.data?.message || 'Error al eliminar grupo vacío')
+    }
+  })
+}
+
+export function useClearTournamentGroups(clubId: number, tournamentId: number) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: () => tournamentService.clearGroups(clubId, tournamentId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.tournamentGroups(clubId, tournamentId) })
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.tournamentParticipants(clubId, tournamentId) })
+      queryClient.invalidateQueries({ queryKey: ['participants', clubId, tournamentId] })
+      toast.success('Grupos desarmados. Ahora podés armarlos nuevamente.')
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.message || 'Error al desarmar grupos')
     }
   })
 }

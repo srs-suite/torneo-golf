@@ -5381,6 +5381,33 @@ async function generateTournamentGroups(courseId, tournamentId, options = {}) {
             const band3 = [];   // 14 <= HCP <= 21.9
             const band4 = [];   // 22 <= HCP <= 54
             const noHcpBand = []; // sin HCP
+            const preferredSession = (tournament?.preferred_session === 'afternoon') ? 'afternoon' : 'morning';
+            const normSession = (p) => {
+                const raw = String(p?.tee_time_preference || '').toLowerCase().trim();
+                if (raw === 'morning' || raw === 'mañana') return 'morning';
+                if (raw === 'afternoon' || raw === 'tarde') return 'afternoon';
+                return preferredSession; // fallback para no mezclar por indefinidos
+            };
+            const splitBySession = (arr) => {
+                const morning = [];
+                const afternoon = [];
+                for (const p of arr) {
+                    (normSession(p) === 'afternoon' ? afternoon : morning).push(p);
+                }
+                return { morning, afternoon };
+            };
+            const fillSerpentineLists = (participantsList) => {
+                if (!participantsList.length) return [];
+                const numGroupsInChunk = Math.ceil(participantsList.length / groupSize) || 1;
+                const lists = Array.from({ length: numGroupsInChunk }, () => []);
+                for (let i = 0; i < participantsList.length; i++) {
+                    const round = Math.floor(i / numGroupsInChunk);
+                    const posInRound = i % numGroupsInChunk;
+                    const groupIndex = round % 2 === 0 ? posInRound : numGroupsInChunk - 1 - posInRound;
+                    lists[groupIndex].push(participantsList[i]);
+                }
+                return lists;
+            };
 
             for (const p of sortedParticipants) {
                 const h = getEffectiveHcp(p);
@@ -5397,17 +5424,15 @@ async function generateTournamentGroups(courseId, tournamentId, options = {}) {
 
             for (const bandParticipants of bandOrder) {
                 if (bandParticipants.length === 0) continue;
-                const numGroupsInBand = Math.ceil(bandParticipants.length / groupSize) || 1;
-                const groupListsBand = Array.from({ length: numGroupsInBand }, () => []);
-
-                for (let i = 0; i < bandParticipants.length; i++) {
-                    const round = Math.floor(i / numGroupsInBand);
-                    const posInRound = i % numGroupsInBand;
-                    const groupIndex = round % 2 === 0 ? posInRound : numGroupsInBand - 1 - posInRound;
-                    groupListsBand[groupIndex].push(bandParticipants[i]);
-                }
+                // Dentro de cada banda, respetar turnos para no mezclar mañana/tarde.
+                const { morning: morningBand, afternoon: afternoonBand } = splitBySession(bandParticipants);
+                const groupListsBand = [
+                    ...fillSerpentineLists(morningBand),
+                    ...fillSerpentineLists(afternoonBand)
+                ];
 
                 for (const g of groupListsBand) {
+                    if (!g || g.length === 0) continue;
                     for (const participant of g) {
                         await executeQuery(
                             'UPDATE tournament_participants SET group_number = ?, starting_hole = ? WHERE participation_id = ?',
@@ -5425,8 +5450,57 @@ async function generateTournamentGroups(courseId, tournamentId, options = {}) {
             }
         } else {
             if (byHcp) {
-                orderedForGroups = sortedParticipants;
-                console.log('🔄 Regenerating all groups from scratch (HCP spread / serpentina)');
+                console.log('🔄 Regenerating all groups from scratch (HCP spread / serpentina, respetando turno)');
+                const preferredSession = (tournament?.preferred_session === 'afternoon') ? 'afternoon' : 'morning';
+                const morningPlayers = sortedParticipants.filter((p) => String(p.tee_time_preference || '').toLowerCase() === 'morning');
+                const afternoonPlayers = sortedParticipants.filter((p) => String(p.tee_time_preference || '').toLowerCase() === 'afternoon');
+                const unspecifiedPlayers = sortedParticipants.filter((p) => {
+                    const pref = String(p.tee_time_preference || '').toLowerCase();
+                    return pref !== 'morning' && pref !== 'afternoon';
+                });
+
+                // Sin preferencia explícita: asignar al turno preferido del torneo para no mezclar por accidente.
+                if (preferredSession === 'afternoon') {
+                    afternoonPlayers.push(...unspecifiedPlayers);
+                } else {
+                    morningPlayers.push(...unspecifiedPlayers);
+                }
+
+                const fillSerpentine = (playersList, accGroups) => {
+                    if (!playersList.length) return;
+                    const groupSizeLocal = groupSize || 4;
+                    const groupsNeeded = Math.ceil(playersList.length / groupSizeLocal) || 1;
+                    const local = Array.from({ length: groupsNeeded }, () => []);
+                    for (let i = 0; i < playersList.length; i++) {
+                        const round = Math.floor(i / groupsNeeded);
+                        const posInRound = i % groupsNeeded;
+                        const groupIndex = round % 2 === 0 ? posInRound : groupsNeeded - 1 - posInRound;
+                        local[groupIndex].push(playersList[i]);
+                    }
+                    accGroups.push(...local);
+                };
+
+                // Mantener bloques por turno: primero mañana, luego tarde.
+                const groupedBySession = [];
+                fillSerpentine(morningPlayers, groupedBySession);
+                fillSerpentine(afternoonPlayers, groupedBySession);
+
+                let nextGroupNumber = 1;
+                for (const groupParticipants of groupedBySession) {
+                    for (const participant of groupParticipants) {
+                        await executeQuery(
+                            'UPDATE tournament_participants SET group_number = ?, starting_hole = ? WHERE participation_id = ?',
+                            [nextGroupNumber, startingHole, participant.participation_id]
+                        );
+                    }
+                    groups.push({
+                        group_number: nextGroupNumber,
+                        participants: groupParticipants,
+                        tee_time: null,
+                        starting_hole: startingHole
+                    });
+                    nextGroupNumber++;
+                }
             } else {
                 orderedForGroups = [...participants].sort((a, b) => {
                     const da = a.registration_date ? new Date(a.registration_date).getTime() : 0;
@@ -5437,39 +5511,30 @@ async function generateTournamentGroups(courseId, tournamentId, options = {}) {
                 console.log('🔄 Regenerating all groups from scratch (by registration order)');
             }
 
-            const numGroups = Math.ceil(orderedForGroups.length / groupSize) || 1;
-            const groupLists = Array.from({ length: numGroups }, () => []);
-
-            if (byHcp) {
-                for (let i = 0; i < orderedForGroups.length; i++) {
-                    const round = Math.floor(i / numGroups);
-                    const posInRound = i % numGroups;
-                    const groupIndex = round % 2 === 0 ? posInRound : numGroups - 1 - posInRound;
-                    groupLists[groupIndex].push(orderedForGroups[i]);
-                }
-            } else {
+            if (!byHcp) {
+                const numGroups = Math.ceil(orderedForGroups.length / groupSize) || 1;
+                const groupLists = Array.from({ length: numGroups }, () => []);
                 for (let i = 0; i < orderedForGroups.length; i += groupSize) {
                     const chunk = orderedForGroups.slice(i, i + groupSize);
                     const g = Math.floor(i / groupSize);
                     if (g < numGroups) groupLists[g].push(...chunk);
                 }
-            }
-
-            for (let g = 0; g < numGroups; g++) {
-                const groupNumber = g + 1;
-                const groupParticipants = groupLists[g];
-                for (const participant of groupParticipants) {
-                    await executeQuery(
-                        'UPDATE tournament_participants SET group_number = ?, starting_hole = ? WHERE participation_id = ?',
-                        [groupNumber, startingHole, participant.participation_id]
-                    );
+                for (let g = 0; g < numGroups; g++) {
+                    const groupNumber = g + 1;
+                    const groupParticipants = groupLists[g];
+                    for (const participant of groupParticipants) {
+                        await executeQuery(
+                            'UPDATE tournament_participants SET group_number = ?, starting_hole = ? WHERE participation_id = ?',
+                            [groupNumber, startingHole, participant.participation_id]
+                        );
+                    }
+                    groups.push({
+                        group_number: groupNumber,
+                        participants: groupParticipants,
+                        tee_time: null,
+                        starting_hole: startingHole
+                    });
                 }
-                groups.push({
-                    group_number: groupNumber,
-                    participants: groupParticipants,
-                    tee_time: null,
-                    starting_hole: startingHole
-                });
             }
         }
 
@@ -6254,6 +6319,43 @@ async function deleteEmptyGroup(tournamentId, groupNumber) {
         return true;
     } catch (error) {
         console.error('❌ Error deleting empty group:', error);
+        throw error;
+    }
+}
+
+// Función para desarmar todos los grupos de un torneo (sin borrar participantes)
+async function clearTournamentGroups(courseId, tournamentId) {
+    console.log(`🧹 Clearing groups for tournament ${tournamentId}`);
+
+    try {
+        await executeQuery(
+            'UPDATE tournament_participants SET group_number = NULL, tee_time = NULL, starting_hole = NULL WHERE tournament_id = ?',
+            [tournamentId]
+        );
+
+        try {
+            await getPool().execute(
+                'DELETE FROM empty_tournament_groups WHERE tournament_id = ?',
+                [tournamentId]
+            );
+        } catch (error) {
+            // Si la tabla no existe en alguna instalación vieja, no bloquear.
+            if (error?.code !== 'ER_NO_SUCH_TABLE') throw error;
+        }
+
+        // Mantener consistencia del indicador de torneo.
+        try {
+            await executeQuery(
+                'UPDATE tournaments SET groups_by_hcp = 0, updated_at = CURRENT_TIMESTAMP WHERE course_id = ? AND tournament_id = ?',
+                [courseId, tournamentId]
+            );
+        } catch (error) {
+            if (error?.code !== 'ER_BAD_FIELD_ERROR') throw error;
+        }
+
+        return { success: true };
+    } catch (error) {
+        console.error('❌ Error clearing tournament groups:', error);
         throw error;
     }
 }
@@ -7526,7 +7628,7 @@ export {
     updateParticipantStatus, updateParticipantPayment, getTournamentStats, searchPlayersForTournament, findDuplicateExternalPlayers, createExternalPlayer, updateExternalPlayer, getExternalPlayers, getExternalPlayersRegistry, deleteExternalPlayer,
     
     // Tournament groups functions
-    getTournamentGroups, generateTournamentGroups, assignTeeTimesToGroups, rebalanceGroupsByHcp, movePlayerToGroup, moveGroupToHole, swapGroupNumbers, createEmptyGroup, deleteEmptyGroup,
+    getTournamentGroups, generateTournamentGroups, assignTeeTimesToGroups, rebalanceGroupsByHcp, movePlayerToGroup, moveGroupToHole, swapGroupNumbers, createEmptyGroup, deleteEmptyGroup, clearTournamentGroups,
     
     // Scorecard functions
     saveScorecard, getScorecardsByTournament, getScorecardByPlayer, updateScorecard, deleteScorecard, getScorecardForPrint,

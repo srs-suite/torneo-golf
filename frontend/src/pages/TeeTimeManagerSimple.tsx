@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Users, GripVertical, User, Plus, Sun, Moon, HelpCircle, X, FileText, FileSpreadsheet } from 'lucide-react'
 import * as XLSX from 'xlsx'
-import { useTournaments, useTournamentGroups, useGenerateGroups, useAssignTeeTimes, useMovePlayerToGroup, useMoveGroupToHole, useSwapGroupNumbers, useCreateEmptyGroup, useDeleteEmptyGroup } from '@/hooks/useTournaments'
+import { useTournaments, useTournamentGroups, useTournamentParticipants, useGenerateGroups, useAssignTeeTimes, useMovePlayerToGroup, useMoveGroupToHole, useSwapGroupNumbers, useCreateEmptyGroup, useDeleteEmptyGroup, useClearTournamentGroups } from '@/hooks/useTournaments'
 import { useUserPermissions } from '@/hooks/useUserPermissions'
+import { toast } from 'react-hot-toast'
 
 interface TeeTimeConfig {
   startTime: string
@@ -44,6 +45,7 @@ export default function TeeTimeManagerSimple() {
   const { data: tournaments } = useTournaments(clubIdNum)
   const tournament = tournaments?.find(t => t.tournament_id === tournamentIdNum)
   const { data: groups, refetch: refetchGroups } = useTournamentGroups(clubIdNum, tournamentIdNum)
+  const { data: tournamentParticipants = [], refetch: refetchParticipants } = useTournamentParticipants(clubIdNum, tournamentIdNum)
 
   // Inicializar config de tee desde el torneo (salidas consecutivas/simultáneas definidas al crear el torneo)
   useEffect(() => {
@@ -66,6 +68,7 @@ export default function TeeTimeManagerSimple() {
   const swapGroupNumbers = useSwapGroupNumbers(clubIdNum, tournamentIdNum)
   const createEmptyGroup = useCreateEmptyGroup(clubIdNum, tournamentIdNum)
   const deleteEmptyGroup = useDeleteEmptyGroup(clubIdNum, tournamentIdNum)
+  const clearTournamentGroups = useClearTournamentGroups(clubIdNum, tournamentIdNum)
   
   // Drag & Drop states
   const [draggedPlayer, setDraggedPlayer] = useState<any>(null)
@@ -76,6 +79,7 @@ export default function TeeTimeManagerSimple() {
   const [showHelpModal, setShowHelpModal] = useState(false)
   // Modal "Reorganizar por HCP" / "Reorganizar por grupos" (un solo paso: generar + asignar tee times + ir a resultado)
   const [showReorganizeModal, setShowReorganizeModal] = useState(false)
+  const [showClearGroupsModal, setShowClearGroupsModal] = useState(false)
   const [reorganizeByHcp, setReorganizeByHcp] = useState(true) // true = por HCP, false = por grupos/inscripción
   
   // Create group modal state
@@ -93,6 +97,34 @@ export default function TeeTimeManagerSimple() {
   const [sessionFilter, setSessionFilter] = useState<'all' | 'morning' | 'afternoon'>('all')
   // Ediciones manuales por grupo (sesión, hora, hoyo)
   const [groupEdits, setGroupEdits] = useState<Record<number, { session: 'morning' | 'afternoon', time: string, hole: number }>>({})
+  const groupsWithParticipantsCount = groups?.filter(g => (g.participants?.length || 0) > 0).length || 0
+  const ungroupedParticipants = useMemo(() => {
+    return (tournamentParticipants as any[]).filter((p: any) => {
+      const status = String(p.status || '').toLowerCase()
+      const active = status === 'registered' || status === 'confirmed'
+      return active && (p.group_number == null || Number(p.group_number) === 0)
+    })
+  }, [tournamentParticipants])
+  const isByHcpMode = (tournament as any)?.groups_by_hcp === 1 || (tournament as any)?.groups_by_hcp === true
+  const [groupBuildMode, setGroupBuildMode] = useState<'manual' | 'hcp' | null>(null)
+  const shouldShowUngroupedList = (groupBuildMode === 'manual') || (groupBuildMode === null && !isByHcpMode)
+  const [selectedUngroupedIds, setSelectedUngroupedIds] = useState<Set<number>>(new Set())
+  const [movingSelected, setMovingSelected] = useState(false)
+  const [selectionNonce, setSelectionNonce] = useState(0)
+
+  // Resetear selección cuando cambia la lista "sin grupo"
+  useEffect(() => {
+    setSelectedUngroupedIds(new Set())
+    setDraggedPlayer(null)
+    setSelectionNonce(n => n + 1)
+  }, [ungroupedParticipants])
+
+  useEffect(() => {
+    if (currentStep === 1) {
+      setSelectedUngroupedIds(new Set())
+      setDraggedPlayer(null)
+    }
+  }, [currentStep])
   
   // Auto refetch groups when generated
   useEffect(() => {
@@ -121,11 +153,12 @@ export default function TeeTimeManagerSimple() {
     }
   }, [groups, currentStep, generateGroups.isSuccess, manualNavigation, isReconfiguring])
 
-  const handleGenerateGroups = () => {
-    // Advertencia si ya hay grupos configurados
-    if (groups && groups.length > 0) {
+  const handleGenerateGroups = (byHcp: boolean) => {
+    setGroupBuildMode(byHcp ? 'hcp' : 'manual')
+    // Advertencia solo si ya hay grupos con participantes
+    if (groupsWithParticipantsCount > 0) {
       const confirmRegenerate = window.confirm(
-        `⚠️ ADVERTENCIA: Ya tienes ${groups.length} grupos configurados.\n\n` +
+        `⚠️ ADVERTENCIA: Ya tienes ${groupsWithParticipantsCount} grupos configurados.\n\n` +
         `Si continúas, se PERDERÁN todas tus modificaciones manuales.\n\n` +
         `¿Estás seguro de que quieres regenerar los grupos?`
       )
@@ -136,13 +169,72 @@ export default function TeeTimeManagerSimple() {
     }
     
     generateGroups.mutate({
-      preserveExistingGroups: false
+      preserveExistingGroups: false,
+      byHcp
     }, {
       onSuccess: () => {
         console.log('✅ Groups generated successfully, moving to step 2')
         setIsReconfiguring(false) // Desactivar modo reconfiguración
         setManualNavigation(false) // Desactivar navegación manual
         setCurrentStep(2)
+      }
+    })
+  }
+
+  const handleManualSetup = async () => {
+    if (!canEditTournaments) return
+    setGroupBuildMode('manual')
+    setSelectedUngroupedIds(new Set())
+    setDraggedPlayer(null)
+    setSelectionNonce(n => n + 1)
+
+    if (groupsWithParticipantsCount > 0) {
+      setCurrentStep(3)
+      return
+    }
+
+    const existingGroups = groups?.length || 0
+    const requiredGroups = Math.max(1, Math.ceil(ungroupedParticipants.length / 4))
+    const groupsToCreate = Math.max(0, requiredGroups - existingGroups)
+
+    try {
+      for (let i = 0; i < groupsToCreate; i++) {
+        // eslint-disable-next-line no-await-in-loop
+        await createEmptyGroup.mutateAsync({ silent: true })
+      }
+      await refetchGroups()
+      await refetchParticipants()
+      setSelectedUngroupedIds(new Set())
+      setManualNavigation(true)
+      setCurrentStep(3)
+      if (groupsToCreate > 0) {
+        toast.success(`Listo: se prepararon ${groupsToCreate} grupos vacíos para armar manualmente.`)
+      }
+    } catch (error) {
+      console.error('❌ Error preparando armado manual:', error)
+      toast.error('No se pudieron preparar los grupos manuales. Intentá nuevamente.')
+    }
+  }
+
+  const handleClearGroups = () => {
+    if (!canEditTournaments) return
+    setShowClearGroupsModal(true)
+  }
+
+  const confirmClearGroups = () => {
+    setSelectedUngroupedIds(new Set())
+    setDraggedPlayer(null)
+    setShowClearGroupsModal(false)
+
+    clearTournamentGroups.mutate(undefined, {
+      onSuccess: async () => {
+        await refetchGroups()
+        await refetchParticipants()
+        setSelectedUngroupedIds(new Set())
+        setCurrentStep(1)
+        setManualNavigation(true)
+        setIsReconfiguring(false)
+        setSelectionNonce(n => n + 1)
       }
     })
   }
@@ -172,6 +264,7 @@ export default function TeeTimeManagerSimple() {
   }
 
   const handleReorganize = (byHcp: boolean) => {
+    setGroupBuildMode(byHcp ? 'hcp' : 'manual')
     setShowReorganizeModal(false)
     generateGroups.mutate(
       { preserveExistingGroups: false, byHcp },
@@ -207,6 +300,87 @@ export default function TeeTimeManagerSimple() {
       }
     )
   }
+
+  const getParticipantId = (participant: any): number =>
+    Number(participant.participation_id ?? participant.participant_id ?? 0)
+
+  const getParticipantSession = (participant: any): 'morning' | 'afternoon' | 'unspecified' => {
+    const raw = String(
+      participant?.tee_time_preference ??
+      participant?.teeTimePreference ??
+      participant?.preferred_session ??
+      ''
+    ).toLowerCase().trim()
+
+    if (raw === 'morning' || raw === 'mañana') return 'morning'
+    if (raw === 'afternoon' || raw === 'tarde') return 'afternoon'
+    return 'unspecified'
+  }
+
+  const toggleUngroupedSelection = (participant: any) => {
+    const participantId = getParticipantId(participant)
+    if (!participantId) return
+
+    setSelectedUngroupedIds(prev => {
+      const next = new Set(prev)
+
+      if (next.has(participantId)) {
+        next.delete(participantId)
+        return next
+      }
+
+      if (next.size >= 4) {
+        toast.error('Podés seleccionar hasta 4 jugadores a la vez.')
+        return next
+      }
+
+      next.add(participantId)
+      return next
+    })
+  }
+
+  const handleMoveSelectedToGroup = async (targetGroupNumber: number, currentPlayersInGroup: number) => {
+    if (selectedUngroupedIds.size === 0) return
+
+    const selectedList = ungroupedParticipants.filter((p: any) => selectedUngroupedIds.has(getParticipantId(p)))
+    if (selectedList.length === 0) return
+
+    if (currentPlayersInGroup + selectedList.length > 4) {
+      toast.error(`No se puede mover: el grupo quedaría con más de 4 jugadores (${currentPlayersInGroup + selectedList.length}).`)
+      return
+    }
+
+    try {
+      setMovingSelected(true)
+      for (const participant of selectedList) {
+        const participationId = getParticipantId(participant)
+        // eslint-disable-next-line no-await-in-loop
+        const response = await fetch(`/api/club/${clubIdNum}/tournaments/${tournamentIdNum}/move-player`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ participationId, newGroupNumber: targetGroupNumber })
+        })
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}))
+          throw new Error(payload?.error || payload?.message || `HTTP ${response.status}`)
+        }
+      }
+      setSelectedUngroupedIds(new Set())
+      setDraggedPlayer(null)
+      await refetchGroups()
+      await refetchParticipants()
+      setSelectionNonce(n => n + 1)
+    } catch (error) {
+      console.error('❌ Error moviendo seleccionados:', error)
+      alert('No se pudieron mover todos los jugadores seleccionados.')
+    } finally {
+      setMovingSelected(false)
+    }
+  }
+
+  const ungroupedMorning = ungroupedParticipants.filter((p: any) => getParticipantSession(p) === 'morning')
+  const ungroupedAfternoon = ungroupedParticipants.filter((p: any) => getParticipantSession(p) === 'afternoon')
+  const ungroupedUnspecified = ungroupedParticipants.filter((p: any) => getParticipantSession(p) === 'unspecified')
 
   const handleMoveGroup = (groupNumber: number, newStartingHole: number, newTeeTime?: string | null) => {
     // Si tenemos hora y grupos, validar y ajustar automáticamente si hay conflicto
@@ -544,45 +718,40 @@ export default function TeeTimeManagerSimple() {
               )}
               {canEditTournaments && (
                 <>
-                  {groups && groups.length > 0 && (
-                    <div style={{
-                      fontSize: '14px',
-                      color: '#92400e',
-                      marginBottom: '16px',
-                      maxWidth: '480px',
-                      marginLeft: 'auto',
-                      marginRight: 'auto',
-                      padding: '12px 16px',
-                      backgroundColor: '#fef3c7',
-                      border: '1px solid #f59e0b',
-                      borderRadius: '8px',
-                      textAlign: 'left'
-                    }}>
-                      <strong>Ya hay grupos configurados</strong> (por ejemplo los que armaron los jugadores por la web). Si decidiste armar por handicap, usá el botón de abajo: se reemplazarán por nuevos grupos ordenados por HCP.
-                    </div>
-                  )}
-                  <p style={{fontSize: '13px', color: '#6b7280', marginBottom: '12px', maxWidth: '420px', marginLeft: 'auto', marginRight: 'auto'}}>
-                    Si los jugadores ya formaron grupos por la inscripción web, podés usar este botón para reorganizar por handicap; el sistema creará nuevos grupos según HCP y podés asignar tee times después.
-                  </p>
-                  <button
-                    onClick={() => {
-                      handleGenerateGroups()
-                      setCurrentStep(2)
-                    }}
-                    style={{
-                      backgroundColor: '#374151',
-                      color: 'white',
-                      padding: '15px 30px',
-                      borderRadius: '8px',
-                      border: 'none',
-                      cursor: 'pointer',
-                      fontSize: '18px',
-                      fontWeight: 'bold'
-                    }}
-                    disabled={generateGroups.isLoading}
-                  >
-                    {generateGroups.isLoading ? 'Generando Grupos...' : 'Generar Grupos y Continuar'}
-                  </button>
+                  <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                    <button
+                      onClick={() => handleGenerateGroups(true)}
+                      style={{
+                        backgroundColor: '#374151',
+                        color: 'white',
+                        padding: '15px 24px',
+                        borderRadius: '8px',
+                        border: 'none',
+                        cursor: 'pointer',
+                        fontSize: '16px',
+                        fontWeight: 'bold'
+                      }}
+                      disabled={generateGroups.isLoading}
+                    >
+                      {generateGroups.isLoading ? 'Generando...' : 'Generar por HCP'}
+                    </button>
+                    <button
+                      onClick={handleManualSetup}
+                      style={{
+                        backgroundColor: 'white',
+                        color: '#111827',
+                        padding: '15px 24px',
+                        borderRadius: '8px',
+                        border: '1px solid #d1d5db',
+                        cursor: 'pointer',
+                        fontSize: '16px',
+                        fontWeight: 'bold'
+                      }}
+                      disabled={generateGroups.isLoading || createEmptyGroup.isLoading}
+                    >
+                      {createEmptyGroup.isLoading ? 'Preparando...' : 'Armar manualmente'}
+                    </button>
+                  </div>
                 </>
               )}
             </div>
@@ -702,6 +871,25 @@ export default function TeeTimeManagerSimple() {
                 )}
               </div>
               <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
+                {canEditTournaments && groupsWithParticipantsCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleClearGroups}
+                    style={{
+                      padding: '8px 14px',
+                      backgroundColor: '#dc2626',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                      fontWeight: '500'
+                    }}
+                    disabled={clearTournamentGroups.isLoading}
+                  >
+                    {clearTournamentGroups.isLoading ? 'Desarmando...' : 'Desarmar grupos'}
+                  </button>
+                )}
                 {canEditTournaments && (
                   <button
                     type="button"
@@ -867,6 +1055,113 @@ export default function TeeTimeManagerSimple() {
               </div>
             )}
             
+            {shouldShowUngroupedList && ungroupedParticipants.length > 0 && (
+              <div style={{
+                width: '100%',
+                boxSizing: 'border-box',
+                backgroundColor: '#fff7ed',
+                border: '1px solid #fdba74',
+                borderRadius: '8px',
+                padding: '16px',
+                marginBottom: '20px'
+              }}>
+                <h3 style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '10px', color: '#9a3412' }}>
+                  Jugadores sin grupo ({ungroupedParticipants.length})
+                </h3>
+                <p style={{ fontSize: '13px', color: '#7c2d12', marginBottom: '10px' }}>
+                  Arrastralos o marcá hasta 4 con el checkbox y luego movelos juntos al grupo destino.
+                </p>
+                {selectedUngroupedIds.size > 0 && (
+                  <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '12px', color: '#7c2d12' }}>
+                      Seleccionados: {selectedUngroupedIds.size}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedUngroupedIds(new Set())}
+                      style={{
+                        padding: '4px 8px',
+                        fontSize: '12px',
+                        border: '1px solid #fdba74',
+                        borderRadius: '6px',
+                        backgroundColor: 'white',
+                        color: '#9a3412',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Limpiar selección
+                    </button>
+                  </div>
+                )}
+                {[
+                  { key: 'morning', label: 'Turno Mañana', icon: <Sun size={14} />, list: ungroupedMorning },
+                  { key: 'afternoon', label: 'Turno Tarde', icon: <Moon size={14} />, list: ungroupedAfternoon },
+                  { key: 'unspecified', label: 'Sin definir', icon: <Users size={14} />, list: ungroupedUnspecified }
+                ].map(section => (
+                  <div key={section.key} style={{ marginBottom: '10px' }}>
+                    <div style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '4px 8px',
+                      borderRadius: '999px',
+                      backgroundColor: '#ffedd5',
+                      border: '1px solid #fed7aa',
+                      color: '#9a3412',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      marginBottom: '8px'
+                    }}>
+                      {section.icon}
+                      {section.label} ({section.list.length})
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                      {section.list.map((participant: any) => (
+                        <div
+                          key={`${selectionNonce}-${participant.participation_id || participant.participant_id}`}
+                          draggable
+                          onDragStart={(e) => {
+                            setDraggedPlayer({
+                              participation_id: participant.participation_id || participant.participant_id,
+                              player_name: participant.player_name,
+                              group_number: null
+                            })
+                            e.dataTransfer.effectAllowed = 'move'
+                          }}
+                          onDragEnd={() => {
+                            setDraggedPlayer(null)
+                          }}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            backgroundColor: selectedUngroupedIds.has(getParticipantId(participant)) ? '#ffedd5' : 'white',
+                            border: selectedUngroupedIds.has(getParticipantId(participant)) ? '1px solid #f97316' : '1px solid #fed7aa',
+                            borderRadius: '6px',
+                            padding: '8px 10px',
+                            cursor: 'move',
+                            fontSize: '13px'
+                          }}
+                          title="Click para seleccionar o desmarcar (hasta 4)."
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedUngroupedIds.has(getParticipantId(participant))}
+                            onChange={() => toggleUngroupedSelection(participant)}
+                            onClick={(e) => e.stopPropagation()}
+                            style={{ cursor: 'pointer' }}
+                          />
+                          <GripVertical size={12} style={{ color: '#9ca3af' }} />
+                          <User size={12} style={{ color: '#6b7280' }} />
+                          <span style={{ fontWeight: 500 }}>{participant.player_name}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {getFilteredGroups().map((group) => (
               <div 
                 key={group.group_number} 
@@ -909,9 +1204,17 @@ export default function TeeTimeManagerSimple() {
                   setDragOverGroup(null)
                   
                   if (draggedPlayer) {
+                    // Si se arrastra desde "sin grupo" y hay selección activa,
+                    // mover toda la selección en bloque.
+                    const fromUngrouped = draggedPlayer.group_number == null
+                    const currentPlayerCount = group.participants?.length || 0
+                    if (fromUngrouped && selectedUngroupedIds.size > 0) {
+                      handleMoveSelectedToGroup(group.group_number, currentPlayerCount)
+                      return
+                    }
+
                     if (draggedPlayer.group_number !== group.group_number) {
                       // Validar que el grupo destino no tenga más de 4 jugadores
-                      const currentPlayerCount = group.participants?.length || 0
                       if (currentPlayerCount >= 4) {
                         alert('No se puede mover el jugador: el grupo ya tiene 4 jugadores (máximo permitido)')
                         return
@@ -990,6 +1293,25 @@ export default function TeeTimeManagerSimple() {
                         <Users size={16} style={{marginRight: '5px', color: '#6b7280'}} />
                         <span>{group.participants?.length || 0} jugadores</span>
                       </div>
+                      {selectedUngroupedIds.size > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => handleMoveSelectedToGroup(group.group_number, group.participants?.length || 0)}
+                          disabled={movingSelected}
+                          style={{
+                            padding: '6px 10px',
+                            fontSize: '12px',
+                            border: '1px solid #d1d5db',
+                            borderRadius: '6px',
+                            background: movingSelected ? '#f3f4f6' : 'white',
+                            color: '#111827',
+                            cursor: movingSelected ? 'not-allowed' : 'pointer'
+                          }}
+                          title="Mover selección actual a este grupo"
+                        >
+                          {movingSelected ? 'Moviendo...' : `Mover ${selectedUngroupedIds.size} aquí`}
+                        </button>
+                      )}
                     </div>
 
                     {/* Resumen Turno / Hora / Hoyo + Editar (abre modal) */}
@@ -1645,6 +1967,78 @@ export default function TeeTimeManagerSimple() {
                 }}
               >
                 {generateGroups.isLoading ? 'Reorganizando...' : 'Reorganizar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Confirmar desarmar grupos (mismo estilo del sistema) */}
+      {showClearGroupsModal && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1001
+          }}
+          onClick={() => setShowClearGroupsModal(false)}
+        >
+          <div
+            style={{
+              backgroundColor: 'white',
+              borderRadius: '8px',
+              padding: '24px',
+              maxWidth: '430px',
+              width: '90%',
+              boxShadow: '0 10px 25px rgba(0, 0, 0, 0.15)'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '12px', color: '#111827' }}>
+              Desarmar grupos
+            </h3>
+            <p style={{ fontSize: '14px', color: '#4b5563', marginBottom: '20px', lineHeight: 1.5 }}>
+              Se eliminarán asignaciones de grupo, horario y hoyo. Los participantes no se borran.
+            </p>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => setShowClearGroupsModal(false)}
+                style={{
+                  padding: '10px 18px',
+                  backgroundColor: '#f3f4f6',
+                  color: '#374151',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '14px'
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmClearGroups}
+                disabled={clearTournamentGroups.isLoading}
+                style={{
+                  padding: '10px 18px',
+                  backgroundColor: '#dc2626',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: clearTournamentGroups.isLoading ? 'not-allowed' : 'pointer',
+                  fontSize: '14px',
+                  fontWeight: '600'
+                }}
+              >
+                {clearTournamentGroups.isLoading ? 'Desarmando...' : 'Desarmar'}
               </button>
             </div>
           </div>

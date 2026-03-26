@@ -166,7 +166,7 @@ export const tournamentService = {
     return response.data
   },
 
-  async createEmptyGroup(clubId: number, tournamentId: number, config?: { hole: number; time: string | null }): Promise<TournamentGroup> {
+  async createEmptyGroup(clubId: number, tournamentId: number, config?: { hole?: number; time?: string | null; silent?: boolean }): Promise<TournamentGroup> {
     console.log(`🏆 API: POST /club/${clubId}/tournaments/${tournamentId}/create-empty-group`, config)
     const response = await api.post(`/club/${clubId}/tournaments/${tournamentId}/create-empty-group`, config || {})
     console.log('🏆 Empty group created response:', response.data)
@@ -179,6 +179,12 @@ export const tournamentService = {
       data: { groupNumber }
     })
     console.log('🏆 Empty group deleted response:', response.data)
+  },
+
+  async clearGroups(clubId: number, tournamentId: number): Promise<void> {
+    console.log(`🏆 API: POST /club/${clubId}/tournaments/${tournamentId}/clear-groups`)
+    const response = await api.post(`/club/${clubId}/tournaments/${tournamentId}/clear-groups`)
+    console.log('🏆 Groups cleared response:', response.data)
   },
 
   // Obtener grupos del torneo

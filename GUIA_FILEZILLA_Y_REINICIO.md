@@ -1,5 +1,20 @@
 # Guía: subir cambios con FileZilla y reiniciar el VPS
 
+## Para no perderse (leer primero)
+
+En **FileZilla** el servidor te muestra **`/torneogolf-source`** con `frontend` y `backend` → **es correcto**, igual que en tu PC. Ahí subís el **código** (`frontend/src/...`, `backend/src/...`).
+
+**Por qué a veces “no se ve” en la web:** el navegador **no** usa los `.tsx`; usa los archivos del **build** (`index.html` + `assets/`). Ese build vive en `frontend/dist` y además hay que **copiarlo** a la carpeta que Nginx muestra al público (en el servidor es otra ruta; vos no tenés que verla en FileZilla).
+
+**Rutina siempre igual (esquema A):**
+
+1. **FileZilla:** subís lo que cambió a `/torneogolf-source/...` (misma estructura que en la PC).
+2. **SSH:** `cd /home/retailso/torneogolf-source/frontend` → `npm run build` → copiar `dist` al sitio web con `/bin/cp` (abajo está el comando). Si el `build` en el VPS falla o sale raro, en la PC hacés `npm run build` y subís **solo** el contenido de `frontend/dist` a `/torneogolf-source/frontend/dist`, y después el mismo `/bin/cp`.
+
+No hace falta que exista la carpeta `torneogolf.retailsolutionstimetracker.com` en FileZilla: el paso `cp` en SSH la usa por vos.
+
+---
+
 ## GitHub (ya hecho)
 
 El último push fue a: **origin** → `https://github.com/srs-suite/torneo-golf.git` (rama `main`).
@@ -59,12 +74,14 @@ Conectate por SSH y ejecutá según el esquema que uses.
 ```bash
 # 1) Build del frontend
 cd /home/retailso/torneogolf-source/frontend
+rm -rf dist node_modules/.vite
 npm run build
 
-# 2) Copiar build a la carpeta que sirve Nginx
-cp -r dist/* /home/retailso/torneogolf.retailsolutionstimetracker.com/
+# 2) Copiar build a la carpeta que sirve Nginx (/bin/cp evita el alias interactivo de cp)
+/bin/cp -f dist/index.html /home/retailso/torneogolf.retailsolutionstimetracker.com/
+/bin/cp -f dist/assets/* /home/retailso/torneogolf.retailsolutionstimetracker.com/assets/
 
-# 3) Reiniciar solo el backend (no tocar otros sistemas)
+# 3) Reiniciar solo el backend si tocaste backend (no tocar otros sistemas)
 pm2 restart teetracker-backend
 ```
 
