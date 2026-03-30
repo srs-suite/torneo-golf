@@ -13,7 +13,9 @@ import {
   Users,
   Download,
   DollarSign,
-  MessageCircle
+  MessageCircle,
+  Link2,
+  QrCode
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { SearchInput } from './SearchInput'
@@ -23,8 +25,9 @@ import { LoadingSpinner } from '@/components/LoadingSpinner'
 import { useParticipants, useAddParticipant, useRemoveParticipant, useUpdateParticipantHandicap, useUpdateParticipantTeePreference, useSearchPlayers, useExternalPlayers, useDeleteExternalPlayer } from '@/hooks/useParticipants'
 import { calculateHCPFromIndexDefault } from '@/utils/teeSelection'
 import { formatHcpForDisplay } from '@/utils/scoreUtils'
+import { getPublicAppOrigin } from '@/utils/publicAppOrigin'
 import { useTournamentGroups } from '@/hooks/useTournaments'
-import { getParticipantWhatsAppInscriptionUrl } from '@/services/participantService'
+import { generateMobilePaymentsPin, getParticipantWhatsAppInscriptionUrl } from '@/services/participantService'
 import { CreateExternalPlayerModal } from '@/components/CreateExternalPlayerModal'
 import { PaymentModal } from '@/components/PaymentModal'
 import { toast } from 'react-hot-toast'
@@ -105,6 +108,9 @@ export function TournamentParticipantsModal({
   // const createExternalPlayer = useCreateExternalPlayer(clubId)
 
   const [paymentEditing, setPaymentEditing] = useState<Participant | null>(null)
+  const [showMobileAccessModal, setShowMobileAccessModal] = useState(false)
+  const [mobilePaymentsPin, setMobilePaymentsPin] = useState('')
+  const [mobileAccessLoading, setMobileAccessLoading] = useState(false)
   const [addToGroupNumber, setAddToGroupNumber] = useState<number | ''>('')
   const [preferredSessionForAdd, setPreferredSessionForAdd] = useState<'morning' | 'afternoon'>('morning')
   const [editingIndexParticipantId, setEditingIndexParticipantId] = useState<number | null>(null)
@@ -278,7 +284,7 @@ export function TournamentParticipantsModal({
       'N°': index + 1,
       'Nombre y Apellido': participant.player_name,
       'Matrícula': participant.member_number || '',
-      'Index': participant.handicap_index || '',
+      'Index': participant.handicap_index != null ? participant.handicap_index : '',
       'HCP': formatHcpForDisplay(participant.handicap_local ?? (participant as any).handicap_index, (participant as any).handicap_index),
       'Club': participant.player_club || '',
       'Tipo': participant.player_type === 'member' ? 'Socio' : 'Externo',
@@ -362,6 +368,127 @@ export function TournamentParticipantsModal({
     window.open(url, '_blank')
     toast.success('Se abrió WhatsApp con el listado. Elegí el chat o grupo y enviá.')
   }
+
+  const publicAppOrigin = getPublicAppOrigin()
+  const mobilePaymentsFixedUrl =
+    publicAppOrigin && clubId && tournament.tournament_id
+      ? `${publicAppOrigin}/c/${clubId}/t/${tournament.tournament_id}/cobro?reiniciar=1`
+      : ''
+
+  const openMobilePaymentsModal = () => {
+    setShowMobileAccessModal(true)
+  }
+
+  useEffect(() => {
+    if (!showMobileAccessModal) return
+    let cancelled = false
+    setMobileAccessLoading(true)
+    setMobilePaymentsPin('')
+    ;(async () => {
+      try {
+        const { pin } = await generateMobilePaymentsPin(clubId, tournament.tournament_id)
+        if (!cancelled) setMobilePaymentsPin(pin)
+      } catch (error) {
+        console.error('Error creating mobile payments access:', error)
+        if (!cancelled) {
+          toast.error('No se pudo generar el código (¿iniciaste sesión como admin?)')
+          setShowMobileAccessModal(false)
+        }
+      } finally {
+        if (!cancelled) setMobileAccessLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [showMobileAccessModal, clubId, tournament.tournament_id])
+
+  const handleRegenerateMobilePaymentsPin = async () => {
+    try {
+      setMobileAccessLoading(true)
+      const { pin } = await generateMobilePaymentsPin(clubId, tournament.tournament_id)
+      setMobilePaymentsPin(pin)
+      toast.success('Código nuevo generado')
+    } catch (error) {
+      console.error('Error regenerating pin:', error)
+      toast.error('No se pudo regenerar el código')
+    } finally {
+      setMobileAccessLoading(false)
+    }
+  }
+
+  const handleCopyMobilePaymentsLink = async () => {
+    if (!mobilePaymentsFixedUrl) return
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(mobilePaymentsFixedUrl)
+      } else {
+        const textarea = document.createElement('textarea')
+        textarea.value = mobilePaymentsFixedUrl
+        textarea.style.position = 'fixed'
+        textarea.style.left = '-9999px'
+        document.body.appendChild(textarea)
+        textarea.focus()
+        textarea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textarea)
+      }
+      toast.success('Link de cobros copiado')
+    } catch (error) {
+      console.error('Error copying mobile payments link:', error)
+      toast.error('No se pudo copiar el link')
+    }
+  }
+
+  const handleCopyMobilePaymentsPin = async () => {
+    if (!mobilePaymentsPin) return
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(mobilePaymentsPin)
+      } else {
+        const textarea = document.createElement('textarea')
+        textarea.value = mobilePaymentsPin
+        textarea.style.position = 'fixed'
+        textarea.style.left = '-9999px'
+        document.body.appendChild(textarea)
+        textarea.focus()
+        textarea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textarea)
+      }
+      toast.success('Código copiado')
+    } catch (error) {
+      console.error('Error copying pin:', error)
+      toast.error('No se pudo copiar el código')
+    }
+  }
+
+  const [mobilePaymentsQrDataUrl, setMobilePaymentsQrDataUrl] = useState('')
+
+  useEffect(() => {
+    if (!showMobileAccessModal || !mobilePaymentsFixedUrl) {
+      setMobilePaymentsQrDataUrl('')
+      return
+    }
+    let cancelled = false
+    import('qrcode')
+      .then((QR) =>
+        QR.default.toDataURL(mobilePaymentsFixedUrl, {
+          width: 320,
+          margin: 3,
+          errorCorrectionLevel: 'H'
+        })
+      )
+      .then((dataUrl) => {
+        if (!cancelled) setMobilePaymentsQrDataUrl(dataUrl)
+      })
+      .catch(() => {
+        if (!cancelled) setMobilePaymentsQrDataUrl('')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [showMobileAccessModal, mobilePaymentsFixedUrl])
 
   const handleToggleSelectMember = (memberId: number) => {
     const newSelected = new Set(selectedMembers)
@@ -723,6 +850,14 @@ export function TournamentParticipantsModal({
               {participants.length > 0 && (
                 <>
                   <button
+                    onClick={openMobilePaymentsModal}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-100 text-indigo-800 rounded-lg hover:bg-indigo-200 text-sm border border-indigo-200"
+                    title="Link fijo + QR; generá un código de seguridad para quien cobra en el teléfono"
+                  >
+                    <Link2 className="w-4 h-4" />
+                    <span>{mobileAccessLoading ? 'Generando...' : 'Acceso cobros'}</span>
+                  </button>
+                  <button
                     onClick={handleSendListByWhatsApp}
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
                     title="Enviar listado de inscriptos por WhatsApp (al grupo o contacto que elijas)"
@@ -995,7 +1130,7 @@ export function TournamentParticipantsModal({
                           </div>
                           <div className="text-sm text-gray-500">
                             {member.member_number && `N°: ${member.member_number} • `}
-                            Index: {member.handicap_index !== null && member.handicap_index !== undefined && member.handicap_index !== 0 ? member.handicap_index : 'N/A'}
+                            Index: {member.handicap_index != null ? member.handicap_index : 'N/A'}
                             {' '}• HCP: {formatHcpForDisplay(member.handicap_local, (member as any).handicap_index)}
                           </div>
                         </div>
@@ -1163,7 +1298,7 @@ export function TournamentParticipantsModal({
                           </div>
                           <div className="text-sm text-gray-500">
                             {player.member_number && `N°: ${player.member_number} • `}
-                            Index: {player.handicap_index !== null && player.handicap_index !== undefined && player.handicap_index !== 0 ? player.handicap_index : 'N/A'}
+                            Index: {player.handicap_index != null ? player.handicap_index : 'N/A'}
                             {' '}• HCP: {formatHcpForDisplay(player.handicap_local, (player as any).handicap_index)}
                           </div>
                           <div className="text-xs text-gray-400">
@@ -1474,6 +1609,79 @@ export function TournamentParticipantsModal({
           }}
           clubId={clubId}
         />
+      )}
+
+      {showMobileAccessModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setShowMobileAccessModal(false)} />
+          <div className="relative w-full max-w-md bg-white rounded-lg shadow-xl overflow-hidden">
+            <div className="px-4 py-3 bg-gray-900 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <QrCode className="w-5 h-5" />
+                <h3 className="font-semibold">Cobros en teléfono</h3>
+              </div>
+              <button onClick={() => setShowMobileAccessModal(false)} className="p-1 rounded hover:bg-white/10">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <p className="text-xs text-gray-600">
+                El mismo QR y link sirven siempre. Quien escanee debe ingresar el código de seguridad que generás acá (cada vez que pulsás Regenerar, el código cambia).
+              </p>
+              <div className="text-center py-2 min-h-[4.5rem] flex flex-col items-center justify-center">
+                <p className="text-xs text-gray-500 mb-1">Código de seguridad</p>
+                {mobileAccessLoading && !mobilePaymentsPin ? (
+                  <p className="text-sm text-gray-600">Generando código…</p>
+                ) : (
+                  <p className="text-3xl font-mono font-bold tracking-widest text-gray-900">{mobilePaymentsPin || '—'}</p>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleCopyMobilePaymentsPin}
+                  disabled={!mobilePaymentsPin || mobileAccessLoading}
+                  className="flex-1 px-3 py-2 rounded-lg bg-gray-900 text-white text-sm hover:bg-gray-800 disabled:opacity-50"
+                >
+                  Copiar código
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRegenerateMobilePaymentsPin}
+                  disabled={mobileAccessLoading}
+                  className="px-3 py-2 rounded-lg border text-sm hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Regenerar código
+                </button>
+              </div>
+              <input
+                value={mobilePaymentsFixedUrl}
+                readOnly
+                title={mobilePaymentsFixedUrl}
+                className="w-full px-3 py-2 border rounded-lg text-xs bg-gray-50 break-all"
+              />
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleCopyMobilePaymentsLink}
+                  className="flex-1 px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700"
+                >
+                  Copiar link
+                </button>
+              </div>
+              {mobilePaymentsQrDataUrl && (
+                <div className="pt-2 border-t">
+                  <img
+                    src={mobilePaymentsQrDataUrl}
+                    alt="QR acceso cobros"
+                    className="mx-auto w-56 h-56 border rounded-md"
+                  />
+                  <p className="text-[11px] text-center text-gray-500 mt-2">Imprimí o mostrá este QR; el código lo das aparte.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
       
       {/* Modal de Cobro */}

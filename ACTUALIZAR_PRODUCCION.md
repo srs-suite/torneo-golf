@@ -114,6 +114,32 @@ cp -r /home/retailso/torneogolf-source/frontend/dist/* /home/retailso/torneogolf
 grep -l "updateParticipantTeePreference" /home/retailso/torneogolf-source/backend/src/server.js 2>/dev/null && echo "OK: server.js actualizado" || echo "FALTA: subí backend/src/server.js"
 ```
 
+**4b. Rankings / `database.js` (crear torneo con flag de ranking)**
+
+```bash
+grep -l "postInsertBaseParams" /home/retailso/torneogolf-source/backend/src/services/database.js 2>/dev/null && echo "OK: database.js con fix createTournament+ranking" || echo "FALTA: subí backend/src/services/database.js"
+```
+
+**4c. ¿PM2 está ejecutando el código de `torneogolf-source`?**
+
+```bash
+pm2 show teetracker-backend | egrep "script path|exec cwd"
+```
+
+El `script path` debería apuntar a algo como `/home/retailso/torneogolf-source/backend/src/server.js` y el cwd al proyecto `torneogolf-source`, no a otra copia del repo.
+
+**4d. Probar la API de rankings (debe ser JSON con `success`, no 404)**
+
+Sustituí `CLUB_ID` y el año; el puerto suele ser el del backend (ej. 8000 si probás por SSH con curl al localhost):
+
+```bash
+curl -sS -o /tmp/rank.json -w "%{http_code}" "http://127.0.0.1:8000/api/club/CLUB_ID/rankings/annual/2026"
+echo
+head -c 400 /tmp/rank.json; echo
+```
+
+Si el código HTTP no es `200`, el front **no puede** mostrar tablas aunque subas bien el frontend: revisá `server.js` y reiniciá PM2.
+
 Si salió "FALTA", subí los archivos del backend por FileZilla y luego:
 
 ```bash

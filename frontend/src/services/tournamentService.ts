@@ -76,12 +76,17 @@ export const tournamentService = {
     return response.data.data || response.data
   },
 
-  // Obtener participantes del torneo
+  // Obtener participantes del torneo (misma forma que participantService: participant_id = participation_id para cruzar datos en tee times / impresión)
   async getTournamentParticipants(clubId: number, tournamentId: number): Promise<TournamentParticipant[]> {
     console.log(`🏆 API: GET /club/${clubId}/tournaments/${tournamentId}/participants`)
     const response = await api.get(`/club/${clubId}/tournaments/${tournamentId}/participants`)
     console.log('🏆 Tournament participants response:', response.data)
-    return response.data.data || response.data
+    const raw = response.data.data || response.data
+    const list = Array.isArray(raw) ? raw : []
+    return list.map((p: Record<string, unknown> & { participation_id?: number; participant_id?: number }) => ({
+      ...p,
+      participant_id: p.participation_id ?? p.participant_id,
+    })) as TournamentParticipant[]
   },
 
   // Agregar participante al torneo
@@ -145,12 +150,20 @@ export const tournamentService = {
     return response.data
   },
 
-  async moveGroupToHole(clubId: number, tournamentId: number, groupNumber: number, newStartingHole: number, newTeeTime?: string): Promise<void> {
+  async moveGroupToHole(
+    clubId: number,
+    tournamentId: number,
+    groupNumber: number,
+    newStartingHole: number,
+    newTeeTime?: string,
+    preferredSession?: 'morning' | 'afternoon' | null
+  ): Promise<void> {
     console.log(`🏆 API: POST /club/${clubId}/tournaments/${tournamentId}/move-group`)
     const response = await api.post(`/club/${clubId}/tournaments/${tournamentId}/move-group`, {
       groupNumber,
       newStartingHole,
-      newTeeTime
+      newTeeTime,
+      ...(preferredSession === 'morning' || preferredSession === 'afternoon' ? { preferredSession } : {})
     })
     console.log('🏆 Group moved response:', response.data)
     return response.data
@@ -233,6 +246,26 @@ export const tournamentService = {
     console.log(`🏆 API: GET /club/${clubId}/rankings/annual/${year}`)
     const response = await api.get(`/club/${clubId}/rankings/annual/${year}`)
     console.log('🏆 Annual rankings response:', response.data)
+    return response.data.data || response.data
+  },
+
+  /** Torneos del año marcados «Contabilizar para el ranking» (candidatos a incluir en el acumulado). */
+  async getAnnualRankingCandidates(clubId: number, year: number): Promise<any[]> {
+    const response = await api.get(`/club/${clubId}/rankings/annual/${year}/candidates`)
+    return response.data.data || response.data || []
+  },
+
+  /** Estado guardado de qué torneos cuentan (vacío = provisorio: todos los candidatos). */
+  async getAnnualRankingSelection(clubId: number, year: number): Promise<{ uses_explicit_selection: boolean; tournament_ids: number[] }> {
+    const response = await api.get(`/club/${clubId}/rankings/annual/${year}/selection`)
+    return response.data.data || response.data
+  },
+
+  /** Guarda la lista de torneos que conforman el acumulado del año. [] = volver a modo provisorio. */
+  async putAnnualRankingSelection(clubId: number, year: number, tournamentIds: number[]): Promise<any> {
+    const response = await api.put(`/club/${clubId}/rankings/annual/${year}/selection`, {
+      tournament_ids: tournamentIds,
+    })
     return response.data.data || response.data
   },
 

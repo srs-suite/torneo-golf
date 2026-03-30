@@ -958,10 +958,14 @@ export function ExcelImportModal({ isOpen, onClose, clubId, onImportSuccess }: E
                           </td>
                           <td className="px-3 py-2 text-sm text-gray-900">{member.member_number || '-'}</td>
                           <td className="px-3 py-2 text-sm text-gray-900">
-                            {member.handicap_index ? (member.handicap_index % 1 === 0 ? member.handicap_index : member.handicap_index.toFixed(1)) : '-'}
+                            {member.handicap_index != null
+                              ? member.handicap_index % 1 === 0
+                                ? member.handicap_index
+                                : member.handicap_index.toFixed(1)
+                              : '-'}
                           </td>
                           <td className="px-3 py-2 text-sm text-gray-900">
-                            {member.handicap_local || '-'}
+                            {member.handicap_local != null ? member.handicap_local : '-'}
                           </td>
                           <td className="px-3 py-2 text-sm text-gray-900">{member.email || '-'}</td>
                           <td className="px-3 py-2 text-sm text-gray-900">{member.phone || '-'}</td>

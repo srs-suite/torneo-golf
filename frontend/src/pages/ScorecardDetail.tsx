@@ -175,7 +175,7 @@ export default function ScorecardDetail() {
               <div>
                 <p className="text-sm text-gray-600">Index: 
                   <span className="font-semibold text-gray-900 ml-1">
-                    {scorecard.handicap_index || 'N/A'}
+                    {scorecard.handicap_index != null ? scorecard.handicap_index : 'N/A'}
                   </span>
                 </p>
                 <p className="text-sm text-gray-600">HCP: 

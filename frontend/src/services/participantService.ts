@@ -110,6 +110,39 @@ export const updateParticipantPayment = async (
 ): Promise<void> => {
   await axios.put(`${API_URL}/${clubId}/tournaments/${tournamentId}/participants/${participantId}/payment`, paymentData);
 };
+
+/** Genera código PIN para cobros móvil (requiere sesión admin: Bearer clubToken) */
+export const generateMobilePaymentsPin = async (
+  clubId: number,
+  tournamentId: number
+): Promise<{ pin: string; expiresInSeconds: number }> => {
+  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('clubToken') : null;
+  const response = await axios.post(
+    `${API_URL}/${clubId}/tournaments/${tournamentId}/mobile-payments-pin`,
+    {},
+    { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+  );
+  return {
+    pin: response.data.pin,
+    expiresInSeconds: response.data.expiresInSeconds
+  };
+};
+
+/** Intercambia PIN por sesión de cobros móvil (público, sin login admin) */
+export const verifyMobilePaymentsPin = async (
+  clubId: number,
+  tournamentId: number,
+  pin: string
+): Promise<{ sessionToken: string; expiresInSeconds: number }> => {
+  const response = await axios.post(
+    `${API_URL}/${clubId}/tournaments/${tournamentId}/mobile-payments-pin/verify`,
+    { pin }
+  );
+  return {
+    sessionToken: response.data.sessionToken,
+    expiresInSeconds: response.data.expiresInSeconds
+  };
+};
 export const searchPlayersForTournament = async (clubId: number, query: string): Promise<PlayerSearchResult[]> => {
   if (!query || query.length < 2) {
     return [];

@@ -5,6 +5,141 @@ import * as XLSX from 'xlsx'
 import { useTournaments, useTournamentGroups, useTournamentParticipants, useGenerateGroups, useAssignTeeTimes, useMovePlayerToGroup, useMoveGroupToHole, useSwapGroupNumbers, useCreateEmptyGroup, useDeleteEmptyGroup, useClearTournamentGroups } from '@/hooks/useTournaments'
 import { useUserPermissions } from '@/hooks/useUserPermissions'
 import { toast } from 'react-hot-toast'
+import { formatHcpForDisplay } from '@/utils/scoreUtils'
+
+function toPositiveDbId(v: unknown): number | undefined {
+  if (v === null || v === undefined || v === '') return undefined
+  const n = Number(v)
+  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : undefined
+}
+
+/** 0 es válido; ignora '', 'N/A', null, NaN para poder usar índice o local. */
+function parseHandicapNumeric(v: unknown): number | undefined {
+  if (v === null || v === undefined) return undefined
+  if (typeof v === 'string') {
+    const t = v.trim().replace(/\u2212/g, '-').replace(/\u2013/g, '-')
+    if (t === '' || t.toUpperCase() === 'N/A') return undefined
+    const n = Number(t.replace(',', '.'))
+    return Number.isFinite(n) ? n : undefined
+  }
+  const n = Number(v)
+  return Number.isFinite(n) ? n : undefined
+}
+
+type ParticipantLookup = {
+  byParticipationId: Map<number, Record<string, unknown>>
+  byMemberId: Map<number, Record<string, unknown>>
+  byExternalPlayerId: Map<number, Record<string, unknown>>
+}
+
+function resolveFullTournamentParticipantRow(
+  groupP: {
+    participation_id?: number
+    participant_id?: number
+    member_id?: unknown
+    external_player_id?: unknown
+  } | null | undefined,
+  lookup: ParticipantLookup
+): Record<string, unknown> | undefined {
+  const pid = toPositiveDbId(groupP?.participation_id ?? groupP?.participant_id)
+  if (pid) {
+    const row = lookup.byParticipationId.get(pid)
+    if (row) return row
+  }
+  const mid = toPositiveDbId(groupP?.member_id)
+  if (mid) {
+    const row = lookup.byMemberId.get(mid)
+    if (row) return row
+  }
+  const ext = toPositiveDbId(groupP?.external_player_id)
+  if (ext) {
+    return lookup.byExternalPlayerId.get(ext)
+  }
+  return undefined
+}
+
+function displayTeeTimeHcpLabel(p: {
+  handicap_local?: number | null | string
+  handicap_index?: number | null | string
+  /** Índice mundial real (m.handicap_index / ep.handicap_index); el API también envía handicap_index como COALESCE para el torneo */
+  handicap_index_wh?: number | null | string
+}): string {
+  const loc = parseHandicapNumeric(p.handicap_local)
+  const effectiveHcp = parseHandicapNumeric(p.handicap_index)
+  const whIndex = parseHandicapNumeric(p.handicap_index_wh)
+  const valueForHcp = loc !== undefined ? loc : effectiveHcp
+  /** Si el HCP de juego es negativo (plus) pero el índice “efectivo” del torneo es otro, el signo + debe salir del local o del WH, no del COALESCE del torneo. */
+  const indexForSign =
+    whIndex !== undefined ? whIndex : loc !== undefined && loc < 0 ? loc : effectiveHcp
+  const s = formatHcpForDisplay(valueForHcp, indexForSign)
+  return s === '-' ? 'N/A' : s
+}
+
+type TeeTimeHcpFields = Parameters<typeof displayTeeTimeHcpLabel>[0]
+
+function pickFirstNumericHandicap(...vals: unknown[]): string | number | null | undefined {
+  for (const v of vals) {
+    if (parseHandicapNumeric(v) !== undefined) return v as string | number | null | undefined
+  }
+  return undefined
+}
+
+/** Une HCP del participante en el grupo con la lista completa del torneo (por si el JSON de grupos viene incompleto). */
+function mergeHcpFieldsForDisplay(
+  groupP: {
+    participation_id?: number
+    participant_id?: number
+    member_id?: unknown
+    external_player_id?: unknown
+    handicap_local?: unknown
+    handicap_index?: unknown
+    handicap_index_wh?: unknown
+  } | null | undefined,
+  lookup: ParticipantLookup
+): TeeTimeHcpFields {
+  const full = resolveFullTournamentParticipantRow(groupP, lookup)
+  return {
+    handicap_local: pickFirstNumericHandicap(groupP?.handicap_local, full?.handicap_local),
+    handicap_index: pickFirstNumericHandicap(
+      groupP?.handicap_index,
+      full?.handicap_index,
+      full?.handicap_used,
+      full?.course_handicap
+    ),
+    handicap_index_wh: pickFirstNumericHandicap(
+      groupP?.handicap_index_wh,
+      full?.handicap_index_wh,
+      full?.handicap_index_used
+    ),
+  }
+}
+
+/**
+ * HCP = reflejo del inscripto en el torneo (misma fila API que el modal de participantes).
+ * La impresión arma HTML en el navegador con estos valores; no lee un archivo aparte en el servidor.
+ */
+function resolveTeeTimeHcpDisplayLabel(
+  groupP: {
+    participation_id?: number
+    participant_id?: number
+    member_id?: unknown
+    external_player_id?: unknown
+    handicap_local?: unknown
+    handicap_index?: unknown
+  } | null | undefined,
+  lookup: ParticipantLookup
+): string {
+  const full = resolveFullTournamentParticipantRow(groupP, lookup)
+  if (full) {
+    const localRaw = full.handicap_local
+    const aliasRaw = full.handicap_index
+    const valueRaw = pickFirstNumericHandicap(localRaw, aliasRaw)
+    const s = formatHcpForDisplay(parseHandicapNumeric(valueRaw), parseHandicapNumeric(aliasRaw))
+    return s === '-' ? 'N/A' : s
+  }
+  const merged = mergeHcpFieldsForDisplay(groupP, lookup)
+  return displayTeeTimeHcpLabel(merged)
+}
 
 interface TeeTimeConfig {
   startTime: string
@@ -46,6 +181,26 @@ export default function TeeTimeManagerSimple() {
   const tournament = tournaments?.find(t => t.tournament_id === tournamentIdNum)
   const { data: groups, refetch: refetchGroups } = useTournamentGroups(clubIdNum, tournamentIdNum)
   const { data: tournamentParticipants = [], refetch: refetchParticipants } = useTournamentParticipants(clubIdNum, tournamentIdNum)
+  const participantLookup = useMemo((): ParticipantLookup => {
+    const byParticipationId = new Map<number, Record<string, unknown>>()
+    const byMemberId = new Map<number, Record<string, unknown>>()
+    const byExternalPlayerId = new Map<number, Record<string, unknown>>()
+    for (const tp of tournamentParticipants as any[]) {
+      const row = tp as Record<string, unknown>
+      const id = toPositiveDbId(tp?.participation_id ?? tp?.participant_id)
+      if (id) byParticipationId.set(id, row)
+      const pt = String(tp?.player_type || '').toLowerCase()
+      if (pt === 'member' || pt === 'visitor') {
+        const mid = toPositiveDbId(tp?.member_id)
+        if (mid) byMemberId.set(mid, row)
+      }
+      if (pt === 'external') {
+        const eid = toPositiveDbId(tp?.external_player_id)
+        if (eid) byExternalPlayerId.set(eid, row)
+      }
+    }
+    return { byParticipationId, byMemberId, byExternalPlayerId }
+  }, [tournamentParticipants])
 
   // Inicializar config de tee desde el torneo (salidas consecutivas/simultáneas definidas al crear el torneo)
   useEffect(() => {
@@ -382,7 +537,7 @@ export default function TeeTimeManagerSimple() {
   const ungroupedAfternoon = ungroupedParticipants.filter((p: any) => getParticipantSession(p) === 'afternoon')
   const ungroupedUnspecified = ungroupedParticipants.filter((p: any) => getParticipantSession(p) === 'unspecified')
 
-  const handleMoveGroup = (groupNumber: number, newStartingHole: number, newTeeTime?: string | null) => {
+  const handleMoveGroup = (groupNumber: number, newStartingHole: number, newTeeTime?: string | null, preferredSession?: 'morning' | 'afternoon' | null) => {
     // Si tenemos hora y grupos, validar y ajustar automáticamente si hay conflicto
     let finalTimeHHMM: string | undefined = newTeeTime ? formatTime(newTeeTime) : undefined
     if (finalTimeHHMM && groups) {
@@ -422,9 +577,14 @@ export default function TeeTimeManagerSimple() {
 
     const normalized = finalTimeHHMM ? toHHMMSS(finalTimeHHMM) : undefined
     moveGroup.mutate(
-      { groupNumber, newStartingHole, newTeeTime: normalized },
+      { groupNumber, newStartingHole, newTeeTime: normalized, preferredSession: preferredSession ?? undefined },
       {
         onSuccess: () => {
+          setGroupEdits((prev) => {
+            const next = { ...prev }
+            delete next[groupNumber]
+            return next
+          })
           refetchGroups()
         },
         onError: (error) => {
@@ -511,6 +671,7 @@ export default function TeeTimeManagerSimple() {
   const getGroupSession = (group: { tee_time?: string | null; group_tee_preference?: string | null }): 'morning' | 'afternoon' => {
     const pref = String(group.group_tee_preference || '').toLowerCase().trim()
     if (pref === 'afternoon') return 'afternoon'
+    if (pref === 'morning') return 'morning'
     return getSessionFromTime(group.tee_time ?? null)
   }
 
@@ -533,13 +694,47 @@ export default function TeeTimeManagerSimple() {
     return raw
   }
 
+  /** Alinea API + ediciones del modal (misma fuente que la tarjeta "Turno") */
+  const mergeGroupEditsIntoGroup = (g: { group_number: number; tee_time?: string | null; group_tee_preference?: string | null; starting_hole?: number | null }) => {
+    const e = groupEdits[g.group_number]
+    if (!e) return g
+    const session = e.session
+    const time =
+      (e.time && String(e.time).trim()) ||
+      getDisplayTimeForGroup(g) ||
+      (session === 'morning' ? config.startTime : config.afternoonStartTime)
+    return {
+      ...g,
+      tee_time: time,
+      group_tee_preference: session,
+      starting_hole: e.hole === 0 ? null : e.hole
+    }
+  }
+
+  const getEffectiveGroupSession = (group: { group_number: number; tee_time?: string | null; group_tee_preference?: string | null }) =>
+    getGroupSession(mergeGroupEditsIntoGroup(group))
+
+  /** Reporte imprimible: igual criterio que la tarjeta; si no hay preferencia en API, clasifica por la hora que ves (no solo tee_time crudo). */
+  const getPrintGroupSession = (g: { group_number: number; tee_time?: string | null; group_tee_preference?: string | null }): 'morning' | 'afternoon' => {
+    const edit = groupEdits[g.group_number]?.session
+    if (edit === 'morning' || edit === 'afternoon') return edit
+    const pref = String(g.group_tee_preference || '').toLowerCase().trim()
+    if (pref === 'afternoon') return 'afternoon'
+    if (pref === 'morning') return 'morning'
+    const disp = getDisplayTimeForGroup(g)
+    if (disp && disp !== 'Sin asignar' && disp.trim() !== '') {
+      return getSessionFromTime(disp)
+    }
+    return getSessionFromTime(g.tee_time ?? null)
+  }
+
   // Función para filtrar grupos por sesión
   const getFilteredGroups = () => {
     if (!groups) return []
     
     if (sessionFilter === 'all') return groups
     
-    return groups.filter(group => getGroupSession(group) === sessionFilter)
+    return groups.filter(group => getEffectiveGroupSession(group) === sessionFilter)
   }
 
   // Función para toggle del filtro de sesión
@@ -559,23 +754,26 @@ export default function TeeTimeManagerSimple() {
       alert('No hay grupos para exportar.')
       return
     }
-    const sessionLabel = (g: { tee_time?: string | null; group_tee_preference?: string | null }) =>
-      getGroupSession(g) === 'afternoon' ? 'Tarde' : 'Mañana'
-    const tipoAgrupacion = (tournament as any)?.groups_by_hcp ? 'Por HCP (serpentina)' : 'Por grupos (inscripción)'
+    const sessionLabel = (g: { group_number: number; tee_time?: string | null; group_tee_preference?: string | null }) =>
+      getEffectiveGroupSession(g) === 'afternoon' ? 'Tarde' : 'Mañana'
     const excelData = [
-      { 'Grupo': 'Tipo de agrupación', 'Turno': tipoAgrupacion, 'Hora': '', 'Hoyo': '', 'Jugador 1': '', 'HCP 1': '', 'Jugador 2': '', 'HCP 2': '', 'Jugador 3': '', 'HCP 3': '', 'Jugador 4': '', 'HCP 4': '' },
       ...groups.map((group) => {
+      const merged = mergeGroupEditsIntoGroup(group)
       const participants = group.participants || []
       const row: Record<string, string | number> = {
         'Grupo': group.group_number,
         'Turno': sessionLabel(group),
-        'Hora': getDisplayTimeForGroup(group) || 'Sin asignar',
-        'Hoyo': getDisplayHole(group) === 0 ? 'Sin asignar' : getDisplayHole(group)
+        'Hora': getDisplayTimeForGroup(merged) || 'Sin asignar',
+        'Hoyo': getDisplayHole(merged) === 0 ? 'Sin asignar' : getDisplayHole(merged)
       }
       ;[1, 2, 3, 4].forEach((i) => {
         const p = participants[i - 1]
         row[`Jugador ${i}`] = p?.player_name ?? ''
-        row[`HCP ${i}`] = p?.handicap_local != null ? p.handicap_local : ''
+        if (p) {
+          row[`HCP ${i}`] = resolveTeeTimeHcpDisplayLabel(p, participantLookup)
+        } else {
+          row[`HCP ${i}`] = ''
+        }
       })
       return row
       })
@@ -615,7 +813,7 @@ export default function TeeTimeManagerSimple() {
           <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px'}}>
             <div style={{display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '12px'}}>
               <button
-                onClick={() => navigate(`/club/${clubId}/admin`)}
+                onClick={() => navigate(`/club/${clubId}/admin?tab=tournaments`)}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -976,7 +1174,7 @@ export default function TeeTimeManagerSimple() {
                       <Sun size={20} style={{color: sessionFilter === 'morning' ? '#3b82f6' : '#6b7280'}} />
                     </div>
                     <div style={{ fontSize: '18px', fontWeight: 'bold', color: sessionFilter === 'morning' ? '#1e40af' : '#111827' }}>
-                      {groups.filter(g => getGroupSession(g) === 'morning').length}
+                      {groups.filter(g => getEffectiveGroupSession(g) === 'morning').length}
                     </div>
                     <div style={{ fontSize: '14px', color: sessionFilter === 'morning' ? '#3b82f6' : '#6b7280', fontWeight: sessionFilter === 'morning' ? 'bold' : 'normal' }}>
                       Grupos Mañana {sessionFilter === 'morning' && '✓'}
@@ -1006,7 +1204,7 @@ export default function TeeTimeManagerSimple() {
                       <Moon size={20} style={{color: sessionFilter === 'afternoon' ? '#f59e0b' : '#6b7280'}} />
                     </div>
                     <div style={{ fontSize: '18px', fontWeight: 'bold', color: sessionFilter === 'afternoon' ? '#92400e' : '#111827' }}>
-                      {groups.filter(g => getGroupSession(g) === 'afternoon').length}
+                      {groups.filter(g => getEffectiveGroupSession(g) === 'afternoon').length}
                     </div>
                     <div style={{ fontSize: '14px', color: sessionFilter === 'afternoon' ? '#f59e0b' : '#6b7280', fontWeight: sessionFilter === 'afternoon' ? 'bold' : 'normal' }}>
                       Grupos Tarde {sessionFilter === 'afternoon' && '✓'}
@@ -1465,7 +1663,7 @@ export default function TeeTimeManagerSimple() {
                           {participant.player_name}
                         </span>
                         <span style={{color: '#6b7280', fontSize: '12px'}}>
-                          (HCP: {participant.handicap_local !== null && participant.handicap_local !== undefined ? participant.handicap_local : "N/A"})
+                          (HCP: {resolveTeeTimeHcpDisplayLabel(participant, participantLookup)})
                         </span>
                         {participant.player_type === 'external' && (
                           <span style={{
@@ -1530,9 +1728,9 @@ export default function TeeTimeManagerSimple() {
               
               <button
                 onClick={() => {
-                  // Separar grupos por sesión
-                  const morningGroups = groups?.filter(g => getGroupSession(g) === 'morning') || [];
-                  const afternoonGroups = groups?.filter(g => getGroupSession(g) === 'afternoon') || [];
+                  const list = (groups || []).map(mergeGroupEditsIntoGroup)
+                  const morningGroups = list.filter(g => getPrintGroupSession(g) === 'morning')
+                  const afternoonGroups = list.filter(g => getPrintGroupSession(g) === 'afternoon')
                   
                   // Función para generar carátula
                   const formatDate = (value?: string) => {
@@ -1543,14 +1741,12 @@ export default function TeeTimeManagerSimple() {
                     const yyyy = d.getFullYear().toString()
                     return `${dd}/${mm}/${yyyy}`
                   }
-                  const tipoAgrupacionPrint = (tournament as any)?.groups_by_hcp ? 'Por HCP (serpentina)' : 'Por grupos (inscripción)'
                   const generateHeader = (sessionName: string, sessionIcon: string) => `
                     <div class="page-header">
                       <h1 style="text-align:center;">${sessionIcon} ${sessionName}</h1>
                       <div class="tournament-info">
                         <p><strong>Torneo:</strong> ${tournament?.tournament_name || 'N/A'}</p>
                         <p><strong>Fecha:</strong> ${formatDate(tournament?.tournament_date)}${tournament?.start_time ? ` - ${tournament.start_time}` : ''}</p>
-                        <p><strong>Tipo de agrupación:</strong> ${tipoAgrupacionPrint}</p>
                       </div>
                     </div>
                   `;
@@ -1573,20 +1769,20 @@ export default function TeeTimeManagerSimple() {
                           <th colspan="2">${headerHtml}</th>
                         </tr>
                         <tr>
-                          <th>Grupo - Hora - Hoyo</th>
+                          <th>Grupo - Turno - Hora - Hoyo</th>
                           <th>Jugadores</th>
                         </tr>
                       </thead>
                       <tbody>
                         ${sessionGroups.map(group => `
                           <tr class="group-header">
-                            <td>Grupo ${group.group_number} - ${getDisplayTimeForGroup(group) || 'Sin asignar'} - Hoyo ${group.starting_hole === null || group.starting_hole === 0 ? 'Sin asignar' : group.starting_hole}</td>
+                            <td>Grupo ${group.group_number} - ${getPrintGroupSession(group) === 'afternoon' ? 'Tarde' : 'Mañana'} - ${getDisplayTimeForGroup(group) || 'Sin asignar'} - Hoyo ${group.starting_hole === null || group.starting_hole === 0 ? 'Sin asignar' : group.starting_hole}</td>
                             <td>${group.participants?.length || 0} jugadores</td>
                           </tr>
                           ${group.participants?.map((p: any) => `
                             <tr>
                               <td></td>
-                              <td>${p.player_name} (HCP: ${p.handicap_local !== null && p.handicap_local !== undefined ? p.handicap_local : 'N/A'})</td>
+                              <td>${p.player_name} (HCP: ${resolveTeeTimeHcpDisplayLabel(p, participantLookup)})</td>
                             </tr>
                           `).join('') || ''}
                         `).join('') || '<tr><td colspan="2">No hay grupos en esta sesión</td></tr>'}
@@ -1594,6 +1790,45 @@ export default function TeeTimeManagerSimple() {
                     </table>
                   `;
                   
+                  // Respetar filtro de turno (mañana/tarde) igual que en pantalla; si es "todos", imprimir ambos
+                  let printBodyHtml = ''
+                  if (sessionFilter === 'all') {
+                    printBodyHtml = `
+                          ${morningGroups.length > 0 ? `
+                          ${generateGroupTable(morningGroups, generateHeader('Grupos de Mañana', '☀️'))}
+                          ` : ''}
+                          
+                          ${afternoonGroups.length > 0 ? `
+                            <div class="session-separator">
+                              ${generateGroupTable(afternoonGroups, generateHeader('Grupos de Tarde', '🌙'))}
+                            </div>
+                          ` : ''}
+                          
+                          ${morningGroups.length === 0 && afternoonGroups.length === 0 ? `
+                            ${generateHeader('Reporte de Tee Times', '🏌️')}
+                            <p style="text-align: center; color: #666; font-style: italic;">No hay grupos configurados</p>
+                          ` : ''}
+                    `
+                  } else if (sessionFilter === 'morning') {
+                    printBodyHtml =
+                      morningGroups.length > 0
+                        ? generateGroupTable(morningGroups, generateHeader('Grupos de Mañana', '☀️'))
+                        : `${generateHeader('Grupos de Mañana', '☀️')}
+                            <p style="text-align: center; color: #666; font-style: italic;">No hay grupos en el turno mañana</p>`
+                  } else {
+                    printBodyHtml =
+                      afternoonGroups.length > 0
+                        ? generateGroupTable(afternoonGroups, generateHeader('Grupos de Tarde', '🌙'))
+                        : `${generateHeader('Grupos de Tarde', '🌙')}
+                            <p style="text-align: center; color: #666; font-style: italic;">No hay grupos en el turno tarde</p>`
+                  }
+
+                  // Quitar cualquier párrafo "Tipo de agrupación" (caché / bundle viejo / futuras copias del texto)
+                  const stripTipoAgrupacionHtml = (html: string) =>
+                    html.replace(/<p[^>]*>[\s\S]*?<strong>\s*Tipo\s+de\s+agrupaci[\u00f3o]n\s*:\s*<\/strong>[\s\S]*?<\/p>/gi, '')
+
+                  printBodyHtml = stripTipoAgrupacionHtml(printBodyHtml)
+
                   // Generar reporte imprimible en nueva ventana
                   const printWindow = window.open('', '_blank');
                   if (printWindow) {
@@ -1670,20 +1905,7 @@ export default function TeeTimeManagerSimple() {
                           </style>
                         </head>
                         <body>
-                          ${morningGroups.length > 0 ? `
-                          ${generateGroupTable(morningGroups, generateHeader('Grupos de Mañana', '☀️'))}
-                          ` : ''}
-                          
-                          ${afternoonGroups.length > 0 ? `
-                            <div class="session-separator">
-                              ${generateGroupTable(afternoonGroups, generateHeader('Grupos de Tarde', '🌙'))}
-                            </div>
-                          ` : ''}
-                          
-                          ${morningGroups.length === 0 && afternoonGroups.length === 0 ? `
-                            ${generateHeader('Reporte de Tee Times', '🏌️')}
-                            <p style="text-align: center; color: #666; font-style: italic;">No hay grupos configurados</p>
-                          ` : ''}
+                          ${printBodyHtml}
                           
                           <script>
                             window.onload = function() {
@@ -2278,7 +2500,7 @@ export default function TeeTimeManagerSimple() {
                   const finalTime = editModalValues.time || (editModalValues.session === 'morning' ? config.startTime : config.afternoonStartTime)
                   const normalized = toHHMMSS(finalTime)
                   setGroupEdits(prev => ({ ...prev, [editingGroupNumber]: { session: editModalValues.session, time: finalTime, hole: editModalValues.hole } }))
-                  handleMoveGroup(editingGroupNumber, editModalValues.hole || 0, normalized)
+                  handleMoveGroup(editingGroupNumber, editModalValues.hole || 0, normalized, editModalValues.session)
                   setEditingGroupNumber(null)
                 }}
                 style={{ padding: '8px 16px', fontSize: '14px', borderRadius: '6px', background: '#374151', color: 'white', border: 'none', cursor: 'pointer' }}

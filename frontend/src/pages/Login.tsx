@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { LogIn, Eye, EyeOff } from 'lucide-react'
 
 export function Login() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [formData, setFormData] = useState({
     username: '',
     password: ''
@@ -37,8 +38,13 @@ export function Login() {
         localStorage.setItem('adminEmail', data.admin.email)
         localStorage.setItem('adminRole', data.admin.role)
         
+        const redirectTo = searchParams.get('redirect')
+        const safeRedirect = redirectTo && redirectTo.startsWith('/') ? redirectTo : null
+
         // Redirigir según el rol
-        if (data.admin.role === 'system_admin') {
+        if (safeRedirect) {
+          navigate(safeRedirect, { replace: true })
+        } else if (data.admin.role === 'system_admin') {
           // Administrador del sistema -> panel principal
           navigate('/dashboard')
         } else {

@@ -102,7 +102,7 @@ export default function ScorecardHistory() {
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center space-x-4">
               <button
-                onClick={() => navigate(`/club/${clubId}/admin`)}
+                onClick={() => navigate(`/club/${clubId}/admin?tab=tournaments`)}
                 className="flex items-center text-gray-600 hover:text-gray-900"
               >
                 <ArrowLeft className="h-5 w-5 mr-2" />

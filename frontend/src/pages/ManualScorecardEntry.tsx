@@ -409,7 +409,7 @@ export default function ManualScorecardEntry() {
                     navigate(`/club/${clubId}/tournaments/${tournamentId}/scorecard-selection`)
                   } else {
                     // Si accedió directamente, ir al admin
-                    navigate(`/club/${clubId}/admin`)
+                    navigate(`/club/${clubId}/admin?tab=tournaments`)
                   }
                 }}
                 className="flex items-center gap-2 text-gray-600 hover:text-gray-900"

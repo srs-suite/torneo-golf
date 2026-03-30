@@ -42,6 +42,7 @@ import {
     
     // Rankings functions
     getAnnualRankings, getTournamentRanking,
+    getAnnualRankingCandidates, getAnnualRankingTournamentPicks, setAnnualRankingTournamentPicks,
     
     // Payments and accounting functions
     getPaymentsSummary, getExpenses, addExpense, updateExpense, deleteExpense,
@@ -70,6 +71,172 @@ import {
 } from './services/whatsapp.js';
 
 const PORT = 8000;
+
+// Tokens temporales para cobros móvil (sin login admin en teléfono)
+const MOBILE_ACCESS_TOKEN_TTL_MS = 5 * 60 * 1000; // 5 minutos para abrir (compat. link viejo)
+const MOBILE_SESSION_TOKEN_TTL_MS = 8 * 60 * 60 * 1000; // 8 horas de uso
+const MOBILE_PIN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // PIN válido 30 días (mismo QR; se rota al regenerar)
+const ADMIN_LOGIN_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // token Bearer post-login
+
+const mobileAccessTokens = new Map(); // accessToken -> { clubId, tournamentId, used, expiresAt }
+const mobileSessionTokens = new Map(); // sessionToken -> { clubId, tournamentId, expiresAt }
+const adminLoginTokens = new Map(); // Bearer token -> { adminId, clubId, role, expiresAt }
+const mobilePinByTournament = new Map(); // "clubId:tournamentId" -> { pin, expiresAt }
+const mobilePinLookup = new Map(); // pin string -> { clubId, tournamentId, expiresAt }
+
+function cleanupMobileTokens() {
+    const now = Date.now();
+    for (const [token, data] of mobileAccessTokens.entries()) {
+        if (!data || data.expiresAt <= now) mobileAccessTokens.delete(token);
+    }
+    for (const [token, data] of mobileSessionTokens.entries()) {
+        if (!data || data.expiresAt <= now) mobileSessionTokens.delete(token);
+    }
+}
+
+function cleanupAdminLoginTokens() {
+    const now = Date.now();
+    for (const [token, data] of adminLoginTokens.entries()) {
+        if (!data || data.expiresAt <= now) adminLoginTokens.delete(token);
+    }
+}
+
+function cleanupMobilePins() {
+    const now = Date.now();
+    for (const [key, data] of mobilePinByTournament.entries()) {
+        if (!data || data.expiresAt <= now) {
+            if (data?.pin) mobilePinLookup.delete(String(data.pin));
+            mobilePinByTournament.delete(key);
+        }
+    }
+    for (const [pin, data] of mobilePinLookup.entries()) {
+        if (!data || data.expiresAt <= now) mobilePinLookup.delete(pin);
+    }
+}
+
+function validateAdminBearer(req, requestedClubId) {
+    cleanupAdminLoginTokens();
+    const auth = req.headers.authorization;
+    if (!auth || !auth.startsWith('Bearer ')) return { ok: false, message: 'Sesión requerida' };
+    const token = auth.slice(7).trim();
+    const sess = adminLoginTokens.get(token);
+    if (!sess || sess.expiresAt <= Date.now()) return { ok: false, message: 'Sesión inválida o vencida' };
+    const cid = parseInt(requestedClubId, 10);
+    if (sess.role === 'system_admin') return { ok: true, session: sess };
+    if (sess.clubId != null && Number(sess.clubId) === cid) return { ok: true, session: sess };
+    return { ok: false, message: 'No autorizado para este club' };
+}
+
+function generateMobilePaymentPin(clubId, tournamentId) {
+    cleanupMobilePins();
+    const key = `${parseInt(clubId, 10)}:${parseInt(tournamentId, 10)}`;
+    const prev = mobilePinByTournament.get(key);
+    if (prev?.pin) mobilePinLookup.delete(String(prev.pin));
+
+    let pin;
+    do {
+        pin = String(Math.floor(100000 + Math.random() * 900000));
+    } while (mobilePinLookup.has(pin));
+
+    const expiresAt = Date.now() + MOBILE_PIN_TTL_MS;
+    mobilePinByTournament.set(key, { pin, expiresAt });
+    mobilePinLookup.set(pin, { clubId: parseInt(clubId, 10), tournamentId: parseInt(tournamentId, 10), expiresAt });
+    return { pin, expiresAt };
+}
+
+function verifyMobilePaymentPin(pinRaw, clubId, tournamentId) {
+    cleanupMobilePins();
+    const pin = String(pinRaw || '').replace(/\D/g, '').slice(0, 6);
+    if (pin.length !== 6) return { ok: false, message: 'Código inválido' };
+    const data = mobilePinLookup.get(pin);
+    if (!data) return { ok: false, message: 'Código incorrecto' };
+    if (data.clubId !== parseInt(clubId, 10) || data.tournamentId !== parseInt(tournamentId, 10)) {
+        return { ok: false, message: 'Código no corresponde a este torneo' };
+    }
+    if (data.expiresAt <= Date.now()) {
+        mobilePinLookup.delete(pin);
+        return { ok: false, message: 'Código vencido' };
+    }
+    return { ok: true };
+}
+
+function createMobileAccessToken(clubId, tournamentId) {
+    cleanupMobileTokens();
+    const accessToken = crypto.randomBytes(24).toString('hex');
+    mobileAccessTokens.set(accessToken, {
+        clubId: parseInt(clubId, 10),
+        tournamentId: parseInt(tournamentId, 10),
+        used: false,
+        expiresAt: Date.now() + MOBILE_ACCESS_TOKEN_TTL_MS
+    });
+    return accessToken;
+}
+
+function exchangeMobileAccessToken(accessToken, clubId, tournamentId) {
+    cleanupMobileTokens();
+    const data = mobileAccessTokens.get(accessToken);
+    if (!data) return { ok: false, message: 'Token inválido o vencido' };
+    if (data.used) return { ok: false, message: 'Este QR/link ya fue utilizado' };
+    if (data.clubId !== parseInt(clubId, 10) || data.tournamentId !== parseInt(tournamentId, 10)) {
+        return { ok: false, message: 'Token no corresponde a este torneo' };
+    }
+    if (data.expiresAt <= Date.now()) {
+        mobileAccessTokens.delete(accessToken);
+        return { ok: false, message: 'Token vencido' };
+    }
+    data.used = true;
+    mobileAccessTokens.set(accessToken, data);
+
+    const sessionToken = issueMobileSessionToken(data.clubId, data.tournamentId);
+    return { ok: true, sessionToken };
+}
+
+function issueMobileSessionToken(clubId, tournamentId) {
+    const sessionToken = crypto.randomBytes(32).toString('hex');
+    mobileSessionTokens.set(sessionToken, {
+        clubId: parseInt(clubId, 10),
+        tournamentId: parseInt(tournamentId, 10),
+        expiresAt: Date.now() + MOBILE_SESSION_TOKEN_TTL_MS
+    });
+    return sessionToken;
+}
+
+function verifyMobileSessionToken(sessionToken, clubId, tournamentId) {
+    cleanupMobileTokens();
+    const data = mobileSessionTokens.get(sessionToken);
+    if (!data) return { ok: false, message: 'Sesión inválida o vencida' };
+    if (data.expiresAt <= Date.now()) {
+        mobileSessionTokens.delete(sessionToken);
+        return { ok: false, message: 'Sesión vencida' };
+    }
+    if (data.clubId !== parseInt(clubId, 10) || data.tournamentId !== parseInt(tournamentId, 10)) {
+        return { ok: false, message: 'Sesión no válida para este torneo' };
+    }
+    return { ok: true };
+}
+
+function getPublicFrontendBaseUrl(req) {
+    const envUrl = process.env.FRONTEND_PUBLIC_URL || process.env.FRONTEND_URL;
+    if (envUrl && !/localhost|127\.0\.0\.1/i.test(envUrl)) return envUrl.replace(/\/$/, '');
+
+    const proto = req.headers['x-forwarded-proto'] || 'https';
+    const forwardedHost = req.headers['x-forwarded-host'];
+    const host = forwardedHost || req.headers.host;
+    if (host && !/localhost|127\.0\.0\.1/i.test(host)) return `${proto}://${host}`.replace(/\/$/, '');
+
+    const origin = req.headers.origin;
+    if (origin && !/localhost|127\.0\.0\.1/i.test(origin)) return origin.replace(/\/$/, '');
+
+    const referer = req.headers.referer;
+    if (referer) {
+        try {
+            const u = new URL(referer);
+            if (!/localhost|127\.0\.0\.1/i.test(u.host)) return `${u.protocol}//${u.host}`.replace(/\/$/, '');
+        } catch (_) {}
+    }
+
+    return 'https://torneogolf.retailsolutionstimetracker.com';
+}
 
 // CORS headers
 const corsHeaders = {
@@ -152,6 +319,12 @@ async function handleAuthAPI(req, res, pathParts) {
                     }
 
                     const token = crypto.randomBytes(32).toString('hex');
+                    adminLoginTokens.set(token, {
+                        adminId: admin.admin_id,
+                        clubId: admin.course_id != null ? Number(admin.course_id) : null,
+                        role: admin.role || 'club_admin',
+                        expiresAt: Date.now() + ADMIN_LOGIN_TOKEN_TTL_MS
+                    });
                     console.log('✅ Login exitoso para:', admin.username);
                     
                     sendJSON(res, {
@@ -479,8 +652,8 @@ async function handleClubAPI(req, res, pathParts) {
             }
             else if (subResource === 'move-group') {
                 if (method === 'POST') {
-                    const { groupNumber, newStartingHole, newTeeTime } = await parseBody(req);
-                    await moveGroupToHole(parseInt(clubId), parseInt(resourceId), groupNumber, newStartingHole, newTeeTime);
+                    const { groupNumber, newStartingHole, newTeeTime, preferredSession } = await parseBody(req);
+                    await moveGroupToHole(parseInt(clubId), parseInt(resourceId), groupNumber, newStartingHole, newTeeTime, preferredSession);
                     sendJSON(res, { success: true, message: 'Grupo movido exitosamente' });
                 } else {
                     sendError(res, 'Método no permitido', 405);
@@ -519,6 +692,105 @@ async function handleClubAPI(req, res, pathParts) {
                 if (method === 'POST') {
                     await clearTournamentGroups(parseInt(clubId), parseInt(resourceId));
                     sendJSON(res, { success: true, message: 'Grupos desarmados exitosamente' });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
+            }
+            // Cobros móvil: PIN fijo por torneo (QR siempre igual) + verificación
+            else if (subResource === 'mobile-payments-pin' && pathParts[6] === 'verify' && method === 'POST') {
+                const body = await parseBody(req);
+                const pin = body?.pin ?? body?.code;
+                const vr = verifyMobilePaymentPin(pin, clubId, resourceId);
+                if (!vr.ok) {
+                    sendError(res, vr.message, 401);
+                    return;
+                }
+                const sessionToken = issueMobileSessionToken(clubId, resourceId);
+                sendJSON(res, {
+                    success: true,
+                    sessionToken,
+                    expiresInSeconds: Math.floor(MOBILE_SESSION_TOKEN_TTL_MS / 1000)
+                });
+            }
+            else if (subResource === 'mobile-payments-pin' && !pathParts[6] && method === 'POST') {
+                const auth = validateAdminBearer(req, clubId);
+                if (!auth.ok) {
+                    sendError(res, auth.message || 'No autorizado', 401);
+                    return;
+                }
+                const { pin, expiresAt } = generateMobilePaymentPin(clubId, resourceId);
+                sendJSON(res, {
+                    success: true,
+                    pin,
+                    expiresInSeconds: Math.floor(MOBILE_PIN_TTL_MS / 1000),
+                    expiresAt: new Date(expiresAt).toISOString()
+                });
+            }
+            // Mobile payments secure access (one-time token -> temporary session)
+            else if (subResource === 'mobile-payments-access') {
+                if (method === 'POST') {
+                    const accessToken = createMobileAccessToken(clubId, resourceId);
+                    const cleanBase = getPublicFrontendBaseUrl(req);
+                    const accessUrl = `${cleanBase}/club/${clubId}/tournaments/${resourceId}/mobile-payments?access=${encodeURIComponent(accessToken)}`;
+                    sendJSON(res, {
+                        success: true,
+                        accessToken,
+                        accessUrl,
+                        expiresInSeconds: Math.floor(MOBILE_ACCESS_TOKEN_TTL_MS / 1000)
+                    });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
+            }
+            else if (subResource === 'mobile-payments-session') {
+                if (method === 'POST') {
+                    const body = await parseBody(req);
+                    const accessToken = body?.accessToken;
+                    if (!accessToken) {
+                        sendError(res, 'accessToken es requerido', 400);
+                        return;
+                    }
+                    const result = exchangeMobileAccessToken(accessToken, clubId, resourceId);
+                    if (!result.ok) {
+                        sendError(res, result.message, 401);
+                        return;
+                    }
+                    sendJSON(res, {
+                        success: true,
+                        sessionToken: result.sessionToken,
+                        expiresInSeconds: Math.floor(MOBILE_SESSION_TOKEN_TTL_MS / 1000)
+                    });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
+            }
+            else if (subResource === 'mobile-payments-participants') {
+                const mobileParticipantId = pathParts[6];
+                const mobileAction = pathParts[7];
+                const urlObj = new URL(req.url, `http://${req.headers.host}`);
+                const sessionToken = urlObj.searchParams.get('session');
+                if (!sessionToken) {
+                    sendError(res, 'session es requerido', 401);
+                    return;
+                }
+                const sessionCheck = verifyMobileSessionToken(sessionToken, clubId, resourceId);
+                if (!sessionCheck.ok) {
+                    sendError(res, sessionCheck.message, 401);
+                    return;
+                }
+
+                if (method === 'GET' && !mobileParticipantId) {
+                    const participants = await getTournamentParticipants(parseInt(clubId), parseInt(resourceId));
+                    sendJSON(res, { success: true, data: participants });
+                } else if (method === 'PUT' && mobileParticipantId && mobileAction === 'payment') {
+                    const paymentData = await parseBody(req);
+                    await updateParticipantPayment(
+                        parseInt(clubId),
+                        parseInt(resourceId),
+                        parseInt(mobileParticipantId),
+                        paymentData
+                    );
+                    sendJSON(res, { success: true, message: 'Pago actualizado exitosamente' });
                 } else {
                     sendError(res, 'Método no permitido', 405);
                 }
@@ -698,27 +970,56 @@ async function handleClubAPI(req, res, pathParts) {
             }
         }
         
-        // Rankings
+        // Rankings — /rankings/annual/:year | /rankings/annual/:year/candidates | /rankings/annual/:year/selection
         else if (resource === 'rankings') {
-            const rankingType = pathParts[3]; // 'annual' or 'tournament'
-            const identifier = pathParts[4]; // year or tournament_id
-            
+            const rankingType = pathParts[4]; // 'annual' | 'tournament'
+            const identifier = pathParts[5]; // año o tournament_id
+            const rankingSub = pathParts[6]; // 'candidates' | 'selection' | undefined
+
             if (rankingType === 'annual' && identifier) {
-                if (method === 'GET') {
-                    const year = parseInt(identifier);
-                    const rankings = await getAnnualRankings(parseInt(clubId), year);
-                    sendJSON(res, { success: true, data: rankings });
-                } else {
-                    sendError(res, 'Método no permitido', 405);
+                const year = parseInt(identifier, 10);
+                if (rankingSub === 'candidates' && method === 'GET') {
+                    const list = await getAnnualRankingCandidates(parseInt(clubId, 10), year);
+                    sendJSON(res, { success: true, data: list });
+                    return;
                 }
+                if (rankingSub === 'selection' && method === 'GET') {
+                    const state = await getAnnualRankingTournamentPicks(parseInt(clubId, 10), year);
+                    sendJSON(res, { success: true, data: state });
+                    return;
+                }
+                if (rankingSub === 'selection' && method === 'PUT') {
+                    const auth = validateAdminBearer(req, clubId);
+                    if (!auth.ok) {
+                        sendError(res, auth.message || 'No autorizado', 401);
+                        return;
+                    }
+                    const body = await parseBody(req);
+                    const ids = Array.isArray(body.tournament_ids) ? body.tournament_ids : [];
+                    try {
+                        const state = await setAnnualRankingTournamentPicks(parseInt(clubId, 10), year, ids);
+                        sendJSON(res, { success: true, data: state });
+                    } catch (e) {
+                        sendError(res, e.message || 'Error al guardar selección', 400);
+                    }
+                    return;
+                }
+                if (!rankingSub && method === 'GET') {
+                    const rankings = await getAnnualRankings(parseInt(clubId, 10), year);
+                    sendJSON(res, { success: true, data: rankings });
+                    return;
+                }
+                sendError(res, 'Método no permitido', 405);
+                return;
             } else if (rankingType === 'tournament' && identifier) {
                 if (method === 'GET') {
                     const tournamentId = parseInt(identifier);
                     const rankings = await getTournamentRanking(parseInt(clubId), tournamentId);
                     sendJSON(res, { success: true, data: rankings });
-                } else {
-                    sendError(res, 'Método no permitido', 405);
+                    return;
                 }
+                sendError(res, 'Método no permitido', 405);
+                return;
             } else {
                 sendError(res, 'Recurso no encontrado', 404);
             }
@@ -744,32 +1045,31 @@ async function handleClubAPI(req, res, pathParts) {
                     // Dynamic import for CommonJS module
                     const QRCode = (await import('qrcode')).default;
                     const url = new URL(req.url, `http://${req.headers.host}`);
-                    // Allow frontend to pass the URL via query parameter, or use env/default
                     const frontendUrlParam = url.searchParams.get('url');
-                    let frontendUrl;
-                    
+                    let reportUrl;
+
                     if (frontendUrlParam) {
-                        // Use URL from query parameter (from frontend)
-                        frontendUrl = frontendUrlParam;
-                    } else if (process.env.FRONTEND_URL) {
-                        // Use FRONTEND_URL from env
-                        frontendUrl = process.env.FRONTEND_URL;
+                        // URL absoluta que pide el front (ej. cobros móvil); codificarla tal cual en el QR
+                        reportUrl = frontendUrlParam;
                     } else {
-                        // Try to detect from referer header or use default
-                        const referer = req.headers.referer;
-                        if (referer) {
-                            try {
-                                const refererUrl = new URL(referer);
-                                frontendUrl = `${refererUrl.protocol}//${refererUrl.host}`;
-                            } catch (e) {
-                                frontendUrl = 'http://localhost:5173';
-                            }
+                        let frontendBase;
+                        if (process.env.FRONTEND_URL) {
+                            frontendBase = process.env.FRONTEND_URL.replace(/\/$/, '');
                         } else {
-                            frontendUrl = 'http://localhost:5173';
+                            const referer = req.headers.referer;
+                            if (referer) {
+                                try {
+                                    const refererUrl = new URL(referer);
+                                    frontendBase = `${refererUrl.protocol}//${refererUrl.host}`;
+                                } catch (e) {
+                                    frontendBase = 'http://localhost:5173';
+                                }
+                            } else {
+                                frontendBase = 'http://localhost:5173';
+                            }
                         }
+                        reportUrl = `${frontendBase}/club/${clubId}/informe-contable`;
                     }
-                    
-                    const reportUrl = `${frontendUrl}/club/${clubId}/informe-contable`;
                     console.log('📱 Generando QR code para:', reportUrl);
                     
                     const qrDataUrl = await QRCode.toDataURL(reportUrl, {

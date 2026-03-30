@@ -643,7 +643,7 @@ export default function ScorecardPlayerSelection() {
             {(participantsError as any)?.message || (scorecardsError as any)?.message || 'Error desconocido'}
           </p>
           <button
-            onClick={() => navigate(`/club/${clubId}/admin`)}
+            onClick={() => navigate(`/club/${clubId}/admin?tab=tournaments`)}
             className="px-4 py-2 bg-gray-900 text-white rounded hover:bg-gray-800"
           >
             Volver al Dashboard

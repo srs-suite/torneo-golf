@@ -12,6 +12,14 @@ const QUERY_KEYS = {
   searchPlayers: (clubId: number, query: string) => ['search-players', clubId, query]
 }
 
+/** Variables de moveGroup.mutate / moveGroupToHole (incl. sesión preferida si aplica). */
+export type MoveGroupToHoleVariables = {
+  groupNumber: number
+  newStartingHole: number
+  newTeeTime?: string
+  preferredSession?: 'morning' | 'afternoon' | null
+}
+
 // Hook para obtener todos los torneos de un club
 export function useTournaments(clubId: number) {
   return useQuery({
@@ -271,14 +279,24 @@ export function useMoveGroupToHole(clubId: number, tournamentId: number) {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: ({ groupNumber, newStartingHole, newTeeTime }: { groupNumber: number, newStartingHole: number, newTeeTime?: string }) =>
-      tournamentService.moveGroupToHole(clubId, tournamentId, groupNumber, newStartingHole, newTeeTime),
-    onMutate: async ({ groupNumber, newStartingHole, newTeeTime }) => {
+    mutationFn: ({
+      groupNumber,
+      newStartingHole,
+      newTeeTime,
+      preferredSession
+    }: MoveGroupToHoleVariables) =>
+      tournamentService.moveGroupToHole(clubId, tournamentId, groupNumber, newStartingHole, newTeeTime, preferredSession),
+    onMutate: async ({ groupNumber, newStartingHole, newTeeTime, preferredSession }: MoveGroupToHoleVariables) => {
       await queryClient.cancelQueries({ queryKey: QUERY_KEYS.tournamentGroups(clubId, tournamentId) })
       const previous = queryClient.getQueryData<any>(QUERY_KEYS.tournamentGroups(clubId, tournamentId))
       queryClient.setQueryData<any>(QUERY_KEYS.tournamentGroups(clubId, tournamentId), (old: any) => {
         if (!Array.isArray(old)) return old
-        return old.map((g) => g.group_number === groupNumber ? { ...g, starting_hole: newStartingHole, tee_time: newTeeTime ?? g.tee_time } : g)
+        return old.map((g) => g.group_number === groupNumber ? {
+          ...g,
+          starting_hole: newStartingHole,
+          tee_time: newTeeTime ?? g.tee_time,
+          ...(preferredSession === 'morning' || preferredSession === 'afternoon' ? { group_tee_preference: preferredSession } : {})
+        } : g)
       })
       return { previous }
     },

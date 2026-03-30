@@ -7,7 +7,9 @@ export function formatHcpForDisplay(
 ): string {
   if (hcpValue === null || hcpValue === undefined || Number.isNaN(Number(hcpValue))) return '-';
   const n = Math.round(Number(hcpValue));
-  const idx = handicapIndex !== null && handicapIndex !== undefined ? Number(handicapIndex) : null;
+  /** HCP de juego guardado como negativo = plus (convención en BD). Siempre +X, sin depender del índice (evita "-1" en reportes). */
+  if (n < 0) return `+${Math.abs(n)}`;
+  let idx = handicapIndex !== null && handicapIndex !== undefined ? Number(handicapIndex) : null;
   if (idx !== null && !Number.isNaN(idx) && idx < 0) return `+${Math.abs(n)}`;
   return String(n);
 }

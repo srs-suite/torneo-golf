@@ -277,7 +277,9 @@ export function MemberDetailsModal({ isOpen, onClose, member, clubId }: MemberDe
                           <Award className="w-5 h-5 text-gray-400" />
                           <div>
                             <p className="text-sm font-medium text-gray-900">Handicap Index</p>
-                            <p className="text-sm text-gray-500">{member.handicap_index || 'No definido'}</p>
+                            <p className="text-sm text-gray-500">
+                              {member.handicap_index != null ? member.handicap_index : 'No definido'}
+                            </p>
                           </div>
                         </div>
                         
@@ -285,7 +287,9 @@ export function MemberDetailsModal({ isOpen, onClose, member, clubId }: MemberDe
                           <TrendingUp className="w-5 h-5 text-gray-400" />
                           <div>
                             <p className="text-sm font-medium text-gray-900">HCP Local</p>
-                            <p className="text-sm text-gray-500">{member.handicap_local || 'No definido'}</p>
+                            <p className="text-sm text-gray-500">
+                              {member.handicap_local != null ? member.handicap_local : 'No definido'}
+                            </p>
                           </div>
                         </div>
                         
@@ -520,7 +524,9 @@ export function MemberDetailsModal({ isOpen, onClose, member, clubId }: MemberDe
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="bg-blue-50 rounded-lg p-4">
                       <h4 className="font-medium text-blue-900">Index Actual</h4>
-                      <p className="text-2xl font-bold text-blue-600">{member.handicap_index || '0.0'}</p>
+                      <p className="text-2xl font-bold text-blue-600">
+                        {member.handicap_index != null ? member.handicap_index : '0.0'}
+                      </p>
                     </div>
                     <div className="bg-green-50 rounded-lg p-4">
                       <h4 className="font-medium text-green-900">HCP Local Actual</h4>

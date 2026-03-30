@@ -4,7 +4,20 @@ import path from 'path'
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    /** Marca cada build en dist/index.html (comentario HTML) para comparar con “ver código fuente” en producción. */
+    {
+      name: 'inject-build-stamp',
+      transformIndexHtml(html) {
+        const stamp = new Date().toISOString()
+        return html.replace(
+          '<head>',
+          `<head>\n    <!-- teebuild:${stamp} -->\n    <meta name="tee-build-stamp" content="${stamp}" />`
+        )
+      },
+    },
+  ],
   optimizeDeps: {
     force: true, // Fuerza la reoptimización de dependencias
   },

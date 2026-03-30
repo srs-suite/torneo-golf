@@ -1292,36 +1292,161 @@ async function getCourseTeesGroupedByHole(courseId) {
 // ================================
 
 /**
+ * IDs guardados para el acumulado anual. Vacío = provisorio: cuentan todos los torneos del año con is_ranking_event = 1.
+ */
+async function fetchAnnualRankingPickIds(clubId, year) {
+    try {
+        const { rows } = await executeQuery(
+            `SELECT tournament_id FROM annual_ranking_tournament_picks
+             WHERE course_id = ? AND calendar_year = ?
+             ORDER BY tournament_id`,
+            [clubId, year]
+        );
+        return (rows || []).map((r) => r.tournament_id);
+    } catch (e) {
+        if (e.code === 'ER_NO_SUCH_TABLE') return [];
+        throw e;
+    }
+}
+
+/**
+ * Torneos candidatos del año (marcados para ranking).
+ */
+async function getAnnualRankingCandidates(clubId, year) {
+    const startDate = `${year}-01-01`;
+    const endDate = `${year}-12-31`;
+    const { rows } = await executeQuery(
+        `SELECT tournament_id, tournament_name, tournament_date, status
+         FROM tournaments
+         WHERE course_id = ?
+           AND tournament_date BETWEEN ? AND ?
+           AND COALESCE(is_ranking_event, 0) = 1
+         ORDER BY tournament_date ASC, tournament_id ASC`,
+        [clubId, startDate, endDate]
+    );
+    return rows || [];
+}
+
+/**
+ * Estado de la selección anual (para UI).
+ */
+async function getAnnualRankingTournamentPicks(clubId, year) {
+    const ids = await fetchAnnualRankingPickIds(clubId, year);
+    return {
+        uses_explicit_selection: ids.length > 0,
+        tournament_ids: ids
+    };
+}
+
+/**
+ * Reemplaza la selección de torneos que cuentan en el acumulado del año.
+ * tournamentIds vacío borra la selección (vuelve al modo provisorio: todos los marcados).
+ */
+async function setAnnualRankingTournamentPicks(clubId, year, tournamentIds) {
+    const yearInt = parseInt(year, 10);
+    const courseId = parseInt(clubId, 10);
+    const unique = [
+        ...new Set(
+            (tournamentIds || [])
+                .map((id) => parseInt(id, 10))
+                .filter((n) => !Number.isNaN(n))
+        )
+    ].sort((a, b) => a - b);
+
+    const startDate = `${yearInt}-01-01`;
+    const endDate = `${yearInt}-12-31`;
+
+    try {
+        if (unique.length === 0) {
+            await executeQuery(
+                'DELETE FROM annual_ranking_tournament_picks WHERE course_id = ? AND calendar_year = ?',
+                [courseId, yearInt]
+            );
+            return getAnnualRankingTournamentPicks(courseId, yearInt);
+        }
+
+        const ph = unique.map(() => '?').join(',');
+        const { rows: validRows } = await executeQuery(
+            `SELECT tournament_id FROM tournaments
+             WHERE course_id = ?
+               AND tournament_id IN (${ph})
+               AND COALESCE(is_ranking_event, 0) = 1
+               AND tournament_date BETWEEN ? AND ?`,
+            [courseId, ...unique, startDate, endDate]
+        );
+        const valid = new Set((validRows || []).map((r) => r.tournament_id));
+        const missing = unique.filter((id) => !valid.has(id));
+        if (missing.length > 0) {
+            throw new Error(`Torneo no válido para el año o no marcado para ranking: ${missing.join(', ')}`);
+        }
+
+        const tx = [
+            {
+                query: 'DELETE FROM annual_ranking_tournament_picks WHERE course_id = ? AND calendar_year = ?',
+                params: [courseId, yearInt]
+            },
+            ...unique.map((tid) => ({
+                query: 'INSERT INTO annual_ranking_tournament_picks (course_id, calendar_year, tournament_id) VALUES (?, ?, ?)',
+                params: [courseId, yearInt, tid]
+            }))
+        ];
+        await executeTransaction(tx);
+        return getAnnualRankingTournamentPicks(courseId, yearInt);
+    } catch (e) {
+        if (e.code === 'ER_NO_SUCH_TABLE') {
+            throw new Error('Falta crear la tabla: ejecutá backend/migrations/add_annual_ranking_tournament_picks.sql');
+        }
+        throw e;
+    }
+}
+
+/**
  * Get annual rankings for a club
+ * Usa tournament_participants + scorecards (mismo esquema que el resto de TeeTracker).
+ * Solo socios/visitantes del club (no externos). Torneos con is_ranking_event = 1 en el año.
+ * Si hay filas en annual_ranking_tournament_picks para ese año, solo esos torneos entran al acumulado.
+ *
+ * - without_hcp (API): Gross — todos ordenados por total gross; solo tarjetas con total_gross > 0 (0 = no presentó).
+ * - with_hcp (API): Neto — socios con índice WHS; excluye al top 9 Gross (un jugador no figura en ambos).
  */
 async function getAnnualRankings(clubId, year) {
     try {
         const startDate = `${year}-01-01`;
         const endDate = `${year}-12-31`;
 
-        // Rankings with handicap (best 16)
-        const withHcpQuery = `
-            SELECT 
-                m.member_id,
-                CONCAT(m.first_name, ' ', m.last_name) as player_name,
-                m.member_number,
-                COUNT(DISTINCT tp.tournament_id) as rounds,
-                SUM(s.total_gross) as total_gross,
-                SUM(s.total_net) as total_net
-            FROM members m
-            INNER JOIN tournament_participation tp ON m.member_id = tp.player_id AND tp.is_member = 1
-            INNER JOIN tournaments t ON tp.tournament_id = t.tournament_id AND t.is_ranking_event = 1
-            INNER JOIN scorecards s ON tp.participation_id = s.participation_id
-            WHERE m.course_id = ? 
-                AND t.tournament_date BETWEEN ? AND ?
-                AND tp.handicap_index IS NOT NULL 
-                AND tp.handicap_index > 0
-            GROUP BY m.member_id, m.first_name, m.last_name, m.member_number
-            ORDER BY total_net ASC
-            LIMIT 16
+        const pickIds = await fetchAnnualRankingPickIds(clubId, year);
+        const pickFilterSql =
+            pickIds.length > 0 ? `AND t.tournament_id IN (${pickIds.map(() => '?').join(',')})` : '';
+
+        const rankParams = [clubId, clubId, startDate, endDate];
+        const rankParamsWithPicks = pickIds.length > 0 ? [...rankParams, ...pickIds] : rankParams;
+
+        const grossTop9IdsQuery = `
+            SELECT agg.member_id FROM (
+                SELECT 
+                    m.member_id,
+                    SUM(s.total_gross) as total_gross
+                FROM members m
+                INNER JOIN tournament_participants tp ON m.member_id = tp.member_id
+                INNER JOIN tournaments t ON tp.tournament_id = t.tournament_id
+                    AND COALESCE(t.is_ranking_event, 0) = 1
+                    AND t.course_id = ?
+                INNER JOIN scorecards s ON s.tournament_id = tp.tournament_id
+                    AND s.member_id = tp.member_id
+                    AND s.total_gross > 0
+                WHERE m.course_id = ?
+                    AND t.tournament_date BETWEEN ? AND ?
+                    ${pickFilterSql}
+                GROUP BY m.member_id, m.first_name, m.last_name, m.member_number
+                HAVING SUM(s.total_gross) > 0
+                ORDER BY total_gross ASC
+                LIMIT 9
+            ) agg
         `;
 
-        // Rankings without handicap (best 8)
+        const { rows: grossTopRows } = await executeQuery(grossTop9IdsQuery, rankParamsWithPicks);
+        const grossTopMemberIds = (grossTopRows || []).map((r) => r.member_id).filter((id) => id != null);
+
         const withoutHcpQuery = `
             SELECT 
                 m.member_id,
@@ -1330,19 +1455,74 @@ async function getAnnualRankings(clubId, year) {
                 COUNT(DISTINCT tp.tournament_id) as rounds,
                 SUM(s.total_gross) as total_gross
             FROM members m
-            INNER JOIN tournament_participation tp ON m.member_id = tp.player_id AND tp.is_member = 1
-            INNER JOIN tournaments t ON tp.tournament_id = t.tournament_id AND t.is_ranking_event = 1
-            INNER JOIN scorecards s ON tp.participation_id = s.participation_id
-            WHERE m.course_id = ? 
+            INNER JOIN tournament_participants tp ON m.member_id = tp.member_id
+            INNER JOIN tournaments t ON tp.tournament_id = t.tournament_id
+                AND COALESCE(t.is_ranking_event, 0) = 1
+                AND t.course_id = ?
+            INNER JOIN scorecards s ON s.tournament_id = tp.tournament_id
+                AND s.member_id = tp.member_id
+                AND s.total_gross > 0
+            WHERE m.course_id = ?
                 AND t.tournament_date BETWEEN ? AND ?
-                AND (tp.handicap_index IS NULL OR tp.handicap_index = 0)
+                ${pickFilterSql}
             GROUP BY m.member_id, m.first_name, m.last_name, m.member_number
+            HAVING SUM(s.total_gross) > 0
             ORDER BY total_gross ASC
-            LIMIT 8
         `;
 
-        const { rows: withHcp } = await executeQuery(withHcpQuery, [clubId, startDate, endDate]);
-        const { rows: withoutHcp } = await executeQuery(withoutHcpQuery, [clubId, startDate, endDate]);
+        const { rows: withoutHcp } = await executeQuery(withoutHcpQuery, rankParamsWithPicks);
+        const excludeGrossTop =
+            grossTopMemberIds.length > 0
+                ? `AND m.member_id NOT IN (${grossTopMemberIds.map(() => '?').join(',')})`
+                : '';
+
+        // Neto calculado como en el front (computeNetScore): HCP = local ?? índice redondeado; índice negativo → gross + |HCP|
+        const annualNetRowExpr = `(CASE
+                WHEN m.handicap_index IS NOT NULL AND m.handicap_index < 0
+                THEN s.total_gross + ABS(ROUND(COALESCE(m.handicap_local, m.handicap_index, 0)))
+                ELSE s.total_gross - ROUND(COALESCE(m.handicap_local, m.handicap_index, 0))
+            END)`;
+
+        const withHcpQuery = `
+            SELECT
+                ranked.member_id,
+                ranked.player_name,
+                ranked.member_number,
+                ranked.rounds,
+                ranked.total_gross,
+                ranked.total_net
+            FROM (
+                SELECT
+                    m.member_id,
+                    CONCAT(m.first_name, ' ', m.last_name) as player_name,
+                    m.member_number,
+                    COUNT(DISTINCT tp.tournament_id) as rounds,
+                    SUM(s.total_gross) as total_gross,
+                    SUM(${annualNetRowExpr}) as total_net
+                FROM members m
+                INNER JOIN tournament_participants tp ON m.member_id = tp.member_id
+                INNER JOIN tournaments t ON tp.tournament_id = t.tournament_id
+                    AND COALESCE(t.is_ranking_event, 0) = 1
+                    AND t.course_id = ?
+                INNER JOIN scorecards s ON s.tournament_id = tp.tournament_id
+                    AND s.member_id = tp.member_id
+                    AND s.total_gross > 0
+                WHERE m.course_id = ?
+                    AND t.tournament_date BETWEEN ? AND ?
+                    AND m.handicap_index IS NOT NULL
+                    ${pickFilterSql}
+                    ${excludeGrossTop}
+                GROUP BY m.member_id, m.first_name, m.last_name, m.member_number
+                HAVING SUM(s.total_gross) > 0
+            ) ranked
+            ORDER BY
+                CASE WHEN COALESCE(ranked.total_net, 0) = 0 THEN 1 ELSE 0 END ASC,
+                ranked.total_gross ASC,
+                ranked.member_id
+        `;
+
+        const netParams = [...rankParamsWithPicks, ...grossTopMemberIds];
+        const { rows: withHcp } = await executeQuery(withHcpQuery, netParams);
 
         return {
             year,
@@ -1351,7 +1531,11 @@ async function getAnnualRankings(clubId, year) {
             without_hcp: withoutHcp,
             top_cuts: {
                 with_hcp: withHcp.slice(0, 16),
-                without_hcp: withoutHcp.slice(0, 8)
+                without_hcp: withoutHcp.slice(0, 9)
+            },
+            annual_selection: {
+                uses_explicit_selection: pickIds.length > 0,
+                tournament_ids: pickIds
             }
         };
     } catch (error) {
@@ -1361,58 +1545,116 @@ async function getAnnualRankings(clubId, year) {
 }
 
 /**
- * Get tournament ranking
+ * Get tournament ranking (un torneo del club). Misma fuente de datos que tarjetas.
+ * - without_hcp (API): Gross — todos ordenados por gross; solo total_gross > 0 (0 = no presentó).
+ * - with_hcp (API): Neto — índice WHS; excluye al top 9 Gross (mismo participation_id).
  */
 async function getTournamentRanking(clubId, tournamentId) {
     try {
-        // Rankings with handicap
-        const withHcpQuery = `
-            SELECT 
-                tp.participation_id,
-                CASE 
-                    WHEN tp.is_member = 1 THEN m.member_id
-                    ELSE ep.external_player_id
-                END as member_id,
-                tp.player_name,
-                m.member_number,
-                s.total_gross,
-                s.total_net,
-                tp.handicap_index,
-                tp.handicap_local
-            FROM tournament_participation tp
-            LEFT JOIN members m ON tp.player_id = m.member_id AND tp.is_member = 1
-            LEFT JOIN external_players ep ON tp.player_id = ep.external_player_id AND tp.is_member = 0
-            INNER JOIN scorecards s ON tp.participation_id = s.participation_id
-            WHERE tp.tournament_id = ? 
-                AND tp.handicap_index IS NOT NULL 
-                AND tp.handicap_index > 0
-            ORDER BY s.total_net ASC
+        const whsIndexExpr = `COALESCE(tp.handicap_index_used, m.handicap_index, ep.handicap_index)`;
+        const playHcpExpr = `COALESCE(tp.handicap_used, m.handicap_local, m.handicap_index, ep.handicap_local, ep.handicap_index)`;
+
+        const grossTop9PartQuery = `
+            SELECT tp.participation_id
+            FROM tournament_participants tp
+            INNER JOIN tournaments t ON t.tournament_id = tp.tournament_id AND t.course_id = ?
+            LEFT JOIN members m ON tp.member_id = m.member_id AND tp.player_type IN ('member', 'visitor')
+            LEFT JOIN external_players ep ON tp.external_player_id = ep.external_id AND tp.player_type = 'external'
+            INNER JOIN scorecards s ON s.tournament_id = tp.tournament_id
+                AND (
+                    (tp.member_id IS NOT NULL AND s.member_id = tp.member_id)
+                    OR (tp.external_player_id IS NOT NULL AND s.external_player_id = tp.external_player_id)
+                )
+                AND s.total_gross > 0
+            WHERE tp.tournament_id = ?
+            ORDER BY s.total_gross ASC
+            LIMIT 9
         `;
 
-        // Rankings without handicap
+        const { rows: grossTopPartRows } = await executeQuery(grossTop9PartQuery, [clubId, tournamentId]);
+        const grossTopPartIds = (grossTopPartRows || []).map((r) => r.participation_id).filter((id) => id != null);
+
         const withoutHcpQuery = `
             SELECT 
                 tp.participation_id,
-                CASE 
-                    WHEN tp.is_member = 1 THEN m.member_id
-                    ELSE ep.external_player_id
+                CASE
+                    WHEN tp.player_type = 'external' THEN COALESCE(ep.external_id, tp.external_player_id)
+                    ELSE m.member_id
                 END as member_id,
-                tp.player_name,
+                COALESCE(CONCAT(m.first_name, ' ', m.last_name), ep.full_name, tp.player_name) as player_name,
                 m.member_number,
                 s.total_gross,
-                tp.handicap_index,
-                tp.handicap_local
-            FROM tournament_participation tp
-            LEFT JOIN members m ON tp.player_id = m.member_id AND tp.is_member = 1
-            LEFT JOIN external_players ep ON tp.player_id = ep.external_player_id AND tp.is_member = 0
-            INNER JOIN scorecards s ON tp.participation_id = s.participation_id
-            WHERE tp.tournament_id = ? 
-                AND (tp.handicap_index IS NULL OR tp.handicap_index = 0)
+                NULL as handicap_effective
+            FROM tournament_participants tp
+            INNER JOIN tournaments t ON t.tournament_id = tp.tournament_id AND t.course_id = ?
+            LEFT JOIN members m ON tp.member_id = m.member_id AND tp.player_type IN ('member', 'visitor')
+            LEFT JOIN external_players ep ON tp.external_player_id = ep.external_id AND tp.player_type = 'external'
+            INNER JOIN scorecards s ON s.tournament_id = tp.tournament_id
+                AND (
+                    (tp.member_id IS NOT NULL AND s.member_id = tp.member_id)
+                    OR (tp.external_player_id IS NOT NULL AND s.external_player_id = tp.external_player_id)
+                )
+                AND s.total_gross > 0
+            WHERE tp.tournament_id = ?
             ORDER BY s.total_gross ASC
         `;
 
-        const { rows: withHcp } = await executeQuery(withHcpQuery, [tournamentId]);
-        const { rows: withoutHcp } = await executeQuery(withoutHcpQuery, [tournamentId]);
+        const { rows: withoutHcp } = await executeQuery(withoutHcpQuery, [clubId, tournamentId]);
+        const excludeGrossTop =
+            grossTopPartIds.length > 0
+                ? `AND tp.participation_id NOT IN (${grossTopPartIds.map(() => '?').join(',')})`
+                : '';
+
+        const tournamentNetRowExpr = `(CASE
+                WHEN COALESCE(m.handicap_index, ep.handicap_index) IS NOT NULL
+                    AND COALESCE(m.handicap_index, ep.handicap_index) < 0
+                THEN s.total_gross + ABS(ROUND(COALESCE(m.handicap_local, m.handicap_index, ep.handicap_local, ep.handicap_index, 0)))
+                ELSE s.total_gross - ROUND(COALESCE(m.handicap_local, m.handicap_index, ep.handicap_local, ep.handicap_index, 0))
+            END)`;
+
+        const withHcpQuery = `
+            SELECT
+                z.participation_id,
+                z.member_id,
+                z.player_name,
+                z.member_number,
+                z.total_gross,
+                z.total_net,
+                z.handicap_effective
+            FROM (
+                SELECT
+                    tp.participation_id,
+                    CASE
+                        WHEN tp.player_type = 'external' THEN COALESCE(ep.external_id, tp.external_player_id)
+                        ELSE m.member_id
+                    END as member_id,
+                    COALESCE(CONCAT(m.first_name, ' ', m.last_name), ep.full_name, tp.player_name) as player_name,
+                    m.member_number,
+                    s.total_gross,
+                    ${tournamentNetRowExpr} AS total_net,
+                    ${playHcpExpr} as handicap_effective
+                FROM tournament_participants tp
+                INNER JOIN tournaments t ON t.tournament_id = tp.tournament_id AND t.course_id = ?
+                LEFT JOIN members m ON tp.member_id = m.member_id AND tp.player_type IN ('member', 'visitor')
+                LEFT JOIN external_players ep ON tp.external_player_id = ep.external_id AND tp.player_type = 'external'
+                INNER JOIN scorecards s ON s.tournament_id = tp.tournament_id
+                    AND (
+                        (tp.member_id IS NOT NULL AND s.member_id = tp.member_id)
+                        OR (tp.external_player_id IS NOT NULL AND s.external_player_id = tp.external_player_id)
+                    )
+                    AND s.total_gross > 0
+                WHERE tp.tournament_id = ?
+                    AND ${whsIndexExpr} IS NOT NULL
+                    ${excludeGrossTop}
+            ) z
+            ORDER BY
+                CASE WHEN COALESCE(z.total_net, 0) = 0 THEN 1 ELSE 0 END ASC,
+                z.total_gross ASC,
+                z.participation_id
+        `;
+
+        const netParams = [clubId, tournamentId, ...grossTopPartIds];
+        const { rows: withHcp } = await executeQuery(withHcpQuery, netParams);
 
         return {
             tournament_id: tournamentId,
@@ -2995,7 +3237,7 @@ async function addPublicInscription(clubId, tournamentId, memberId, options = {}
 
     const memberHandicapQuery = `SELECT handicap_local, handicap_index FROM members WHERE member_id = ? AND course_id = ?`;
     const { rows: memberData } = await executeQuery(memberHandicapQuery, [memberId, clubIdNum]);
-    const currentHandicap = memberData.length > 0 ? (memberData[0].handicap_local || memberData[0].handicap_index) : null;
+    const currentHandicap = memberData.length > 0 ? (memberData[0].handicap_local ?? memberData[0].handicap_index) : null;
 
     // Al unirse a un grupo existente, usar el mismo tee_time y starting_hole que el grupo (para quedar en la misma tarjeta)
     let groupTeeTime = null;
@@ -3391,31 +3633,46 @@ async function createTournament(courseId, tournamentData) {
     const { rows } = await executeQuery(query, params);
     const newId = rows.insertId;
 
-    // Persistir configuración de salidas, allow_groups y flyer_url si se envió (columnas opcionales)
+    // Persistir salidas, flyer, resultados y ranking (mismos flags que updateTournament; columnas opcionales en instalaciones viejas)
+    const sim = (tournamentData.enable_simultaneous_starts === true || tournamentData.enable_simultaneous_starts === 1) ? 1 : 0;
+    const two = (tournamentData.enable_two_sessions === true || tournamentData.enable_two_sessions === 1) ? 1 : 0;
+    const allowGroups = (tournamentData.public_inscription_allow_groups !== false && tournamentData.public_inscription_allow_groups !== 0) ? 1 : 0;
+    const flyerUrl = (tournamentData.flyer_url && String(tournamentData.flyer_url).trim()) || null;
+    const resultsMode = (tournamentData.results_mode === 'scratch_bands') ? 'scratch_bands' : 'standard';
+    const separateLadies = (tournamentData.separate_ladies === true || tournamentData.separate_ladies === 1) ? 1 : 0;
+    const ladiesByHcp = (tournamentData.ladies_by_hcp === true || tournamentData.ladies_by_hcp === 1) ? 1 : 0;
+    const isRankingEvent = (tournamentData.is_ranking_event === true || tournamentData.is_ranking_event === 1) ? 1 : 0;
+    const postInsertBaseParams = [
+        sim,
+        tournamentData.afternoon_start_time || '14:00',
+        (tournamentData.preferred_session === 'afternoon') ? 'afternoon' : 'morning',
+        tournamentData.tee_interval_minutes != null ? Number(tournamentData.tee_interval_minutes) : 10,
+        two,
+        allowGroups,
+        flyerUrl
+    ];
     try {
-        const sim = (tournamentData.enable_simultaneous_starts === true || tournamentData.enable_simultaneous_starts === 1) ? 1 : 0;
-        const two = (tournamentData.enable_two_sessions === true || tournamentData.enable_two_sessions === 1) ? 1 : 0;
-        const allowGroups = (tournamentData.public_inscription_allow_groups !== false && tournamentData.public_inscription_allow_groups !== 0) ? 1 : 0;
-        const flyerUrl = (tournamentData.flyer_url && String(tournamentData.flyer_url).trim()) || null;
         await executeQuery(
             `UPDATE tournaments SET
                 enable_simultaneous_starts = ?, afternoon_start_time = ?, preferred_session = ?, tee_interval_minutes = ?, enable_two_sessions = ?,
-                public_inscription_allow_groups = ?, flyer_url = ?
+                public_inscription_allow_groups = ?, flyer_url = ?,
+                results_mode = ?, separate_ladies = ?, ladies_by_hcp = ?, is_ranking_event = ?
                 WHERE tournament_id = ? AND course_id = ?`,
-            [
-                sim,
-                tournamentData.afternoon_start_time || '14:00',
-                (tournamentData.preferred_session === 'afternoon') ? 'afternoon' : 'morning',
-                tournamentData.tee_interval_minutes != null ? Number(tournamentData.tee_interval_minutes) : 10,
-                two,
-                allowGroups,
-                flyerUrl,
-                newId,
-                courseId
-            ]
+            [...postInsertBaseParams, resultsMode, separateLadies, ladiesByHcp, isRankingEvent, newId, courseId]
         );
     } catch (e) {
         if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+        try {
+            await executeQuery(
+                `UPDATE tournaments SET
+                    enable_simultaneous_starts = ?, afternoon_start_time = ?, preferred_session = ?, tee_interval_minutes = ?, enable_two_sessions = ?,
+                    public_inscription_allow_groups = ?, flyer_url = ?
+                    WHERE tournament_id = ? AND course_id = ?`,
+                [...postInsertBaseParams, newId, courseId]
+            );
+        } catch (e2) {
+            if (e2.code !== 'ER_BAD_FIELD_ERROR') throw e2;
+        }
     }
 
     // Log activity
@@ -3807,13 +4064,19 @@ async function getTournamentParticipants(courseId, tournamentId) {
                        m.phone
                END as player_phone,
                CASE 
-                   WHEN tp.player_type = 'external' THEN ep.handicap_index
-                   ELSE m.handicap_index
+                   WHEN tp.player_type = 'external' THEN 
+                       COALESCE(tp.handicap_used, ep.handicap_local, ep.handicap_index)
+                   ELSE 
+                       COALESCE(tp.handicap_used, m.handicap_local, m.handicap_index)
                END as handicap_index,
                CASE 
                    WHEN tp.player_type = 'external' THEN ep.handicap_local
                    ELSE m.handicap_local
                END as handicap_local,
+               CASE 
+                   WHEN tp.player_type = 'external' THEN ep.handicap_index
+                   ELSE m.handicap_index
+               END as handicap_index_wh,
                CASE 
                    WHEN tp.player_type = 'external' THEN 
                        ep.member_number
@@ -3827,7 +4090,7 @@ async function getTournamentParticipants(courseId, tournamentId) {
                        gc.club_name
                END as player_club,
                tp.player_type,
-               CASE WHEN tp.player_type = 'external' THEN ep.gender ELSE NULL END as gender,
+               CASE WHEN tp.player_type = 'external' THEN ep.gender ELSE m.gender END as gender,
                tp.tee_time_preference
         FROM tournament_participants tp
         LEFT JOIN members m ON tp.member_id = m.member_id AND tp.player_type IN ('member', 'visitor')
@@ -3875,6 +4138,10 @@ async function getTournamentParticipantsById(tournamentId) {
                        m.handicap_local
                END as handicap_local,
                CASE 
+                   WHEN tp.player_type = 'external' THEN ep.handicap_index
+                   ELSE m.handicap_index
+               END as handicap_index_wh,
+               CASE 
                    WHEN tp.player_type = 'external' THEN 
                        ep.member_number
                    ELSE 
@@ -3886,7 +4153,8 @@ async function getTournamentParticipantsById(tournamentId) {
                    ELSE 
                        gc.club_name
                END as player_club,
-               tp.player_type
+               tp.player_type,
+               CASE WHEN tp.player_type = 'external' THEN ep.gender ELSE m.gender END as gender
         FROM tournament_participants tp
         LEFT JOIN members m ON tp.member_id = m.member_id AND tp.player_type IN ('member', 'visitor')
         LEFT JOIN external_players ep ON tp.external_player_id = ep.external_id AND tp.player_type = 'external'
@@ -4083,7 +4351,7 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
             WHERE member_id = ?
         `;
         const { rows: memberData } = await executeQuery(memberHandicapQuery, [participantData.player_id]);
-        const currentHandicap = memberData.length > 0 ? (memberData[0].handicap_local || memberData[0].handicap_index) : null;
+        const currentHandicap = memberData.length > 0 ? (memberData[0].handicap_local ?? memberData[0].handicap_index) : null;
         
         console.log('🎯 Visitor handicap snapshot:', {
             member_id: participantData.player_id,
@@ -4119,7 +4387,7 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
             WHERE external_id = ?
         `;
         const { rows: externalData } = await executeQuery(externalHandicapQuery, [participantData.external_player_id]);
-        currentHandicap = externalData.length > 0 ? (externalData[0].handicap_local || externalData[0].handicap_index) : null;
+        currentHandicap = externalData.length > 0 ? (externalData[0].handicap_local ?? externalData[0].handicap_index) : null;
         
         console.log('🎯 External player handicap snapshot:', {
             external_id: participantData.external_player_id,
@@ -4159,7 +4427,7 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
             WHERE member_id = ?
         `;
         const { rows: memberData } = await executeQuery(memberHandicapQuery, [participantData.member_id]);
-        const currentHandicap = memberData.length > 0 ? (memberData[0].handicap_local || memberData[0].handicap_index) : null;
+        const currentHandicap = memberData.length > 0 ? (memberData[0].handicap_local ?? memberData[0].handicap_index) : null;
         
         console.log('🎯 Home member handicap snapshot:', {
             member_id: participantData.member_id,
@@ -4924,9 +5192,34 @@ async function deleteExternalPlayer(playerId) {
 async function getTournamentGroups(courseId, tournamentId) {
     const query = `
         SELECT tp.group_number,
-               tp.tee_time,
-               tp.starting_hole,
-               (SELECT IF(SUM(CASE WHEN tp2.tee_time_preference = 'afternoon' THEN 1 ELSE 0 END) > 0, 'afternoon', IF(SUM(CASE WHEN tp2.tee_time_preference = 'morning' THEN 1 ELSE 0 END) > 0, 'morning', NULL)) FROM tournament_participants tp2 WHERE tp2.tournament_id = tp.tournament_id AND tp2.group_number = tp.group_number AND (tp2.tee_time <=> tp.tee_time) AND (tp2.starting_hole <=> tp.starting_hole)) as group_tee_preference,
+               (SELECT tp3.tee_time
+                FROM tournament_participants tp3
+                WHERE tp3.tournament_id = tp.tournament_id
+                  AND tp3.group_number = tp.group_number
+                  AND tp3.participation_id > 0
+                  AND tp3.tee_time IS NOT NULL
+                GROUP BY tp3.tee_time
+                ORDER BY COUNT(*) DESC, tp3.tee_time ASC
+                LIMIT 1) as tee_time,
+               (SELECT tp3.starting_hole
+                FROM tournament_participants tp3
+                WHERE tp3.tournament_id = tp.tournament_id
+                  AND tp3.group_number = tp.group_number
+                  AND tp3.participation_id > 0
+                GROUP BY tp3.starting_hole
+                ORDER BY COUNT(*) DESC, tp3.starting_hole ASC
+                LIMIT 1) as starting_hole,
+               (SELECT CASE
+                    WHEN SUM(CASE WHEN tp2.tee_time_preference = 'afternoon' THEN 1 ELSE 0 END)
+                         > SUM(CASE WHEN tp2.tee_time_preference = 'morning' THEN 1 ELSE 0 END) THEN 'afternoon'
+                    WHEN SUM(CASE WHEN tp2.tee_time_preference = 'morning' THEN 1 ELSE 0 END)
+                         > SUM(CASE WHEN tp2.tee_time_preference = 'afternoon' THEN 1 ELSE 0 END) THEN 'morning'
+                    ELSE NULL
+                END
+                FROM tournament_participants tp2
+                WHERE tp2.tournament_id = tp.tournament_id
+                  AND tp2.group_number = tp.group_number
+                  AND tp2.participation_id > 0) as group_tee_preference,
                COUNT(*) as participants_count,
                AVG(CASE 
                    WHEN tp.player_type = 'external' THEN 
@@ -4947,21 +5240,21 @@ async function getTournamentGroups(courseId, tournamentId) {
                        END,
                        'handicap_index', CASE 
                            WHEN tp.player_type = 'external' THEN 
-                               CASE 
-                                   WHEN tp.handicap_used IS NOT NULL THEN tp.handicap_used
-                                   ELSE ep.handicap_index
-                               END
+                               COALESCE(tp.handicap_used, ep.handicap_local, ep.handicap_index)
                            ELSE 
-                               CASE 
-                                   WHEN tp.handicap_used IS NOT NULL THEN tp.handicap_used
-                                   ELSE m.handicap_index
-                               END
+                               COALESCE(tp.handicap_used, m.handicap_local, m.handicap_index)
                        END,
                        'handicap_local', CASE 
                            WHEN tp.player_type = 'external' THEN 
                                ep.handicap_local
                            ELSE 
                                m.handicap_local
+                       END,
+                       'handicap_index_wh', CASE 
+                           WHEN tp.player_type = 'external' THEN 
+                               ep.handicap_index
+                           ELSE 
+                               m.handicap_index
                        END,
                        'email', CASE 
                            WHEN tp.player_type = 'external' THEN 
@@ -4976,14 +5269,18 @@ async function getTournamentGroups(courseId, tournamentId) {
                                m.phone
                        END,
                        'player_type', tp.player_type,
-                       'status', tp.status
+                       'status', tp.status,
+                       'gender', CASE
+                           WHEN tp.player_type = 'external' THEN ep.gender
+                           ELSE m.gender
+                       END
                    )
                ) as participants
         FROM tournament_participants tp
         LEFT JOIN members m ON tp.member_id = m.member_id AND tp.player_type IN ('member', 'visitor')
         LEFT JOIN external_players ep ON tp.external_player_id = ep.external_id AND tp.player_type = 'external'
         WHERE tp.tournament_id = ? AND tp.group_number IS NOT NULL AND tp.participation_id > 0
-        GROUP BY tp.group_number, tp.tee_time, tp.starting_hole
+        GROUP BY tp.tournament_id, tp.group_number
         ORDER BY tp.group_number ASC
     `;
     
@@ -5927,9 +6224,14 @@ async function movePlayerToGroup(courseId, tournamentId, participationId, newGro
 }
 
 // Move entire group to a different starting hole
-async function moveGroupToHole(courseId, tournamentId, groupNumber, newStartingHole, newTeeTime = null) {
-    console.log(`🔄 Moving group ${groupNumber} to hole ${newStartingHole} in tournament ${tournamentId}`, {
-        courseId, tournamentId, groupNumber, newStartingHole, newTeeTime
+async function moveGroupToHole(courseId, tournamentId, groupNumber, newStartingHole, newTeeTime = null, preferredSession = null) {
+    const groupNum = Number(groupNumber);
+    if (!Number.isFinite(groupNum)) {
+        throw new Error(`Número de grupo inválido: ${groupNumber}`);
+    }
+    const normSession = preferredSession === 'afternoon' || preferredSession === 'morning' ? preferredSession : null;
+    console.log(`🔄 Moving group ${groupNum} to hole ${newStartingHole} in tournament ${tournamentId}`, {
+        courseId, tournamentId, groupNumber: groupNum, newStartingHole, newTeeTime, preferredSession: normSession
     });
 
     try {
@@ -5996,24 +6298,53 @@ async function moveGroupToHole(courseId, tournamentId, groupNumber, newStartingH
         // Normalizar hoyo: 0 => NULL (sin asignar)
         const normalizedHole = (newStartingHole === 0 || newStartingHole === '0') ? null : newStartingHole;
 
-        // Actualizar todos los jugadores del grupo con el nuevo hoyo de salida y el tee time corregido
-        let updateQuery, params;
-        
+        // Preferencia explícita o derivada de la hora (si no viene preferredSession del front, igual persistimos mañana/tarde y no dejamos el valor viejo en DB)
+        let sessionToApply = normSession;
+        if (!sessionToApply && finalTeeTime !== null && finalTeeTime !== undefined) {
+            try {
+                const { rows: tAf } = await executeQuery(
+                    `SELECT afternoon_start_time FROM tournaments WHERE tournament_id = ? LIMIT 1`,
+                    [tournamentId]
+                );
+                const aft = toHHMM(tAf[0]?.afternoon_start_time) || '14:00';
+                const [ah, am = 0] = aft.split(':').map(Number);
+                const tstr = String(finalTeeTime).trim();
+                const [h, mi = 0] = tstr.split(':').map(Number);
+                const teeMins = (isNaN(h) ? 0 : h) * 60 + (isNaN(mi) ? 0 : mi);
+                const aftMins = (isNaN(ah) ? 14 : ah) * 60 + (isNaN(am) ? 0 : am);
+                sessionToApply = teeMins >= aftMins ? 'afternoon' : 'morning';
+                console.log(`📌 tee_time_preference=${sessionToApply} derivado de hora ${finalTeeTime} (inicio tarde torneo ${aft})`);
+            } catch (e) {
+                console.warn('⚠️ No se pudo derivar turno desde hora:', e.message);
+            }
+        }
+
+        // Un solo UPDATE cuando hay hora + turno: evita filas con hora nueva y preferencia vieja (medio grupo tarde / medio mañana)
+        let updateQuery;
+        let params;
         if (finalTeeTime !== null && finalTeeTime !== undefined) {
-            updateQuery = `
-                UPDATE tournament_participants 
-                SET starting_hole = ?, tee_time = ?
-                WHERE tournament_id = ? AND group_number = ?
-            `;
-            params = [normalizedHole, finalTeeTime, tournamentId, groupNumber];
+            if (sessionToApply) {
+                updateQuery = `
+                    UPDATE tournament_participants
+                    SET starting_hole = ?, tee_time = ?, tee_time_preference = ?
+                    WHERE tournament_id = ? AND group_number = ?
+                `;
+                params = [normalizedHole, finalTeeTime, sessionToApply, tournamentId, groupNum];
+            } else {
+                updateQuery = `
+                    UPDATE tournament_participants
+                    SET starting_hole = ?, tee_time = ?
+                    WHERE tournament_id = ? AND group_number = ?
+                `;
+                params = [normalizedHole, finalTeeTime, tournamentId, groupNum];
+            }
         } else {
-            // Si newTeeTime es null, limpiar el horario (establecer a NULL)
             updateQuery = `
-                UPDATE tournament_participants 
+                UPDATE tournament_participants
                 SET starting_hole = ?, tee_time = NULL
                 WHERE tournament_id = ? AND group_number = ?
             `;
-            params = [normalizedHole, tournamentId, groupNumber];
+            params = [normalizedHole, tournamentId, groupNum];
         }
 
         console.log('🎯 SQL Query:', updateQuery);
@@ -6021,18 +6352,25 @@ async function moveGroupToHole(courseId, tournamentId, groupNumber, newStartingH
 
         const { rows } = await executeQuery(updateQuery, params);
 
+        if (normSession && (finalTeeTime === null || finalTeeTime === undefined)) {
+            await executeQuery(
+                `UPDATE tournament_participants SET tee_time_preference = ? WHERE tournament_id = ? AND group_number = ?`,
+                [normSession, tournamentId, groupNum]
+            );
+        }
+
         // También intentar actualizar grupos vacíos si existen
         try {
             if (finalTeeTime !== null && finalTeeTime !== undefined) {
                 await getPool().execute(
                     'UPDATE empty_tournament_groups SET starting_hole = ?, tee_time = ? WHERE tournament_id = ? AND group_number = ?',
-                    [normalizedHole, finalTeeTime, tournamentId, groupNumber]
+                    [normalizedHole, finalTeeTime, tournamentId, groupNum]
                 );
             } else {
                 // Si finalTeeTime es null, limpiar el horario
                 await getPool().execute(
                     'UPDATE empty_tournament_groups SET starting_hole = ?, tee_time = NULL WHERE tournament_id = ? AND group_number = ?',
-                    [normalizedHole, tournamentId, groupNumber]
+                    [normalizedHole, tournamentId, groupNum]
                 );
             }
         } catch (emptyGroupError) {
@@ -6879,7 +7217,7 @@ async function getMemberTournaments(clubId, memberId) {
         }
         
         // Determinar la categoría del jugador según su handicap
-        const handicap = tournament.handicap_used || tournament.handicap_local || tournament.handicap_index || 0;
+        const handicap = tournament.handicap_used ?? tournament.handicap_local ?? tournament.handicap_index ?? 0;
         const hcp = parseFloat(handicap);
         
         let categoryCondition = '';
@@ -7638,6 +7976,7 @@ export {
     
     // Rankings functions
     getAnnualRankings, getTournamentRanking,
+    getAnnualRankingCandidates, getAnnualRankingTournamentPicks, setAnnualRankingTournamentPicks,
     
     // Payments and accounting functions
     getPaymentsSummary, getExpenses, addExpense, updateExpense, deleteExpense,

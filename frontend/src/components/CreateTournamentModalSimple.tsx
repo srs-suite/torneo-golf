@@ -602,7 +602,7 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                 </span>
               </label>
               <p className="text-xs text-yellow-700 mt-2">
-                Se generan rankings solo con socios del club: con HCP (neto) y sin HCP (gross). Invitados/otros clubes no suman al ranking del club.
+                Ranking del club: <strong>Gross</strong> (top 9; solo cuentan tarjetas con golpes cargados, gross 0 = no presentó) y <strong>Neto</strong> (índice WHS; quienes entran al top 9 Gross no repiten en Neto). Invitados no suman al acumulado anual.
               </p>
             </div>
           </div>
@@ -640,7 +640,7 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                       <div className="space-y-1">
                         <p className="font-semibold text-blue-900">Modalidad Scratch:</p>
                         <ul className="list-disc list-inside space-y-0.5 ml-2">
-                          <li><strong>Scratch (Gross):</strong> Ganador absoluto por score bruto</li>
+                          <li><strong>Scratch (Gross):</strong> Por score bruto (todos, o solo caballeros si «Separar Damas»)</li>
                           <li><strong>1ra Banda:</strong> HCP -5 a 7.9 (Net)</li>
                           <li><strong>2da Banda:</strong> HCP 8 a 13.9 (Net)</li>
                           <li><strong>3ra Banda:</strong> HCP 14 a 21.9 (Net)</li>

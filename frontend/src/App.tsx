@@ -25,6 +25,7 @@ import ExternalPlayers from '@/pages/ExternalPlayers'
 import Payments from '@/pages/Payments'
 import PublicFinancialReport from '@/pages/PublicFinancialReport'
 import PublicInscription from '@/pages/PublicInscription'
+import TournamentMobilePayments from '@/pages/TournamentMobilePayments'
 
 // Componente para redirigir /club/:clubId a /club/:clubId/admin
 function ClubRedirect() {
@@ -37,11 +38,20 @@ function ClubRedirect() {
   return <Navigate to={`/club/${clubId}/admin`} replace />
 }
 
+/** QR o link cortados en .../tournaments/:id (sin mobile-payments) → cobro móvil con PIN */
+function RedirectTournamentHubToCobroMovil() {
+  const { clubId, tournamentId } = useParams<{ clubId: string; tournamentId: string }>()
+  return <Navigate to={`/c/${clubId}/t/${tournamentId}/cobro?reiniciar=1`} replace />
+}
+
 function App() {
   return (
     <Routes>
-      {/* Inscripción pública SIN login: debe ir antes que Layout para que no redirija a login */}
+      {/* Rutas públicas SIN login: deben ir antes que Layout y antes del catch-all */}
       <Route path="/club/:clubId/torneo/:tournamentId/inscribirse" element={<PublicInscription />} />
+      {/* URL corta para QR (menos errores al escanear); misma pantalla que mobile-payments */}
+      <Route path="/c/:clubId/t/:tournamentId/cobro" element={<TournamentMobilePayments />} />
+      <Route path="/club/:clubId/tournaments/:tournamentId/mobile-payments" element={<TournamentMobilePayments />} />
       
       {/* Sistema de administración principal */}
       <Route path="/" element={<Layout />}>
@@ -60,7 +70,6 @@ function App() {
       <Route path="/login" element={<Login />} />
       
       {/* Administración individual de clubes */}
-      <Route path="/club/:clubId" element={<ClubRedirect />} />
       <Route path="/club/:clubId/admin" element={<ClubAdmin />} />
       
       {/* Gestión de hoyos */}
@@ -89,6 +98,9 @@ function App() {
       
       {/* Resultados finales por categorías */}
       <Route path="/club/:clubId/tournaments/:tournamentId/results" element={<TournamentResults />} />
+
+      {/* Solo club + torneo (sin subruta): compat. links/QR truncados → cobro móvil */}
+      <Route path="/club/:clubId/tournaments/:tournamentId" element={<RedirectTournamentHubToCobroMovil />} />
       
       {/* Rankings del club */}
       <Route path="/club/:clubId/rankings" element={<Rankings />} />
@@ -103,6 +115,9 @@ function App() {
       
       {/* Informe contable público para socios */}
       <Route path="/club/:clubId/informe-contable" element={<PublicFinancialReport />} />
+
+      {/* Compatibilidad: si entran a /club/:clubId (sin /admin), redirige al admin */}
+      <Route path="/club/:clubId" element={<ClubRedirect />} />
       
       {/* Ruta catch-all: redirigir al login si no hay ruta coincidente */}
       <Route path="*" element={<Navigate to="/login" replace />} />
