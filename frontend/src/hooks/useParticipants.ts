@@ -44,7 +44,11 @@ export const useUpdateParticipantPayment = (clubId: number, tournamentId: number
       toast.success('Cobro actualizado');
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.message || 'Error al actualizar cobro');
+      toast.error(
+        error.response?.data?.error ||
+          error.response?.data?.message ||
+          'Error al actualizar cobro'
+      );
       console.error('Error updating payment:', error);
     },
   });

@@ -200,8 +200,22 @@ export default function Rankings() {
     }
   }
 
-  const Table = ({ rows, withHcp }: { rows: any[]; withHcp: boolean }) => (
-    <div className="overflow-x-auto">
+  const Table = ({ rows, withHcp }: { rows: any[]; withHcp: boolean }) => {
+    const toNum = (v: unknown) => {
+      const n = Number(v)
+      return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY
+    }
+    const orderedRows = [...rows].sort((a, b) => {
+      if (withHcp) {
+        const byNet = toNum(a.total_net) - toNum(b.total_net)
+        if (byNet !== 0) return byNet
+      }
+      const byGross = toNum(a.total_gross) - toNum(b.total_gross)
+      if (byGross !== 0) return byGross
+      return String(a.player_name ?? '').localeCompare(String(b.player_name ?? ''), 'es')
+    })
+
+    return <div className="overflow-x-auto">
       <table className="min-w-full divide-y divide-gray-200">
         <thead className="bg-gray-50">
           <tr>
@@ -216,13 +230,13 @@ export default function Rankings() {
             ) : (
               <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Gross</th>
             )}
-            {'rounds' in (rows[0] || {}) && (
+            {'rounds' in (orderedRows[0] || {}) && (
               <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rondas</th>
             )}
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-200">
-          {rows.map((r, i) => (
+          {orderedRows.map((r, i) => (
             <tr
               key={String(r.participation_id ?? r.member_id ?? i)}
               className={i < (withHcp ? 16 : 9) ? 'bg-yellow-50' : 'bg-white'}
@@ -244,7 +258,7 @@ export default function Rankings() {
         </tbody>
       </table>
     </div>
-  )
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">

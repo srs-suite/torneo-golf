@@ -4,6 +4,16 @@ import type { ExternalPlayerRegistry } from '@/types/externalPlayer';
 
 const API_URL = '/api/club';
 
+/** Origen público del sitio (https://host). En producción: VITE_PUBLIC_APP_URL; si no, `window.location.origin`. */
+export function getPublicAppOrigin(): string {
+  const raw = String(import.meta.env.VITE_PUBLIC_APP_URL ?? '')
+    .trim()
+    .replace(/\/$/, '')
+  if (raw && /^https?:\/\//i.test(raw)) return raw
+  if (typeof window !== 'undefined') return window.location.origin
+  return ''
+}
+
 export const getTournamentParticipants = async (clubId: number, tournamentId: number): Promise<Participant[]> => {
   const response = await axios.get(`${API_URL}/${clubId}/tournaments/${tournamentId}/participants`);
   const participants = response.data.data;
@@ -93,6 +103,18 @@ export const getParticipantWhatsAppPaymentUrl = async (
     `${API_URL}/${clubId}/tournaments/${tournamentId}/participants/${participantId}/whatsapp-payment`
   );
   return { whatsappUrl: response.data.whatsappUrl };
+};
+
+/** Datos para impresión en plancha física (overlay), sin tarjeta de scores */
+export const getParticipantPhysicalPrintData = async (
+  clubId: number,
+  tournamentId: number,
+  participantId: number
+): Promise<Record<string, unknown>> => {
+  const response = await axios.get(
+    `${API_URL}/${clubId}/tournaments/${tournamentId}/participants/${participantId}/physical-print`
+  );
+  return response.data.data;
 };
 
 export const updateParticipantPayment = async (

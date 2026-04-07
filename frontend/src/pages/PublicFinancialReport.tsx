@@ -111,9 +111,10 @@ export default function PublicFinancialReport() {
       return null
     }
     
-    // Filtrar transacciones relacionadas con esta cuenta (igual que Payments.tsx)
-    const accountTransactions = allTransactions.filter((tx: any) => 
-      tx.from_account_id === accountId || tx.to_account_id === accountId
+    // Filtrar por cuenta (coerción numérica: el API puede devolver string o number)
+    const aid = Number(accountId)
+    const accountTransactions = allTransactions.filter(
+      (tx: any) => Number(tx.from_account_id) === aid || Number(tx.to_account_id) === aid
     )
     
     if (accountTransactions.length === 0) {
@@ -133,10 +134,10 @@ export default function PublicFinancialReport() {
     
     let balanceARS = 0
     let balanceUSD = 0
-    
+
     sorted.forEach((tx: any) => {
-      const isFromAccount = tx.from_account_id === accountId
-      const isToAccount = tx.to_account_id === accountId
+      const isFromAccount = Number(tx.from_account_id) === aid
+      const isToAccount = Number(tx.to_account_id) === aid
       
       if (tx.transaction_type === 'income_tournament' || tx.transaction_type === 'income_other') {
         if (isToAccount) {
@@ -672,17 +673,26 @@ export default function PublicFinancialReport() {
               <div className="flex items-center space-x-3 flex-shrink-0">
                 <div className="text-right">
                   {(() => {
-                    // Calcular balance neto sumando los saldos calculados de todas las cuentas
-                    const totalBalanceARS = financialData.accounts?.reduce((sum: number, acc: any) => {
-                      const balance = calculateAccountBalance(acc.account_id)
-                      return sum + (balance ? balance.ars : Number(acc.current_balance_ars || 0))
-                    }, 0) || (financialData.summary.balanceARS || financialData.summary.balance)
-                    
-                    const totalBalanceUSD = financialData.accounts?.reduce((sum: number, acc: any) => {
-                      const balance = calculateAccountBalance(acc.account_id)
-                      return sum + (balance ? balance.usd : Number(acc.current_balance_usd || 0))
-                    }, 0) || (financialData.summary.balanceUSD || 0)
-                    
+                    // Sumar lo mismo que en cada fila de cuenta. No usar || tras reduce: si el total USD es 0,
+                    // 0 es falsy y antes se mostraba summary.balanceUSD del backend (podía inventar "US$ 100").
+                    const accs = financialData.accounts
+                    let totalBalanceARS: number
+                    let totalBalanceUSD: number
+                    if (accs && accs.length > 0) {
+                      totalBalanceARS = accs.reduce((sum: number, acc: any) => {
+                        const balance = calculateAccountBalance(acc.account_id)
+                        return sum + (balance ? balance.ars : Number(acc.current_balance_ars || 0))
+                      }, 0)
+                      totalBalanceUSD = accs.reduce((sum: number, acc: any) => {
+                        const balance = calculateAccountBalance(acc.account_id)
+                        return sum + (balance ? balance.usd : Number(acc.current_balance_usd || 0))
+                      }, 0)
+                    } else {
+                      totalBalanceARS =
+                        financialData.summary.balanceARS ?? financialData.summary.balance ?? 0
+                      totalBalanceUSD = financialData.summary.balanceUSD ?? 0
+                    }
+
                     return (
                       <>
                         <p className={`text-xl font-bold ${totalBalanceARS >= 0 ? 'text-green-600' : 'text-red-600'}`}>

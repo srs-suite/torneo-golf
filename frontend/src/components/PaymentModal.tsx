@@ -28,12 +28,16 @@ export function PaymentModal({ isOpen, onClose, participant, clubId, tournamentI
 
   useEffect(() => {
     if (participant) {
-      // Inicializar Arancel: si el participante tiene arancel (>0) usarlo,
-      // de lo contrario usar el valor del torneo (defaultFee)
-      const initialFee = (participant.fee_amount !== undefined && participant.fee_amount !== null && Number(participant.fee_amount) !== 0)
-        ? Number(participant.fee_amount)
-        : (defaultFee ?? 0)
-      setFeeAmount(initialFee !== undefined && initialFee !== null ? String(initialFee) : '')
+      // Arancel guardado en el participante (incluye 0 explícito). Solo si no hay dato en BD, usar el del torneo.
+      const rawFee = participant.fee_amount
+      let initialFee: number
+      if (rawFee === undefined || rawFee === null) {
+        initialFee = defaultFee ?? 0
+      } else {
+        const n = Number(rawFee)
+        initialFee = Number.isFinite(n) ? n : (defaultFee ?? 0)
+      }
+      setFeeAmount(String(initialFee))
       setPaidAmount(
         participant.paid_amount !== undefined && participant.paid_amount !== null
           ? String(participant.paid_amount)
@@ -57,6 +61,10 @@ export function PaymentModal({ isOpen, onClose, participant, clubId, tournamentI
       setPaidAmount(String(feeNumeric))
     } else if (paymentStatus === 'pending') {
       // Si cambia a "Pendiente", poner en 0 y resetear método de pago
+      setPaidAmount('0')
+      setPaymentMethod('')
+      setReceiptNumber('')
+    } else if (paymentStatus === 'waived') {
       setPaidAmount('0')
       setPaymentMethod('')
       setReceiptNumber('')
@@ -94,14 +102,19 @@ export function PaymentModal({ isOpen, onClose, participant, clubId, tournamentI
       paid_amount: paidNumeric,
       currency: currency
     }
-    if (paymentMethod) payload.payment_method = paymentMethod
-    if (receiptNumber) payload.receipt_number = receiptNumber
+    if (paymentStatus === 'paid' && paymentMethod) payload.payment_method = paymentMethod
+    if (paymentStatus !== 'waived' && receiptNumber) payload.receipt_number = receiptNumber
     if (notes) payload.payment_notes = notes
 
-    await updatePayment.mutateAsync({
-      participantId: participant.participant_id,
-      paymentData: payload
-    })
+    try {
+      await updatePayment.mutateAsync({
+        participantId: participant.participant_id,
+        paymentData: payload
+      })
+    } catch {
+      // El hook useUpdateParticipantPayment ya muestra el error del API
+      return
+    }
     onSaved?.()
     if (paymentStatus === 'paid') {
       try {
@@ -142,19 +155,21 @@ export function PaymentModal({ isOpen, onClose, participant, clubId, tournamentI
                 <option value="waived">Bonificado</option>
               </select>
             </div>
-            <div>
-              <label className="block text-sm text-gray-600">Método</label>
-              <select
-                value={paymentMethod}
-                onChange={e => setPaymentMethod(e.target.value)}
-                className="w-full px-3 py-2 border rounded-md"
-              >
-                <option value="">Seleccionar...</option>
-                <option value="Efectivo">Efectivo</option>
-                <option value="Transferencia">Transferencia</option>
-                <option value="Tarjeta de crédito">Tarjeta de crédito</option>
-              </select>
-            </div>
+            {paymentStatus !== 'waived' && (
+              <div>
+                <label className="block text-sm text-gray-600">Método</label>
+                <select
+                  value={paymentMethod}
+                  onChange={e => setPaymentMethod(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-md"
+                >
+                  <option value="">Seleccionar...</option>
+                  <option value="Efectivo">Efectivo</option>
+                  <option value="Transferencia">Transferencia</option>
+                  <option value="Tarjeta de crédito">Tarjeta de crédito</option>
+                </select>
+              </div>
+            )}
             <div className="sm:col-span-2">
               <label className="block text-sm text-gray-600">Arancel</label>
               <div className="flex gap-2">

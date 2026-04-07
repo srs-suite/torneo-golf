@@ -124,6 +124,9 @@ export interface CreateTournamentData {
   enable_two_sessions?: boolean
   /** 1 = agrupación por HCP (serpentina), 0 = por grupos (inscripción) */
   groups_by_hcp?: number | boolean
+  /** Cuenta custodia donde ingresan los cobros del torneo */
+  custodian?: string | null
+  account_id?: number | null
 }
 
 export interface TournamentStats {

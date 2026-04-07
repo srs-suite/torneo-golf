@@ -17,6 +17,7 @@ import ScorecardPlayerSelection from '@/pages/ScorecardPlayerSelection'
 import ScorecardHistory from '@/pages/ScorecardHistory'
 import ScorecardDetail from '@/pages/ScorecardDetail'
 import PrintableScorecard from '@/pages/PrintableScorecard'
+import ScorecardOverlayPrint from '@/pages/ScorecardOverlayPrint'
 import HolesManagement from '@/pages/HolesManagement'
 import TeesManagement from '@/pages/TeesManagement'
 import TournamentResults from '@/pages/TournamentResults'
@@ -24,6 +25,7 @@ import Rankings from '@/pages/Rankings'
 import ExternalPlayers from '@/pages/ExternalPlayers'
 import Payments from '@/pages/Payments'
 import PublicFinancialReport from '@/pages/PublicFinancialReport'
+import PublicMemberPortal from '@/pages/PublicMemberPortal'
 import PublicInscription from '@/pages/PublicInscription'
 import TournamentMobilePayments from '@/pages/TournamentMobilePayments'
 
@@ -87,6 +89,14 @@ function App() {
       {/* Carga manual de tarjetas (con jugador seleccionado) */}
       <Route path="/club/:clubId/tournaments/:tournamentId/manual-entry/:playerId" element={<ManualScorecardEntry />} />
       
+      {/* Plancha por inscripto (ID en la ruta; evita que nginx pierda ?participantIds=) */}
+      <Route
+        path="/club/:clubId/tournaments/:tournamentId/scorecards/print-overlay/participant/:participationId"
+        element={<ScorecardOverlayPrint />}
+      />
+      {/* Impresión plancha: ?ids=1,2,3 tarjetas o ?participantIds= inscriptos */}
+      <Route path="/club/:clubId/tournaments/:tournamentId/scorecards/print-overlay" element={<ScorecardOverlayPrint />} />
+
       {/* Historial de tarjetas */}
       <Route path="/club/:clubId/tournaments/:tournamentId/scorecards" element={<ScorecardHistory />} />
       
@@ -115,6 +125,8 @@ function App() {
       
       {/* Informe contable público para socios */}
       <Route path="/club/:clubId/informe-contable" element={<PublicFinancialReport />} />
+      {/* Portal socio: matrícula, torneos propios y ranking anual */}
+      <Route path="/club/:clubId/mi-actividad" element={<PublicMemberPortal />} />
 
       {/* Compatibilidad: si entran a /club/:clubId (sin /admin), redirige al admin */}
       <Route path="/club/:clubId" element={<ClubRedirect />} />

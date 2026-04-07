@@ -4,6 +4,11 @@ import { useGetScorecardForPrint } from '../hooks/useScorecards';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { formatHcpForDisplay } from '@/utils/scoreUtils';
+import {
+  buildPlayerPrintLine,
+  formatShortDateAr,
+  playingHcpForPrint,
+} from '@/utils/scorecardPrintHelpers';
 
 export default function PrintableScorecard() {
   const { clubId, tournamentId, scorecardId } = useParams<{ 
@@ -187,13 +192,26 @@ export default function PrintableScorecard() {
                 </div>
               </div>
               
-              <button
-                onClick={handlePrint}
-                className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
-              >
-                <Printer className="h-4 w-4 mr-2" />
-                Imprimir
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    navigate(
+                      `/club/${clubId}/tournaments/${tournamentId}/scorecards/print-overlay?ids=${scorecard.scorecard_id}`
+                    )
+                  }
+                  className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                >
+                  Plancha física
+                </button>
+                <button
+                  onClick={handlePrint}
+                  className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                >
+                  <Printer className="h-4 w-4 mr-2" />
+                  Imprimir vista completa
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -201,6 +219,25 @@ export default function PrintableScorecard() {
         {/* Printable Scorecard */}
         <div id="printable-scorecard" className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="bg-white rounded-lg shadow-lg overflow-hidden border-2 border-gray-200">
+            {/* Resumen alineable con plancha preimpresa (Jugador / Matrícula / HCP / Torneo / Fecha) */}
+            <div className="px-6 pt-5 pb-2 border-b border-gray-200 print:break-inside-avoid">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
+                Datos para plancha impresa
+              </p>
+              <dl className="grid grid-cols-[7.5rem_1fr] gap-x-3 gap-y-2 text-sm max-w-xl">
+                <dt className="text-gray-600 shrink-0">Jugador</dt>
+                <dd className="font-semibold text-gray-900 break-words">{buildPlayerPrintLine(scorecard)}</dd>
+                <dt className="text-gray-600">Matrícula</dt>
+                <dd className="text-gray-900">{scorecard.member_number ? String(scorecard.member_number) : '—'}</dd>
+                <dt className="text-gray-600">HCP</dt>
+                <dd className="text-gray-900 font-medium">{playingHcpForPrint(scorecard)}</dd>
+                <dt className="text-gray-600">Torneo</dt>
+                <dd className="text-gray-900 break-words">{scorecard.tournament_name || '—'}</dd>
+                <dt className="text-gray-600">Fecha</dt>
+                <dd className="text-gray-900">{formatShortDateAr(scorecard.tournament_date || scorecard.created_at)}</dd>
+              </dl>
+            </div>
+
             {/* Scorecard Header */}
             <div className="bg-green-600 text-white px-6 py-4">
               <div className="flex items-center justify-between">
@@ -218,7 +255,7 @@ export default function PrintableScorecard() {
             <div className="px-6 py-4 bg-gray-50 border-b">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-900">{scorecard.player_name}</h3>
+                  <h3 className="text-lg font-semibold text-gray-900 leading-snug">{buildPlayerPrintLine(scorecard)}</h3>
                   <p className="text-sm text-gray-600">
                     {scorecard.member_number ? `Matrícula: ${scorecard.member_number}` : 'Jugador Invitado'}
                   </p>
@@ -229,9 +266,9 @@ export default function PrintableScorecard() {
                       {scorecard.handicap_index != null ? scorecard.handicap_index : 'N/A'}
                     </span>
                   </p>
-                  <p className="text-sm text-gray-600">HCP: 
+                  <p className="text-sm text-gray-600">HCP (juego): 
                     <span className="font-semibold text-gray-900 ml-1">
-                      {formatHcpForDisplay(scorecard.handicap_local, scorecard.handicap_index)}
+                      {playingHcpForPrint(scorecard)}
                     </span>
                   </p>
                 </div>

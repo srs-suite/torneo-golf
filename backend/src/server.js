@@ -23,11 +23,13 @@ import {
     getAllMembers, getMemberById, createMember, updateMember, deleteMember, updateMemberStatus,
     getMemberTournaments, getMemberScorecards, getMemberHandicapHistory, getMemberContributions,
     verifyMemberPhone, verifyMemberByMatricula, verifyReportToken,
+    isMemberTournamentParticipant, getMemberPortalTournaments, getAnnualRankingsForMemberPortal,
+    getTournamentResultsDataForMemberPortal,
     getTournamentForPublicInscription, getTournamentForPublicInscriptionUnfiltered, getTournamentGroupsForInscription, getTournamentParticipantsWithoutGroup, addPublicInscription, checkPublicInscriptionStatus,
     
     // Tournament functions
     getAllTournaments, getTournamentById, createTournament, updateTournament, deleteTournament,
-    getTournamentParticipants, getTournamentParticipantsById, addTournamentParticipant, removeTournamentParticipant,
+    getTournamentParticipants, getTournamentParticipantsById, addTournamentParticipant, removeTournamentParticipant, getParticipantForPhysicalPrint,
     updateParticipantHandicap, updateParticipantTeePreference, updateParticipantPayment,
     getExternalPlayers, getExternalPlayersRegistry, createExternalPlayer, updateExternalPlayer, deleteExternalPlayer, findDuplicateExternalPlayers,
     // Tee time and groups functions
@@ -51,7 +53,7 @@ import {
     getCurrencyBalance, getCustodians,
     
     // Custodian accounts functions
-    getAccounts, createAccount, updateAccount, deleteAccount, getTransactions, createTransaction, getAccountBalanceBreakdown,
+    getAccounts, createAccount, updateAccount, deleteAccount, getTransactions, createTransaction, syncMissingTournamentPaymentTransactions, getAccountBalanceBreakdown,
     
     // System functions
     getSystemStats, getRecentActivity
@@ -811,14 +813,24 @@ async function handleClubAPI(req, res, pathParts) {
                 
                 // Update participant payment: PUT /participants/{id}/payment
                 if (method === 'PUT' && participantId && action === 'payment') {
-                    const paymentData = await parseBody(req);
-                    await updateParticipantPayment(
-                        parseInt(clubId),
-                        parseInt(resourceId),
-                        parseInt(participantId),
-                        paymentData
-                    );
-                    sendJSON(res, { success: true, message: 'Pago actualizado exitosamente' });
+                    try {
+                        const paymentData = await parseBody(req);
+                        const ok = await updateParticipantPayment(
+                            parseInt(clubId),
+                            parseInt(resourceId),
+                            parseInt(participantId),
+                            paymentData
+                        );
+                        if (!ok) {
+                            sendError(res, 'No se pudo actualizar el pago (¿participante inexistente?)', 400);
+                            return;
+                        }
+                        sendJSON(res, { success: true, message: 'Pago actualizado exitosamente' });
+                    } catch (payErr) {
+                        console.error('updateParticipantPayment:', payErr);
+                        sendError(res, payErr.message || 'Error al registrar el pago', 500);
+                    }
+                    return;
                 }
                 // Update participant: PUT /participants/{id} with body { handicap_index?, handicap_local?, preferred_session? }
                 else if (method === 'PUT' && participantId && !action) {
@@ -876,6 +888,20 @@ async function handleClubAPI(req, res, pathParts) {
                     const result = generateWhatsAppUrl(phone, message);
                     if (!result.success || !result.url) return sendError(res, result.error || 'Error al generar enlace', 500);
                     sendJSON(res, { success: true, whatsappUrl: result.url });
+                    return;
+                }
+                // GET .../participants/:id/physical-print -> JSON para overlay de plancha (sin scorecard)
+                else if (method === 'GET' && participantId && action === 'physical-print') {
+                    try {
+                        const row = await getParticipantForPhysicalPrint(
+                            parseInt(clubId),
+                            parseInt(resourceId),
+                            parseInt(participantId)
+                        );
+                        sendJSON(res, { success: true, data: row });
+                    } catch (e) {
+                        sendError(res, e.message || 'Error al obtener datos', 404);
+                    }
                     return;
                 }
                 // Get all participants
@@ -1308,6 +1334,29 @@ async function handleClubAPI(req, res, pathParts) {
                     sendError(res, 'Método no permitido', 405);
                 }
             }
+            // Sincronizar cobros de torneo (participantes pagados) → movimientos en caja
+            else if (action === 'sync-tournament-payments' && method === 'POST') {
+                try {
+                    const body = await parseBody(req);
+                    const tournamentId = body?.tournament_id != null ? parseInt(body.tournament_id, 10) : null;
+                    const result = await syncMissingTournamentPaymentTransactions(
+                        parseInt(clubId),
+                        Number.isFinite(tournamentId) && tournamentId > 0 ? tournamentId : null
+                    );
+                    sendJSON(res, {
+                        success: true,
+                        data: result,
+                        message: `Sincronización: ${result.created} movimientos creados, ${result.skipped_existing} ya registrados`
+                    });
+                } catch (err) {
+                    console.error('sync-tournament-payments:', err);
+                    const detail =
+                        err.sqlMessage ||
+                        err.message ||
+                        'Error al sincronizar cobros de torneo';
+                    sendError(res, detail, 500);
+                }
+            }
             // Account balance breakdown (for debugging)
             else if (action === 'account-balance-breakdown') {
                 if (method === 'GET') {
@@ -1637,8 +1686,9 @@ async function handlePublicReportAPI(req, res, pathParts) {
             
             // Get transactions for this account
             const allTransactions = await getTransactions(parseInt(clubId));
-            const accountTransactions = allTransactions.filter(tx => 
-                tx.from_account_id === accountId || tx.to_account_id === accountId
+            const aid = Number(accountId);
+            const accountTransactions = allTransactions.filter(tx =>
+                Number(tx.from_account_id) === aid || Number(tx.to_account_id) === aid
             );
             
             console.log(`📊 Found ${accountTransactions.length} transactions for account ${accountId}`);
@@ -1908,6 +1958,102 @@ async function handlePublicFinanceAPI(req, res, pathParts) {
     }
 }
 
+/** Portal socio: matrícula → solo torneos propios y ranking anual con reglas de acceso */
+async function handlePublicMemberPortalAPI(req, res, pathParts) {
+    const method = req.method;
+    if (method === 'OPTIONS') {
+        res.writeHead(200, corsHeaders);
+        res.end();
+        return;
+    }
+
+    const clubId = parseInt(pathParts[3], 10);
+    if (!clubId) {
+        return sendError(res, 'Club inválido', 400);
+    }
+
+    const seg4 = pathParts[4];
+    const seg5 = pathParts[5];
+    const seg6 = pathParts[6];
+
+    try {
+        if (seg4 === 'verify' && method === 'POST') {
+            const body = await parseBody(req);
+            const raw = body.matricula ?? body.member_number ?? body.memberNumber ?? '';
+            const result = await verifyMemberByMatricula(clubId, String(raw));
+            if (result.success) {
+                return sendJSON(res, {
+                    success: true,
+                    token: result.token,
+                    memberName: result.memberName
+                });
+            }
+            return sendError(res, result.message, 404);
+        }
+
+        const url = new URL(req.url, `http://${req.headers.host}`);
+        const token = url.searchParams.get('token');
+        if (!token) {
+            return sendError(res, 'Token requerido', 400);
+        }
+        const verification = await verifyReportToken(clubId, token);
+        if (!verification.success) {
+            return sendError(res, verification.message, 401);
+        }
+        const memberId = verification.member_id;
+
+        if (seg4 === 'tournaments' && !seg5 && method === 'GET') {
+            const tournaments = await getMemberPortalTournaments(clubId, memberId);
+            return sendJSON(res, { success: true, tournaments });
+        }
+
+        if (seg4 === 'tournaments' && seg5 && seg6 === 'ranking' && method === 'GET') {
+            const tournamentId = parseInt(seg5, 10);
+            if (!tournamentId) {
+                return sendError(res, 'Torneo inválido', 400);
+            }
+            const participant = await isMemberTournamentParticipant(clubId, tournamentId, memberId);
+            if (!participant) {
+                return sendError(res, 'No participaste en este torneo', 403);
+            }
+            const ranking = await getTournamentRanking(clubId, tournamentId);
+            return sendJSON(res, { success: true, ranking });
+        }
+
+        if (seg4 === 'tournaments' && seg5 && seg6 === 'results' && method === 'GET') {
+            const tournamentId = parseInt(seg5, 10);
+            if (!tournamentId) {
+                return sendError(res, 'Torneo inválido', 400);
+            }
+            const payload = await getTournamentResultsDataForMemberPortal(clubId, tournamentId, memberId);
+            if (!payload) {
+                return sendError(res, 'No participaste en este torneo', 403);
+            }
+            return sendJSON(res, { success: true, ...payload });
+        }
+
+        if (seg4 === 'rankings' && seg5 === 'annual' && seg6 && method === 'GET') {
+            const year = parseInt(seg6, 10);
+            if (!year || year < 1990 || year > 2100) {
+                return sendError(res, 'Año inválido', 400);
+            }
+            const payload = await getAnnualRankingsForMemberPortal(clubId, memberId, year);
+            if (!payload.allowed) {
+                return sendJSON(res, {
+                    success: false,
+                    message: payload.message || 'Sin acceso al ranking'
+                }, 403);
+            }
+            return sendJSON(res, { success: true, ...payload });
+        }
+
+        return sendError(res, 'Endpoint no encontrado', 404);
+    } catch (error) {
+        console.error('Error en Public Member Portal API:', error);
+        sendError(res, error.message, 500);
+    }
+}
+
 // Main server
 const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
@@ -1935,6 +2081,9 @@ const server = http.createServer(async (req, res) => {
             return;
         } else if (pathParts[1] === 'public' && pathParts[2] === 'inscription') {
             await handlePublicInscriptionAPI(req, res, pathParts);
+            return;
+        } else if (pathParts[1] === 'public' && pathParts[2] === 'member') {
+            await handlePublicMemberPortalAPI(req, res, pathParts);
             return;
         }
     }

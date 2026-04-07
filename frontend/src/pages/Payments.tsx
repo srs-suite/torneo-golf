@@ -11,6 +11,53 @@ import { useUserPermissions } from '@/hooks/useUserPermissions'
 import { toast } from 'react-hot-toast'
 import * as XLSX from 'xlsx'
 import { LoadingSpinner } from '@/components/LoadingSpinner'
+import { tournamentService } from '@/services/tournamentService'
+import type { CreateTournamentData } from '@/types/tournament'
+
+/** Arma el body de PUT del torneo desde la fila actual de la API para no pisar campos con valores por defecto. */
+function tournamentRowToUpdatePayload(t: unknown, accountId: number): CreateTournamentData {
+  const row = t as Record<string, unknown>
+  const rawDate = row.tournament_date
+  const tournament_date =
+    typeof rawDate === 'string' ? rawDate.split('T')[0] : rawDate != null ? String(rawDate).split('T')[0] : ''
+  const rawReg = row.registration_deadline
+  const registration_deadline =
+    rawReg == null || rawReg === ''
+      ? undefined
+      : typeof rawReg === 'string'
+        ? rawReg.split('T')[0]
+        : String(rawReg).split('T')[0]
+
+  return {
+    tournament_name: String(row.tournament_name ?? ''),
+    tournament_date,
+    start_time: (row.start_time as string) || undefined,
+    end_time: (row.end_time as string) || undefined,
+    tournament_type: (row.tournament_type as CreateTournamentData['tournament_type']) || 'stroke_play',
+    max_participants: row.max_participants != null ? Number(row.max_participants) : undefined,
+    registration_deadline,
+    entry_fee: Number(row.entry_fee ?? 0),
+    prize_pool: Number(row.prize_pool ?? 0),
+    description: (row.description as string) || undefined,
+    rules: (row.rules as string) || undefined,
+    custodian: (row.custodian as string) || null,
+    account_id: accountId,
+    public_inscription: !!(row.public_inscription === 1 || row.public_inscription === true),
+    public_inscription_allow_groups:
+      row.public_inscription_allow_groups !== 0 && row.public_inscription_allow_groups !== false,
+    flyer_url: (row.flyer_url as string) || undefined,
+    results_mode: row.results_mode === 'scratch_bands' ? 'scratch_bands' : 'standard',
+    separate_ladies: !!(row.separate_ladies === 1 || row.separate_ladies === true),
+    ladies_by_hcp: !!(row.ladies_by_hcp === 1 || row.ladies_by_hcp === true),
+    is_ranking_event: !!(row.is_ranking_event === 1 || row.is_ranking_event === true),
+    enable_simultaneous_starts: !!(row.enable_simultaneous_starts === 1 || row.enable_simultaneous_starts === true),
+    afternoon_start_time: (row.afternoon_start_time as string) || '14:00',
+    preferred_session: row.preferred_session === 'afternoon' ? 'afternoon' : 'morning',
+    tee_interval_minutes: row.tee_interval_minutes != null ? Number(row.tee_interval_minutes) : 10,
+    enable_two_sessions: !!(row.enable_two_sessions === 1 || row.enable_two_sessions === true),
+    groups_by_hcp: row.groups_by_hcp as number | boolean | undefined,
+  }
+}
 
 export default function Payments() {
   const { clubId } = useParams<{ clubId: string }>() 
@@ -84,7 +131,6 @@ export default function Payments() {
   const [editingExpenseId, setEditingExpenseId] = useState<number | null>(null)
   const [editingIncomeId, setEditingIncomeId] = useState<number | null>(null)
   const [editingExchangeId, setEditingExchangeId] = useState<number | null>(null)
-  const [currencyBalance, setCurrencyBalance] = useState<{ ARS: number; USD: number }>({ ARS: 0, USD: 0 })
   const [selectedTournaments, setSelectedTournaments] = useState<number[]>([])
   const [showTournamentModal, setShowTournamentModal] = useState(false)
   const [selectedMonths, setSelectedMonths] = useState<number[]>([]) // 1-12
@@ -141,6 +187,32 @@ export default function Payments() {
     }
     return years
   }, [])
+
+  /** Suma de saldos en cuentas custodio (igual criterio que "Balance Neto" en esta página). */
+  const ledgerTotalsByCurrency = useMemo(
+    () =>
+      accounts.reduce(
+        (acc, a) => {
+          if (a.is_active === false) return acc
+          acc.ARS += Number(a.current_balance_ars || 0)
+          acc.USD += Number(a.current_balance_usd || 0)
+          return acc
+        },
+        { ARS: 0, USD: 0 }
+      ),
+    [accounts]
+  )
+
+  /** Tope para conversión: saldo en la cuenta de origen; si no hay cuenta elegida, suma de cuentas en esa moneda. */
+  const exchangeFromAccountAvailable = useMemo(() => {
+    const fromAcc = accounts.find((a) => String(a.account_id) === String(exchangeDraft.from_account_id))
+    if (fromAcc) {
+      return exchangeDraft.from_currency === 'USD'
+        ? Number(fromAcc.current_balance_usd || 0)
+        : Number(fromAcc.current_balance_ars || 0)
+    }
+    return ledgerTotalsByCurrency[exchangeDraft.from_currency as 'ARS' | 'USD'] ?? 0
+  }, [accounts, exchangeDraft.from_account_id, exchangeDraft.from_currency, ledgerTotalsByCurrency])
 
   // Función para aplicar filtro de meses/años
   const handleApplyMonthFilter = () => {
@@ -748,11 +820,14 @@ export default function Payments() {
       if (!transactions || transactions.length === 0) {
         return { ars: 0, usd: 0 }
       }
+
+      const accNum = Number(accountId)
+      const txMatchesAccount = (tx: any) =>
+        (tx.from_account_id != null && Number(tx.from_account_id) === accNum) ||
+        (tx.to_account_id != null && Number(tx.to_account_id) === accNum)
       
-      // Filtrar transacciones relacionadas con esta cuenta
-      const accountTransactions = transactions.filter((tx: any) => 
-        tx.from_account_id === accountId || tx.to_account_id === accountId
-      )
+      // Filtrar transacciones relacionadas con esta cuenta (IDs pueden venir string desde el API)
+      const accountTransactions = transactions.filter(txMatchesAccount)
       
       // Ordenar por fecha ascendente
       const sorted = [...accountTransactions].sort((a, b) => {
@@ -768,8 +843,8 @@ export default function Payments() {
       sorted.forEach((tx: any) => {
         const currency = tx.currency || 'ARS'
         const amount = Number(tx.amount || 0)
-        const isFromAccount = tx.from_account_id === accountId
-        const isToAccount = tx.to_account_id === accountId
+        const isFromAccount = tx.from_account_id != null && Number(tx.from_account_id) === accNum
+        const isToAccount = tx.to_account_id != null && Number(tx.to_account_id) === accNum
         
         if (tx.transaction_type === 'income_tournament' || tx.transaction_type === 'income_other') {
           if (isToAccount) {
@@ -914,7 +989,6 @@ export default function Payments() {
     return expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0)
   }, [expenses])
   
-  // Balance neto ahora usa currencyBalance directamente (incluye conversiones)
   // const netBalance = useMemo(() => {
   //   return totalAllIncomes - totalExpenses
   // }, [totalAllIncomes, totalExpenses])
@@ -981,19 +1055,18 @@ export default function Payments() {
       if (!clubIdNum) return
       setLoading(true)
       try {
-        // Always load incomes, other incomes, expenses, currency exchanges, custodians, accounts, and currency balance
+        // Always load incomes, other incomes, expenses, currency exchanges, custodians, accounts
         const promises: Promise<any>[] = [
           paymentsService.getSummary(clubIdNum, { from: from || undefined, to: to || undefined }),
           paymentsService.getOtherIncomes(clubIdNum, { from: from || undefined, to: to || undefined }),
           paymentsService.getExpenses(clubIdNum, { from: from || undefined, to: to || undefined }),
           paymentsService.getCurrencyExchanges(clubIdNum, { from: from || undefined, to: to || undefined }),
           paymentsService.getCustodians(clubIdNum),
-          accountsService.getAccounts(clubIdNum),
-          paymentsService.getCurrencyBalance(clubIdNum)
+          accountsService.getAccounts(clubIdNum)
         ]
         
         const results = await Promise.all(promises)
-        const [incomesData, otherIncomesData, expensesData, exchangesData, custodiansData, accountsData, balanceData] = results
+        const [incomesData, otherIncomesData, expensesData, exchangesData, custodiansData, accountsData] = results
         
         // Filtrar torneos vigentes para usuarios sin permiso de totales
         const filteredIncomesData = permissions.canViewFinancialTotals
@@ -1008,7 +1081,6 @@ export default function Payments() {
         setCurrencyExchanges(exchangesData)
         setCustodians(custodiansData)
         setAccounts(accountsData)
-        setCurrencyBalance(balanceData)
       } catch (error) {
         console.error('❌ Error cargando contabilidad:', error)
       } finally {
@@ -1575,13 +1647,6 @@ export default function Payments() {
                     from_account_id: '',
                     to_account_id: ''
                   })
-                  // Cargar balance disponible
-                  try {
-                    const balance = await paymentsService.getCurrencyBalance(clubIdNum)
-                    setCurrencyBalance(balance)
-                  } catch (error) {
-                    console.error('Error al cargar balance:', error)
-                  }
                   setShowExchangeModal(true)
                 }} className="px-3 py-2 bg-gray-900 text-white rounded hover:bg-gray-800">
                   Registrar conversión
@@ -1728,37 +1793,36 @@ export default function Payments() {
                             <button
                               onClick={async () => {
                                 const selectedAccount = (r as any).account_id ? (r as any).account_id.toString() : ''
-                                const accountId = prompt(`Selecciona cuenta para "${r.tournament_name}":\n\n` + 
+                                const accountIdRaw = prompt(`Selecciona cuenta para "${r.tournament_name}":\n\n` + 
                                   accounts.map(a => `${a.account_id} - ${a.account_name}`).join('\n') +
                                   '\n\nIngresa el número de cuenta:', selectedAccount)
                                 
-                                if (accountId !== null && accountId !== '') {
-                                  try {
-                                    const account = accounts.find(a => a.account_id.toString() === accountId)
-                                    if (!account) {
-                                      toast.error('Cuenta no válida')
-                                      return
-                                    }
-                                    
-                                    // Actualizar torneo con account_id
-                                    await fetch(`/api/club/${clubIdNum}/tournaments/${r.tournament_id}`, {
-                                      method: 'PUT',
-                                      headers: { 'Content-Type': 'application/json' },
-                                      body: JSON.stringify({ 
-                                        tournament_name: r.tournament_name,
-                                        tournament_date: r.tournament_date,
-                                        tournament_type: 'stroke_play',
-                                        account_id: parseInt(accountId)
-                                      })
-                                    })
-                                    
-                                    toast.success('Cuenta actualizada')
-                                    // Recargar datos
-                                    const data = await paymentsService.getSummary(clubIdNum, { from: from || undefined, to: to || undefined })
-                                    setRows(data)
-                                  } catch (error) {
-                                    toast.error('Error al actualizar cuenta')
+                                if (accountIdRaw === null || accountIdRaw.trim() === '') return
+                                const idMatch = accountIdRaw.trim().match(/^(\d+)/)
+                                const accountIdNum = idMatch ? parseInt(idMatch[1], 10) : NaN
+                                if (!Number.isFinite(accountIdNum)) {
+                                  toast.error('Ingresá solo el número de cuenta (ej. 3).')
+                                  return
+                                }
+                                try {
+                                  const account = accounts.find(a => a.account_id === accountIdNum)
+                                  if (!account) {
+                                    toast.error('Cuenta no válida')
+                                    return
                                   }
+                                  const full = await tournamentService.getTournament(clubIdNum, r.tournament_id)
+                                  if (!full) {
+                                    toast.error('No se pudo cargar el torneo')
+                                    return
+                                  }
+                                  const body = tournamentRowToUpdatePayload(full, accountIdNum)
+                                  await tournamentService.updateTournament(clubIdNum, r.tournament_id, body)
+                                  toast.success('Cuenta actualizada')
+                                  const data = await paymentsService.getSummary(clubIdNum, { from: from || undefined, to: to || undefined })
+                                  setRows(data)
+                                } catch (error: any) {
+                                  const msg = error?.response?.data?.error || error?.message || 'Error al actualizar cuenta'
+                                  toast.error(msg)
                                 }
                               }}
                               className="text-blue-600 hover:text-blue-900"
@@ -2117,9 +2181,6 @@ export default function Payments() {
                                         await paymentsService.deleteOtherIncome(clubIdNum, income.income_id)
                                         const data = await paymentsService.getOtherIncomes(clubIdNum, { from: from || undefined, to: to || undefined })
                                         setOtherIncomes(data)
-                                        // Reload currency balance
-                                        const balance = await paymentsService.getCurrencyBalance(clubIdNum)
-                                        setCurrencyBalance(balance)
                                         toast.success('Ingreso eliminado exitosamente')
                                       } catch (error) {
                                         toast.error('Error al eliminar ingreso')
@@ -2255,9 +2316,6 @@ export default function Payments() {
                                       await paymentsService.deleteExpense(clubIdNum, e.expense_id)
                                       const data = await paymentsService.getExpenses(clubIdNum, { from: from || undefined, to: to || undefined })
                                       setExpenses(data)
-                                      // Reload currency balance
-                                      const balance = await paymentsService.getCurrencyBalance(clubIdNum)
-                                      setCurrencyBalance(balance)
                                       toast.success('Gasto eliminado exitosamente')
                                     } catch (error) {
                                       toast.error('Error al eliminar gasto')
@@ -2347,13 +2405,6 @@ export default function Payments() {
                                       to_account_id: ex.to_account_id?.toString() || ''
                                     })
                                     setEditingExchangeId(ex.exchange_id)
-                                    // Cargar balance disponible
-                                    try {
-                                      const balance = await paymentsService.getCurrencyBalance(clubIdNum)
-                                      setCurrencyBalance(balance)
-                                    } catch (error) {
-                                      console.error('Error al cargar balance:', error)
-                                    }
                                     setShowExchangeModal(true)
                                   }}
                                   className="text-blue-600 hover:text-blue-900"
@@ -2747,7 +2798,8 @@ export default function Payments() {
                   const otherTransactions: any[] = []
                   
                   filteredTransactions.forEach(tx => {
-                    if (tx.transaction_type === 'income_tournament' && tx.reference_type === 'tournament_payment') {
+                    // Todo ingreso de torneo va al mismo flujo (reference_type puede ser null en datos viejos)
+                    if (tx.transaction_type === 'income_tournament') {
                       // Crear una clave única por fecha, cuenta destino y moneda
                       // Normalizar la fecha para evitar problemas con diferentes formatos
                       const txDate = new Date(tx.transaction_date)
@@ -2806,7 +2858,7 @@ export default function Payments() {
                   // Debug: verificar agrupación
                   console.log('🏆 Agrupación de torneos:', {
                     totalFiltered: filteredTransactions.length,
-                    tournamentTransactions: filteredTransactions.filter(tx => tx.transaction_type === 'income_tournament' && tx.reference_type === 'tournament_payment').length,
+                    tournamentTransactions: filteredTransactions.filter(tx => tx.transaction_type === 'income_tournament').length,
                     gruposCreados: tournamentGroups.size,
                     transaccionesAgrupadas: groupedTournamentTransactions.length,
                     otrasTransacciones: otherTransactions.length
@@ -2820,8 +2872,10 @@ export default function Payments() {
                     const dateA = new Date(a.transaction_date).getTime()
                     const dateB = new Date(b.transaction_date).getTime()
                     if (dateA !== dateB) return dateA - dateB
-                    // Si tienen la misma fecha, ordenar por ID para mantener consistencia
-                    return (a.transaction_id || 0) - (b.transaction_id || 0)
+                    const idA = a.transaction_id
+                    const idB = b.transaction_id
+                    if (typeof idA === 'number' && typeof idB === 'number') return idA - idB
+                    return String(idA ?? '').localeCompare(String(idB ?? ''))
                   })
 
                   if (sortedAsc.length === 0) {
@@ -3634,9 +3688,6 @@ export default function Payments() {
                       // Reload accounts to update balances
                       const accountsData = await accountsService.getAccounts(clubIdNum)
                       setAccounts(accountsData)
-                      // Reload currency balance
-                      const balance = await paymentsService.getCurrencyBalance(clubIdNum)
-                      setCurrencyBalance(balance)
                     } catch (error) {
                       toast.error('Error al guardar gasto')
                     }
@@ -3913,9 +3964,6 @@ export default function Payments() {
                       // Reload accounts to update balances
                       const accountsData = await accountsService.getAccounts(clubIdNum)
                       setAccounts(accountsData)
-                      // Reload currency balance
-                      const balance = await paymentsService.getCurrencyBalance(clubIdNum)
-                      setCurrencyBalance(balance)
                     } catch (error) {
                       toast.error(editingIncomeId ? 'Error al actualizar ingreso' : 'Error al agregar ingreso')
                     }
@@ -3955,17 +4003,17 @@ export default function Payments() {
             <div className="relative mx-auto my-10 w-full max-w-lg bg-white rounded-lg shadow-xl p-4 space-y-3 max-h-[90vh] overflow-y-auto">
               <h3 className="text-lg font-semibold text-blue-600">{editingExchangeId ? 'Editar conversión' : 'Registrar conversión'}</h3>
               
-              {/* Balance disponible */}
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                <p className="text-sm font-medium text-blue-900 mb-1">💰 Fondos disponibles:</p>
-                <div className="flex gap-4 text-sm">
-                  <span className="font-semibold text-blue-700">
-                    ARS: ${formatCurrency(currencyBalance.ARS)}
-                  </span>
-                  <span className="font-semibold text-blue-700">
-                    USD: US${formatCurrency(currencyBalance.USD)}
-                  </span>
-                </div>
+              {/* Tope de conversión = saldo de la cuenta de origen; la línea inferior = suma de saldos en todas las cuentas (contabilidad). */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-2">
+                <p className="text-sm font-medium text-blue-900">💰 Disponible para convertir ({exchangeDraft.from_currency})</p>
+                <p className="text-base font-semibold text-blue-800">
+                  {exchangeDraft.from_account_id
+                    ? `${exchangeDraft.from_currency === 'USD' ? 'US$' : '$'}${formatCurrency(exchangeFromAccountAvailable)} en la cuenta de origen`
+                    : `Total en cuentas (${exchangeDraft.from_currency}): ${exchangeDraft.from_currency === 'USD' ? 'US$' : '$'}${formatCurrency(exchangeFromAccountAvailable)} — elegí cuenta de origen para el tope exacto`}
+                </p>
+                <p className="text-xs text-blue-800/90">
+                  Suma de saldos entre todas las cuentas custodio: ARS ${formatCurrency(ledgerTotalsByCurrency.ARS)} · USD US${formatCurrency(ledgerTotalsByCurrency.USD)}
+                </p>
               </div>
               
               <div className="grid grid-cols-1 gap-3">
@@ -4012,7 +4060,8 @@ export default function Payments() {
                         })
                       }}
                       className={`flex-1 px-3 py-2 border rounded ${
-                        exchangeDraft.from_amount && parseFormattedNumber(exchangeDraft.from_amount) > currencyBalance[exchangeDraft.from_currency as 'ARS' | 'USD']
+                        exchangeDraft.from_amount &&
+                        parseFormattedNumber(exchangeDraft.from_amount) > exchangeFromAccountAvailable
                           ? 'border-red-500 bg-red-50'
                           : ''
                       }`}
@@ -4027,9 +4076,12 @@ export default function Payments() {
                       <option value="USD">USD</option>
                     </select>
                   </div>
-                  {exchangeDraft.from_amount && parseFormattedNumber(exchangeDraft.from_amount) > currencyBalance[exchangeDraft.from_currency as 'ARS' | 'USD'] && (
+                  {exchangeDraft.from_amount &&
+                    parseFormattedNumber(exchangeDraft.from_amount) > exchangeFromAccountAvailable && (
                     <p className="text-xs text-red-600 mt-1">
-                      ⚠️ Fondos insuficientes. Disponible: {exchangeDraft.from_currency === 'USD' ? 'US$' : '$'}{formatCurrency(currencyBalance[exchangeDraft.from_currency as 'ARS' | 'USD'])}
+                      ⚠️ Fondos insuficientes en la cuenta de origen. Disponible:{' '}
+                      {exchangeDraft.from_currency === 'USD' ? 'US$' : '$'}
+                      {formatCurrency(exchangeFromAccountAvailable)}
                     </p>
                   )}
                 </div>
@@ -4235,8 +4287,7 @@ export default function Payments() {
                       await new Promise(resolve => setTimeout(resolve, 500))
                       // Función helper para recargar todos los datos
                       const reloadAllData = async () => {
-                        const [balance, accountsData, transactionsData, exchangesData, incomesData, otherIncomesData, expensesData] = await Promise.all([
-                          paymentsService.getCurrencyBalance(clubIdNum),
+                        const [accountsData, transactionsData, exchangesData, incomesData, otherIncomesData, expensesData] = await Promise.all([
                           accountsService.getAccounts(clubIdNum),
                           accountsService.getTransactions(clubIdNum, { from: from || undefined, to: to || undefined }),
                           paymentsService.getCurrencyExchanges(clubIdNum, { from: from || undefined, to: to || undefined }),
@@ -4250,7 +4301,6 @@ export default function Payments() {
                           : incomesData.filter((row: any) => 
                               row.status === 'in_progress' || row.status === 'open'
                             )
-                        setCurrencyBalance(balance)
                         setAccounts(accountsData)
                         setTransactions(transactionsData)
                         setCurrencyExchanges(exchangesData)
@@ -4258,7 +4308,6 @@ export default function Payments() {
                         setOtherIncomes(otherIncomesData)
                         setExpenses(expensesData)
                         console.log('🔄 Datos recargados después de editar conversión:', {
-                          balance,
                           accounts: accountsData,
                           juanCastroAccount: accountsData.find((acc: any) => acc.account_name === 'Juan Castro Videla'),
                           transactionsCount: transactionsData.length,
@@ -4267,7 +4316,7 @@ export default function Payments() {
                           otherIncomesCount: otherIncomesData.length,
                           expensesCount: expensesData.length
                         })
-                        return { accountsData, balance }
+                        return { accountsData }
                       }
                       // Primera recarga
                       await reloadAllData()
@@ -4286,14 +4335,14 @@ export default function Payments() {
                     !exchangeDraft.from_amount || 
                     !exchangeDraft.to_amount || 
                     !exchangeDraft.exchange_rate ||
-                    parseFormattedNumber(exchangeDraft.from_amount) > currencyBalance[exchangeDraft.from_currency as 'ARS' | 'USD'] ||
+                    parseFormattedNumber(exchangeDraft.from_amount) > exchangeFromAccountAvailable ||
                     parseFormattedNumber(exchangeDraft.from_amount) === 0
                   }
                   className={`px-4 py-2 rounded ${
                     !exchangeDraft.from_amount || 
                     !exchangeDraft.to_amount || 
                     !exchangeDraft.exchange_rate ||
-                    parseFormattedNumber(exchangeDraft.from_amount) > currencyBalance[exchangeDraft.from_currency as 'ARS' | 'USD'] ||
+                    parseFormattedNumber(exchangeDraft.from_amount) > exchangeFromAccountAvailable ||
                     parseFormattedNumber(exchangeDraft.from_amount) === 0
                       ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                       : 'bg-blue-600 text-white hover:bg-blue-700'

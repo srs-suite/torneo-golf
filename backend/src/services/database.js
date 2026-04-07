@@ -1517,6 +1517,7 @@ async function getAnnualRankings(clubId, year) {
             ) ranked
             ORDER BY
                 CASE WHEN COALESCE(ranked.total_net, 0) = 0 THEN 1 ELSE 0 END ASC,
+                ranked.total_net ASC,
                 ranked.total_gross ASC,
                 ranked.member_id
         `;
@@ -1649,6 +1650,7 @@ async function getTournamentRanking(clubId, tournamentId) {
             ) z
             ORDER BY
                 CASE WHEN COALESCE(z.total_net, 0) = 0 THEN 1 ELSE 0 END ASC,
+                z.total_net ASC,
                 z.total_gross ASC,
                 z.participation_id
         `;
@@ -1677,19 +1679,45 @@ async function getTournamentRanking(clubId, tournamentId) {
  */
 async function getPaymentsSummary(clubId, fromDate, toDate) {
     try {
+        // Sin JOIN masivo con participantes: evita duplicados/agrupaciones raras en SUM.
+        // Cobrado = solo filas con estado explícito "paid" (trim + mayúsculas por si el ENUM/charset viene raro).
         let query = `
             SELECT 
                 t.tournament_id,
                 t.tournament_name,
                 t.tournament_date,
+                t.status,
                 COALESCE(t.currency, 'ARS') as currency,
                 t.custodian,
                 t.account_id,
                 ca.account_name,
-                SUM(COALESCE(tp.fee_amount, t.entry_fee, 0)) as total_fee,
-                SUM(COALESCE(tp.paid_amount, 0)) as total_paid
+                (SELECT COALESCE(SUM(COALESCE(tp_f.fee_amount, t.entry_fee, 0)), 0)
+                 FROM tournament_participants tp_f
+                 WHERE tp_f.tournament_id = t.tournament_id) AS total_fee,
+                -- Cobrado: lo que mayor entre (1) participantes pagados / con monto cobrado y (2) ingresos ya registrados en cuenta
+                GREATEST(
+                    (SELECT COALESCE(SUM(
+                        CASE
+                            WHEN UPPER(TRIM(COALESCE(tp_p.payment_status, ''))) IN ('WAIVED', 'REFUNDED') THEN 0
+                            WHEN UPPER(TRIM(COALESCE(tp_p.payment_status, ''))) = 'PAID'
+                            THEN COALESCE(tp_p.paid_amount, 0)
+                            WHEN COALESCE(tp_p.paid_amount, 0) > 0
+                            THEN COALESCE(tp_p.paid_amount, 0)
+                            ELSE 0
+                        END
+                    ), 0)
+                     FROM tournament_participants tp_p
+                     WHERE tp_p.tournament_id = t.tournament_id),
+                    (SELECT COALESCE(SUM(atx.amount), 0)
+                     FROM account_transactions atx
+                     INNER JOIN tournament_participants tpl
+                        ON tpl.participation_id = atx.reference_id
+                        AND tpl.tournament_id = t.tournament_id
+                     WHERE atx.club_id = t.course_id
+                       AND atx.transaction_type = 'income_tournament'
+                       AND (atx.reference_type = 'tournament_payment' OR atx.reference_type IS NULL))
+                ) AS total_paid
             FROM tournaments t
-            LEFT JOIN tournament_participants tp ON t.tournament_id = tp.tournament_id
             LEFT JOIN custodian_accounts ca ON t.account_id = ca.account_id
             WHERE t.course_id = ?
         `;
@@ -1706,7 +1734,7 @@ async function getPaymentsSummary(clubId, fromDate, toDate) {
             params.push(toDate);
         }
         
-        query += ` GROUP BY t.tournament_id, t.tournament_name, t.tournament_date, t.currency, t.custodian, t.account_id, ca.account_name ORDER BY t.tournament_date DESC`;
+        query += ` ORDER BY t.tournament_date DESC`;
         
         const { rows } = await executeQuery(query, params);
         return rows;
@@ -2440,7 +2468,8 @@ async function getCurrencyBalance(clubId) {
                     SUM(tp.paid_amount) as total
                 FROM tournament_participants tp
                 JOIN tournaments t ON tp.tournament_id = t.tournament_id
-                WHERE t.course_id = ? AND tp.payment_status = 'paid'
+                WHERE t.course_id = ?
+                  AND UPPER(TRIM(COALESCE(tp.payment_status, ''))) = 'PAID'
                 GROUP BY COALESCE(tp.currency, 'ARS')
             `;
             const incomes = await executeQuery(incomesQuery, [clubId]);
@@ -2966,7 +2995,7 @@ async function verifyMemberPhone(clubId, phone) {
         if (match) {
             console.log('✅ Member found:', member.first_name, member.last_name);
             const secret = 'torneogolf2024secret';
-            const tokenData = `${member.phone}-${member.member_id}-${secret}`;
+            const tokenData = `${member.phone || ''}-${member.member_id}-${secret}`;
             const token = crypto.createHash('sha256').update(tokenData).digest('hex');
             return {
                 success: true,
@@ -3017,6 +3046,121 @@ async function verifyMemberByMatricula(clubId, memberNumber) {
 }
 
 /**
+ * Portal socio (matrícula): comprobar participación en un torneo del club.
+ */
+async function isMemberTournamentParticipant(clubId, tournamentId, memberId) {
+    const q = `
+        SELECT 1
+        FROM tournament_participants tp
+        INNER JOIN tournaments t ON t.tournament_id = tp.tournament_id AND t.course_id = ?
+        WHERE tp.tournament_id = ? AND tp.member_id = ?
+        LIMIT 1
+    `;
+    const { rows } = await executeQuery(q, [clubId, tournamentId, memberId]);
+    return rows.length > 0;
+}
+
+/**
+ * Torneos en los que el socio está inscripto (lista ligera + scores si existen).
+ */
+async function getMemberPortalTournaments(clubId, memberId) {
+    // display_net: misma fórmula que getTournamentRanking (no confiar en sc.total_net guardado)
+    const query = `
+        SELECT
+            t.tournament_id,
+            t.tournament_name,
+            t.tournament_date,
+            t.status,
+            t.results_mode,
+            COALESCE(t.is_ranking_event, 0) as is_ranking_event,
+            sc.total_gross,
+            sc.total_net,
+            CASE
+                WHEN sc.total_gross IS NULL OR sc.total_gross <= 0 THEN NULL
+                WHEN COALESCE(tp.handicap_index_used, m.handicap_index) IS NOT NULL
+                    AND COALESCE(tp.handicap_index_used, m.handicap_index) < 0
+                THEN sc.total_gross + ABS(ROUND(COALESCE(
+                    tp.handicap_used, m.handicap_local, m.handicap_index, 0
+                )))
+                ELSE sc.total_gross - ROUND(COALESCE(
+                    tp.handicap_used, m.handicap_local, m.handicap_index, 0
+                ))
+            END AS display_net,
+            sc.did_not_present,
+            tp.handicap_used,
+            tp.payment_status
+        FROM tournaments t
+        INNER JOIN tournament_participants tp ON t.tournament_id = tp.tournament_id
+        LEFT JOIN members m ON m.member_id = tp.member_id
+        LEFT JOIN scorecards sc ON sc.tournament_id = t.tournament_id AND sc.member_id = tp.member_id
+        WHERE tp.member_id = ? AND t.course_id = ?
+        ORDER BY t.tournament_date DESC, t.tournament_id DESC
+    `;
+    const { rows } = await executeQuery(query, [memberId, clubId]);
+    return rows;
+}
+
+/**
+ * Resultados por categoría (portal socio): mismos scorecards que la pantalla de resultados, sin huecos por tarjeta.
+ */
+async function getTournamentResultsDataForMemberPortal(clubId, tournamentId, memberId) {
+    const participant = await isMemberTournamentParticipant(clubId, tournamentId, memberId);
+    if (!participant) return null;
+    const tournament = await getTournamentById(clubId, tournamentId);
+    if (!tournament) return null;
+    const scorecards = await getScorecardsByTournament(clubId, tournamentId, false, false);
+    return {
+        tournament: {
+            tournament_id: tournament.tournament_id,
+            tournament_name: tournament.tournament_name,
+            results_mode: tournament.results_mode || 'standard',
+            separate_ladies: tournament.separate_ladies === 1 || tournament.separate_ladies === true,
+            ladies_by_hcp: tournament.ladies_by_hcp === 1 || tournament.ladies_by_hcp === true
+        },
+        scorecards
+    };
+}
+
+async function memberParticipatedRankingEventInYear(clubId, memberId, year) {
+    const start = `${year}-01-01`;
+    const end = `${year}-12-31`;
+    const q = `
+        SELECT 1
+        FROM tournament_participants tp
+        INNER JOIN tournaments t ON t.tournament_id = tp.tournament_id AND t.course_id = ?
+        WHERE tp.member_id = ?
+          AND COALESCE(t.is_ranking_event, 0) = 1
+          AND t.tournament_date BETWEEN ? AND ?
+        LIMIT 1
+    `;
+    const { rows } = await executeQuery(q, [clubId, memberId, start, end]);
+    return rows.length > 0;
+}
+
+/**
+ * Ranking anual para el portal: solo si participó en algún torneo ranking del año
+ * o figura en listas gross/net del acumulado.
+ */
+async function getAnnualRankingsForMemberPortal(clubId, memberId, year) {
+    const participated = await memberParticipatedRankingEventInYear(clubId, memberId, year);
+    const data = await getAnnualRankings(clubId, year);
+    if (!participated) {
+        const mid = Number(memberId);
+        const inWith = (data.with_hcp || []).some((r) => Number(r.member_id) === mid);
+        const inWithout = (data.without_hcp || []).some((r) => Number(r.member_id) === mid);
+        if (!inWith && !inWithout) {
+            return {
+                allowed: false,
+                message: 'No tenés acceso al ranking de este año. Participá en un torneo de ranking o figurá en el acumulado.',
+                year,
+                club_id: clubId
+            };
+        }
+    }
+    return { allowed: true, ...data };
+}
+
+/**
  * Verify access token for public financial report
  */
 async function verifyReportToken(clubId, token) {
@@ -3035,9 +3179,10 @@ async function verifyReportToken(clubId, token) {
     
     const secret = 'torneogolf2024secret';
     for (const member of rows) {
-        const tokenData = `${member.phone}-${member.member_id}-${secret}`;
+        // Mismo criterio que verifyMemberByMatricula (phone puede ser NULL en BD)
+        const tokenData = `${member.phone || ''}-${member.member_id}-${secret}`;
         const expectedToken = crypto.createHash('sha256').update(tokenData).digest('hex');
-        
+
         if (expectedToken === token) {
             return {
                 success: true,
@@ -3675,6 +3820,22 @@ async function createTournament(courseId, tournamentData) {
         }
     }
 
+    // Cobros del torneo por defecto a "Caja del Club" (si existe cuenta activa con ese nombre)
+    let assignedCajaAccountId = null;
+    const cajaAccountId = await getCajaDelClubAccountId(courseId);
+    if (cajaAccountId != null && Number.isFinite(cajaAccountId) && cajaAccountId > 0) {
+        try {
+            await executeQuery(
+                `UPDATE tournaments SET account_id = ? WHERE tournament_id = ? AND course_id = ?`,
+                [cajaAccountId, newId, courseId]
+            );
+            assignedCajaAccountId = cajaAccountId;
+        } catch (e) {
+            if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+            console.warn('createTournament: no se pudo asignar account_id a Caja del Club', e.message);
+        }
+    }
+
     // Log activity
     try {
         await logActivity(
@@ -3692,11 +3853,29 @@ async function createTournament(courseId, tournamentData) {
         console.warn('Error logging activity:', logError);
     }
     
-    return { tournament_id: newId, ...tournamentData, course_id: courseId };
+    return {
+        tournament_id: newId,
+        ...tournamentData,
+        course_id: courseId,
+        ...(assignedCajaAccountId != null ? { account_id: assignedCajaAccountId } : {})
+    };
 }
 
 async function updateTournament(courseId, tournamentId, tournamentData) {
     const whereParams = [courseId, tournamentId];
+
+    const maybeSyncTournamentPayments = async (result) => {
+        if (result == null) return result;
+        const aid = tournamentData.account_id;
+        if (aid != null && aid !== '' && Number(aid) > 0) {
+            try {
+                await syncMissingTournamentPaymentTransactions(courseId, tournamentId);
+            } catch (e) {
+                console.warn('syncMissingTournamentPaymentTransactions:', e?.message || e);
+            }
+        }
+        return result;
+    };
 
     // Actualización solo de groups_by_hcp cuando el body trae únicamente ese campo (sin reorganizar)
     const payloadKeys = Object.keys(tournamentData).filter(k => tournamentData[k] !== undefined);
@@ -3778,7 +3957,7 @@ async function updateTournament(courseId, tournamentId, tournamentData) {
 
     try {
         const result = await runUpdate(fullQuery, fullParams);
-        if (result !== null) return result;
+        if (result !== null) return await maybeSyncTournamentPayments(result);
     } catch (err) {
         if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
         // Reintentar CON results_mode y tee config pero SIN custodian/account_id
@@ -3810,7 +3989,7 @@ async function updateTournament(courseId, tournamentId, tournamentData) {
                 WHERE course_id = ? AND tournament_id = ?
             `;
             const result = await runUpdate(withResultsModeQuery, withResultsModeParams);
-            if (result !== null) return result;
+            if (result !== null) return await maybeSyncTournamentPayments(result);
         } catch (e) {
             if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
         }
@@ -3830,7 +4009,7 @@ async function updateTournament(courseId, tournamentId, tournamentData) {
                 WHERE course_id = ? AND tournament_id = ?
             `;
             const result = await runUpdate(fallbackQuery, fallbackParams);
-            if (result !== null) return result;
+            if (result !== null) return await maybeSyncTournamentPayments(result);
         } catch (e) {
             if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
         }
@@ -3843,7 +4022,7 @@ async function updateTournament(courseId, tournamentId, tournamentData) {
             WHERE course_id = ? AND tournament_id = ?
         `;
         const result = await runUpdate(minimalQuery, [...minimalParams, ...whereParams]);
-        if (result !== null) return result;
+        if (result !== null) return await maybeSyncTournamentPayments(result);
         throw err;
     }
 
@@ -4817,14 +4996,161 @@ async function updateParticipantStatus(courseId, tournamentId, participantId, st
     return null;
 }
 
+/** Fecha del torneo (Date de mysql2, ISO string o YYYY-MM-DD) → YYYY-MM-DD para columnas DATE. */
+function toSqlDate(value) {
+    if (value == null || value === '') {
+        return new Date().toISOString().slice(0, 10);
+    }
+    if (value instanceof Date) {
+        return Number.isNaN(value.getTime())
+            ? new Date().toISOString().slice(0, 10)
+            : value.toISOString().slice(0, 10);
+    }
+    const s = String(value).trim();
+    const ymd = s.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (ymd) return ymd[1];
+    const d = new Date(s);
+    if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+    return new Date().toISOString().slice(0, 10);
+}
+
+/** ID de la cuenta activa cuyo nombre es exactamente "Caja del Club" (normalizado), o null. */
+async function getCajaDelClubAccountId(courseId) {
+    const { rows } = await executeQuery(
+        `SELECT account_id FROM custodian_accounts WHERE club_id = ? AND is_active = TRUE
+         AND LOWER(TRIM(account_name)) = 'caja del club' LIMIT 1`,
+        [courseId]
+    );
+    if (rows?.length) return Number(rows[0].account_id);
+    return null;
+}
+
+/**
+ * Cuenta destino para un cobro de torneo: la del torneo si es válida; si no, default del club (columna opcional);
+ * si no, cuenta "Caja del Club"; si no, primera cuenta activa del club.
+ */
+async function getResolvedTournamentPaymentTargetAccountId(courseId, tournamentAccountId) {
+    const tid = tournamentAccountId != null && tournamentAccountId !== '' ? Number(tournamentAccountId) : null;
+    if (Number.isFinite(tid) && tid > 0) {
+        const { rows } = await executeQuery(
+            `SELECT account_id FROM custodian_accounts WHERE club_id = ? AND account_id = ? AND is_active = TRUE LIMIT 1`,
+            [courseId, tid]
+        );
+        if (rows?.length) return Number(rows[0].account_id);
+    }
+    let clubDefault = null;
+    try {
+        const { rows: cr } = await executeQuery(
+            `SELECT default_tournament_income_account_id FROM clubs WHERE club_id = ? LIMIT 1`,
+            [courseId]
+        );
+        clubDefault = cr?.[0]?.default_tournament_income_account_id;
+    } catch (_e) {
+        /* columna aún no migrada */
+    }
+    const defNum = clubDefault != null && clubDefault !== '' ? Number(clubDefault) : null;
+    if (Number.isFinite(defNum) && defNum > 0) {
+        const { rows } = await executeQuery(
+            `SELECT account_id FROM custodian_accounts WHERE club_id = ? AND account_id = ? AND is_active = TRUE LIMIT 1`,
+            [courseId, defNum]
+        );
+        if (rows?.length) return Number(rows[0].account_id);
+    }
+    const cajaId = await getCajaDelClubAccountId(courseId);
+    if (cajaId != null && Number.isFinite(cajaId) && cajaId > 0) return cajaId;
+    const { rows: first } = await executeQuery(
+        `SELECT account_id FROM custodian_accounts WHERE club_id = ? AND is_active = TRUE ORDER BY account_name ASC, account_id ASC LIMIT 1`,
+        [courseId]
+    );
+    if (first?.length) return Number(first[0].account_id);
+    return null;
+}
+
+/** Cuenta donde impactó el último ingreso de torneo de este participante (para reversiones coherentes). */
+async function getLedgerToAccountForTournamentParticipant(clubId, participantId) {
+    const { rows } = await executeQuery(
+        `SELECT to_account_id FROM account_transactions
+         WHERE club_id = ? AND transaction_type = 'income_tournament'
+           AND reference_id = ?
+           AND (reference_type = 'tournament_payment' OR reference_type IS NULL)
+         ORDER BY transaction_id DESC LIMIT 1`,
+        [clubId, participantId]
+    );
+    if (rows?.length && rows[0].to_account_id != null) return Number(rows[0].to_account_id);
+    return null;
+}
+
+function normalizeParticipantPaymentStatus(value) {
+    const s = String(value ?? 'pending').trim().toLowerCase();
+    if (s === 'paid' || s === 'pending' || s === 'refunded' || s === 'waived') return s;
+    return s || 'pending';
+}
+
+/**
+ * Si el participante está pagado con monto > 0, asegura un ingreso contable hacia la cuenta resuelta del torneo/club (sin duplicar por participation_id).
+ * Cubre: cuenta asignada después del cobro, cobro sin movimiento, o torneo sin account_id (usa default del club / heurística).
+ */
+async function ensureIncomeTransactionForPaidParticipant(courseId, tournamentId, participationId) {
+    const { rows: partRows } = await executeQuery(
+        `SELECT payment_status, paid_amount, currency FROM tournament_participants WHERE participation_id = ? AND tournament_id = ?`,
+        [participationId, tournamentId]
+    );
+    if (!partRows?.length) return;
+    const ps = normalizeParticipantPaymentStatus(partRows[0].payment_status);
+    const paidAmt = Number(partRows[0].paid_amount || 0);
+    const cur = partRows[0].currency || 'ARS';
+    if (ps !== 'paid' || paidAmt <= 0) return;
+
+    const { rows: trows } = await executeQuery(
+        `SELECT account_id, tournament_date, tournament_name FROM tournaments WHERE tournament_id = ? AND course_id = ?`,
+        [tournamentId, courseId]
+    );
+    if (!trows?.length) return;
+
+    const { rows: existing } = await executeQuery(
+        `SELECT transaction_id FROM account_transactions
+         WHERE club_id = ? AND transaction_type = 'income_tournament' AND reference_id = ?
+         LIMIT 1`,
+        [courseId, participationId]
+    );
+    if (existing?.length) return;
+
+    const accountId = await getResolvedTournamentPaymentTargetAccountId(courseId, trows[0].account_id);
+    if (!accountId) return;
+    const tournamentDate = trows[0].tournament_date;
+    const tournamentName = trows[0].tournament_name || 'Torneo';
+    await createTransaction(courseId, {
+        transaction_type: 'income_tournament',
+        transaction_date: toSqlDate(tournamentDate),
+        from_account_id: null,
+        to_account_id: accountId,
+        amount: paidAmt,
+        currency: cur,
+        description: `Pago de torneo: ${tournamentName} - Participante ID: ${participationId}`,
+        reference_type: 'tournament_payment',
+        reference_id: participationId
+    });
+    console.log(`✅ ensureIncomeTransactionForPaidParticipant: creado ingreso participation_id=${participationId} cuenta=${accountId}`);
+}
+
 async function updateParticipantPayment(courseId, tournamentId, participantId, paymentData) {
     try {
+        /** En la API, el primer ID del club es el course_id del torneo (mismo valor que tournaments.course_id). */
+        const clubIdForTx = courseId;
+
         // Obtener el estado de pago anterior
         const prevStateQuery = `SELECT payment_status, paid_amount, currency FROM tournament_participants WHERE participation_id = ? AND tournament_id = ?`;
         const { rows: prevRows } = await executeQuery(prevStateQuery, [participantId, tournamentId]);
-        const previousPaymentStatus = prevRows[0]?.payment_status;
+        if (!prevRows || !prevRows.length) {
+            throw new Error('Participante no encontrado en este torneo');
+        }
+        const previousPaymentStatus = normalizeParticipantPaymentStatus(prevRows[0]?.payment_status);
         const previousAmount = prevRows[0]?.paid_amount || 0;
         const previousCurrency = prevRows[0]?.currency || 'ARS';
+
+        const newPaymentStatus = normalizeParticipantPaymentStatus(paymentData.payment_status ?? 'pending');
+        // Solo "Pagado" tiene monto cobrado; bonificado/pendiente/devuelto no suman en contabilidad aunque venga paid_amount viejo en el body.
+        const effectivePaidAmount = newPaymentStatus === 'paid' ? Number(paymentData.paid_amount ?? 0) : 0;
         
         // Actualizar el participante
         const query = `
@@ -4840,78 +5166,77 @@ async function updateParticipantPayment(courseId, tournamentId, participantId, p
             WHERE participation_id = ? AND tournament_id = ?
         `;
         
-        const { rows } = await executeQuery(query, [
+        const { rows: updateResult } = await executeQuery(query, [
             paymentData.fee_amount ?? 0,
-            paymentData.paid_amount ?? 0,
+            effectivePaidAmount,
             paymentData.currency || 'ARS',
-            paymentData.payment_status ?? 'pending',
+            newPaymentStatus,
             paymentData.payment_method || null,
             paymentData.receipt_number || null,
             paymentData.payment_notes || null,
             participantId,
             tournamentId
         ]);
-        
+
+        // MySQL puede devolver affectedRows = 0 si el SET no cambia ningún valor (mismo dato); igual es éxito.
+        let updateOk = updateResult.affectedRows > 0;
+        if (!updateOk) {
+            const { rows: stillThere } = await executeQuery(
+                `SELECT participation_id FROM tournament_participants WHERE participation_id = ? AND tournament_id = ? LIMIT 1`,
+                [participantId, tournamentId]
+            );
+            updateOk = stillThere.length > 0;
+        }
+        if (!updateOk) {
+            return false;
+        }
+
         // Si el estado cambió a "paid", actualizar el balance de la cuenta del torneo
-        const newPaymentStatus = paymentData.payment_status ?? 'pending';
-        const newAmount = paymentData.paid_amount ?? 0;
+        const newAmount = effectivePaidAmount;
         const newCurrency = paymentData.currency || 'ARS';
         
         if (newPaymentStatus === 'paid' && previousPaymentStatus !== 'paid') {
-            // Nuevo pago: sumar a la cuenta y crear transacción
-            const tournamentQuery = `SELECT account_id, club_id, tournament_date, tournament_name FROM tournaments WHERE tournament_id = ? AND course_id = ?`;
+            // Nuevo pago: cuenta del torneo o cuenta por defecto del club (getResolvedTournamentPaymentTargetAccountId).
+            const tournamentQuery = `SELECT account_id, tournament_date, tournament_name FROM tournaments WHERE tournament_id = ? AND course_id = ?`;
             const { rows: tournamentRows } = await executeQuery(tournamentQuery, [tournamentId, courseId]);
-            
-            if (tournamentRows[0]?.account_id) {
-                const accountId = tournamentRows[0].account_id;
-                const clubId = tournamentRows[0].club_id;
-                const tournamentDate = tournamentRows[0].tournament_date;
-                const tournamentName = tournamentRows[0].tournament_name || 'Torneo';
-                
-                // Actualizar balance de la cuenta
-                const field = newCurrency === 'USD' ? 'current_balance_usd' : 'current_balance_ars';
-                const updateAccountQuery = `
-                    UPDATE custodian_accounts 
-                    SET ${field} = ${field} + ?
-                    WHERE account_id = ?
-                `;
-                await executeQuery(updateAccountQuery, [newAmount, accountId]);
-                
-                // Crear transacción de ingreso de torneo
-                await createTransaction(clubId, {
-                    transaction_type: 'income_tournament',
-                    transaction_date: tournamentDate || new Date().toISOString().split('T')[0],
-                    from_account_id: null,
-                    to_account_id: accountId,
-                    amount: newAmount,
-                    currency: newCurrency,
-                    description: `Pago de torneo: ${tournamentName} - Participante ID: ${participantId}`,
-                    reference_type: 'tournament_payment',
-                    reference_id: participantId
-                });
-                
-                console.log(`✅ Added ${newAmount} ${newCurrency} to account ${accountId} (tournament payment)`);
+            const trow = tournamentRows[0];
+            if (trow) {
+                const accountId = await getResolvedTournamentPaymentTargetAccountId(courseId, trow.account_id);
+                const tournamentDate = trow.tournament_date;
+                const tournamentName = trow.tournament_name || 'Torneo';
+
+                if (accountId) {
+                    const { rows: existingInc } = await executeQuery(
+                        `SELECT transaction_id FROM account_transactions
+                         WHERE club_id = ? AND transaction_type = 'income_tournament' AND reference_id = ?
+                         LIMIT 1`,
+                        [clubIdForTx, participantId]
+                    );
+                    if (!existingInc?.length) {
+                        await createTransaction(clubIdForTx, {
+                            transaction_type: 'income_tournament',
+                            transaction_date: toSqlDate(tournamentDate),
+                            from_account_id: null,
+                            to_account_id: accountId,
+                            amount: newAmount,
+                            currency: newCurrency,
+                            description: `Pago de torneo: ${tournamentName} - Participante ID: ${participantId}`,
+                            reference_type: 'tournament_payment',
+                            reference_id: participantId
+                        });
+                        console.log(`✅ Added ${newAmount} ${newCurrency} to account ${accountId} (tournament payment)`);
+                    }
+                }
             }
         } else if (previousPaymentStatus === 'paid' && newPaymentStatus !== 'paid') {
-            // Revertir pago: restar de la cuenta y eliminar/crear transacción de reversión
-            const tournamentQuery = `SELECT account_id, club_id FROM tournaments WHERE tournament_id = ? AND course_id = ?`;
-            const { rows: tournamentRows } = await executeQuery(tournamentQuery, [tournamentId, courseId]);
-            
-            if (tournamentRows[0]?.account_id) {
-                const accountId = tournamentRows[0].account_id;
-                const clubId = tournamentRows[0].club_id;
-                
-                // Actualizar balance de la cuenta
-                const field = previousCurrency === 'USD' ? 'current_balance_usd' : 'current_balance_ars';
-                const updateAccountQuery = `
-                    UPDATE custodian_accounts 
-                    SET ${field} = ${field} - ?
-                    WHERE account_id = ?
-                `;
-                await executeQuery(updateAccountQuery, [previousAmount, accountId]);
-                
-                // Crear transacción de reversión (expense para revertir el ingreso)
-                await createTransaction(clubId, {
+            let accountId = await getLedgerToAccountForTournamentParticipant(clubIdForTx, participantId);
+            if (!accountId) {
+                const tournamentQuery = `SELECT account_id FROM tournaments WHERE tournament_id = ? AND course_id = ?`;
+                const { rows: tournamentRows } = await executeQuery(tournamentQuery, [tournamentId, courseId]);
+                accountId = await getResolvedTournamentPaymentTargetAccountId(courseId, tournamentRows[0]?.account_id);
+            }
+            if (accountId) {
+                await createTransaction(clubIdForTx, {
                     transaction_type: 'expense',
                     transaction_date: new Date().toISOString().split('T')[0],
                     from_account_id: accountId,
@@ -4922,28 +5247,27 @@ async function updateParticipantPayment(courseId, tournamentId, participantId, p
                     reference_type: 'tournament_payment_reversal',
                     reference_id: participantId
                 });
-                
                 console.log(`✅ Removed ${previousAmount} ${previousCurrency} from account ${accountId} (payment reverted)`);
             }
         } else if (previousPaymentStatus === 'paid' && newPaymentStatus === 'paid' && (previousAmount !== newAmount || previousCurrency !== newCurrency)) {
-            // Ajustar monto: restar el anterior y sumar el nuevo, crear transacciones correspondientes
-            const tournamentQuery = `SELECT account_id, club_id, tournament_date FROM tournaments WHERE tournament_id = ? AND course_id = ?`;
+            const tournamentQuery = `SELECT account_id, tournament_date, tournament_name FROM tournaments WHERE tournament_id = ? AND course_id = ?`;
             const { rows: tournamentRows } = await executeQuery(tournamentQuery, [tournamentId, courseId]);
-            
-            if (tournamentRows[0]?.account_id) {
-                const accountId = tournamentRows[0].account_id;
-                const clubId = tournamentRows[0].club_id;
-                const tournamentDate = tournamentRows[0].tournament_date;
-                
-                // Restar el anterior
-                const prevField = previousCurrency === 'USD' ? 'current_balance_usd' : 'current_balance_ars';
-                await executeQuery(`UPDATE custodian_accounts SET ${prevField} = ${prevField} - ? WHERE account_id = ?`, [previousAmount, accountId]);
-                
-                // Crear transacción de reversión del monto anterior
-                await createTransaction(clubId, {
+            const trow = tournamentRows[0];
+            let expenseAccountId = await getLedgerToAccountForTournamentParticipant(clubIdForTx, participantId);
+            if (!expenseAccountId) {
+                expenseAccountId = await getResolvedTournamentPaymentTargetAccountId(courseId, trow?.account_id);
+            }
+            const incomeAccountId = trow
+                ? await getResolvedTournamentPaymentTargetAccountId(courseId, trow.account_id)
+                : null;
+            if (expenseAccountId && incomeAccountId) {
+                const tournamentDate = trow.tournament_date;
+                const tournamentName = trow.tournament_name || 'Torneo';
+
+                await createTransaction(clubIdForTx, {
                     transaction_type: 'expense',
                     transaction_date: new Date().toISOString().split('T')[0],
-                    from_account_id: accountId,
+                    from_account_id: expenseAccountId,
                     to_account_id: null,
                     amount: previousAmount,
                     currency: previousCurrency,
@@ -4951,34 +5275,26 @@ async function updateParticipantPayment(courseId, tournamentId, participantId, p
                     reference_type: 'tournament_payment_adjustment',
                     reference_id: participantId
                 });
-                
-                // Sumar el nuevo
-                const newField = newCurrency === 'USD' ? 'current_balance_usd' : 'current_balance_ars';
-                await executeQuery(`UPDATE custodian_accounts SET ${newField} = ${newField} + ? WHERE account_id = ?`, [newAmount, accountId]);
-                
-                // Obtener nombre del torneo para la descripción
-                const tournamentNameQuery = `SELECT tournament_name FROM tournaments WHERE tournament_id = ? AND course_id = ?`;
-                const { rows: nameRows } = await executeQuery(tournamentNameQuery, [tournamentId, courseId]);
-                const tournamentName = nameRows[0]?.tournament_name || 'Torneo';
-                
-                // Crear nueva transacción con el monto ajustado
-                await createTransaction(clubId, {
+
+                await createTransaction(clubIdForTx, {
                     transaction_type: 'income_tournament',
-                    transaction_date: tournamentDate || new Date().toISOString().split('T')[0],
+                    transaction_date: toSqlDate(tournamentDate),
                     from_account_id: null,
-                    to_account_id: accountId,
+                    to_account_id: incomeAccountId,
                     amount: newAmount,
                     currency: newCurrency,
                     description: `Ajuste de pago de torneo: ${tournamentName} - Participante ID: ${participantId}`,
                     reference_type: 'tournament_payment',
                     reference_id: participantId
                 });
-                
-                console.log(`✅ Adjusted account ${accountId}: -${previousAmount} ${previousCurrency}, +${newAmount} ${newCurrency}`);
+
+                console.log(`✅ Adjusted accounts: -${previousAmount} ${previousCurrency} from ${expenseAccountId}, +${newAmount} ${newCurrency} to ${incomeAccountId}`);
             }
         }
-        
-        return rows.affectedRows > 0;
+
+        await ensureIncomeTransactionForPaidParticipant(courseId, tournamentId, participantId);
+
+        return true;
     } catch (error) {
         console.error('❌ Error updating participant payment:', error);
         throw error;
@@ -6868,8 +7184,8 @@ async function saveScorecard(clubId, tournamentId, scorecardData) {
 /**
  * Get all scorecards for a tournament
  */
-async function getScorecardsByTournament(clubId, tournamentId, includeDidNotPresent = false) {
-    console.log('📊 Getting scorecards for tournament:', { clubId, tournamentId, includeDidNotPresent });
+async function getScorecardsByTournament(clubId, tournamentId, includeDidNotPresent = false, includeHoleScores = true) {
+    console.log('📊 Getting scorecards for tournament:', { clubId, tournamentId, includeDidNotPresent, includeHoleScores });
     
     const whereClause = includeDidNotPresent 
         ? 'WHERE s.tournament_id = ?' 
@@ -6902,21 +7218,22 @@ async function getScorecardsByTournament(clubId, tournamentId, includeDidNotPres
     const rows = result.rows || result;
     
     console.log('✅ Found scorecards:', rows.length);
-    
-    // Get hole scores for each scorecard
-    for (const scorecard of rows) {
-        const holesQuery = `
-            SELECT hole_number, strokes 
-            FROM scorecard_holes 
-            WHERE scorecard_id = ? 
-            ORDER BY hole_number
-        `;
-        const holesResult = await executeQuery(holesQuery, [scorecard.scorecard_id]);
-        const holes = holesResult.rows || holesResult;
-        scorecard.hole_scores = holes.reduce((acc, hole) => {
-            acc[hole.hole_number] = hole.strokes;
-            return acc;
-        }, {});
+
+    if (includeHoleScores) {
+        for (const scorecard of rows) {
+            const holesQuery = `
+                SELECT hole_number, strokes 
+                FROM scorecard_holes 
+                WHERE scorecard_id = ? 
+                ORDER BY hole_number
+            `;
+            const holesResult = await executeQuery(holesQuery, [scorecard.scorecard_id]);
+            const holes = holesResult.rows || holesResult;
+            scorecard.hole_scores = holes.reduce((acc, hole) => {
+                acc[hole.hole_number] = hole.strokes;
+                return acc;
+            }, {});
+        }
     }
 
     console.log(`✅ Found ${rows.length} scorecards`);
@@ -7067,6 +7384,15 @@ async function getScorecardForPrint(clubId, tournamentId, scorecardId) {
     
     try {
         // Get main scorecard data with player and tournament info
+        const participantMatchSql = `
+            tp2.tournament_id = s.tournament_id
+            AND (
+                (s.member_id IS NOT NULL AND tp2.member_id = s.member_id
+                 AND tp2.player_type IN ('member', 'visitor'))
+                OR (s.external_player_id IS NOT NULL
+                    AND tp2.external_player_id = s.external_player_id
+                    AND tp2.player_type = 'external')
+            )`;
         const mainQuery = `
             SELECT 
                 s.*,
@@ -7075,7 +7401,16 @@ async function getScorecardForPrint(clubId, tournamentId, scorecardId) {
                 COALESCE(m.handicap_index, ep.handicap_index) as handicap_index,
                 COALESCE(m.handicap_local, ep.handicap_local) as handicap_local,
                 t.tournament_name,
-                t.tournament_date
+                t.tournament_date,
+                (SELECT tp2.tee_time FROM tournament_participants tp2
+                 WHERE ${participantMatchSql}
+                 ORDER BY tp2.participation_id DESC LIMIT 1) AS participant_tee_time,
+                (SELECT tp2.starting_hole FROM tournament_participants tp2
+                 WHERE ${participantMatchSql}
+                 ORDER BY tp2.participation_id DESC LIMIT 1) AS participant_starting_hole,
+                (SELECT tp2.handicap_used FROM tournament_participants tp2
+                 WHERE ${participantMatchSql}
+                 ORDER BY tp2.participation_id DESC LIMIT 1) AS participant_handicap_used
             FROM scorecards s
             LEFT JOIN members m ON s.member_id = m.member_id
             LEFT JOIN external_players ep ON s.external_player_id = ep.external_id
@@ -7170,6 +7505,49 @@ async function getScorecardForPrint(clubId, tournamentId, scorecardId) {
         console.error('❌ Error getting scorecard for print:', error);
         throw error;
     }
+}
+
+/**
+ * Datos de jugador/torneo para impresión sobre plancha física (sin tarjeta anotada).
+ * Misma forma de campos que usa el overlay: nombre, tee, hoyo salida, HCP, torneo, fecha.
+ */
+async function getParticipantForPhysicalPrint(courseId, tournamentId, participationId) {
+    const query = `
+        SELECT
+            t.tournament_name,
+            t.tournament_date,
+            tp.tee_time AS participant_tee_time,
+            tp.starting_hole AS participant_starting_hole,
+            tp.handicap_used AS participant_handicap_used,
+            CASE
+                WHEN tp.player_type = 'external' THEN COALESCE(tp.player_name, ep.full_name)
+                ELSE CONCAT(m.first_name, ' ', m.last_name)
+            END AS player_name,
+            CASE
+                WHEN tp.player_type = 'external' THEN ep.member_number
+                ELSE m.member_number
+            END AS member_number,
+            CASE
+                WHEN tp.player_type = 'external' THEN ep.handicap_local
+                ELSE m.handicap_local
+            END AS handicap_local,
+            CASE
+                WHEN tp.player_type = 'external' THEN ep.handicap_index
+                ELSE m.handicap_index
+            END AS handicap_index,
+            tp.registration_date AS created_at
+        FROM tournament_participants tp
+        INNER JOIN tournaments t ON t.tournament_id = tp.tournament_id AND t.course_id = ?
+        LEFT JOIN members m ON tp.member_id = m.member_id AND tp.player_type IN ('member', 'visitor')
+        LEFT JOIN external_players ep ON tp.external_player_id = ep.external_id AND tp.player_type = 'external'
+        WHERE tp.tournament_id = ? AND tp.participation_id = ?
+    `;
+    const result = await executeQuery(query, [courseId, tournamentId, participationId]);
+    const rows = result.rows || result;
+    if (!rows.length) {
+        throw new Error('Participante no encontrado');
+    }
+    return rows[0];
 }
 
 // ================================
@@ -7555,6 +7933,7 @@ async function getTransactions(clubId, fromDate, toDate) {
             AND (
                 t.reference_type IS NULL 
                 OR t.transaction_type = 'transfer'
+                OR t.transaction_type = 'income_tournament'
                 OR t.reference_type = 'tournament_payment'
                 OR t.reference_type = 'tournament_payment_reversal'
                 OR t.reference_type = 'tournament_payment_adjustment'
@@ -7665,8 +8044,17 @@ async function getTransactions(clubId, fromDate, toDate) {
             seen.add(key);
             return true;
         });
-        
-        return uniqueRows;
+
+        const normAccId = (v) => {
+            if (v == null || v === '') return null;
+            const n = Number(v);
+            return Number.isFinite(n) ? n : null;
+        };
+        return uniqueRows.map((row) => ({
+            ...row,
+            from_account_id: normAccId(row.from_account_id),
+            to_account_id: normAccId(row.to_account_id)
+        }));
     } catch (error) {
         console.error('❌ Error getting transactions:', error);
         throw error;
@@ -7787,6 +8175,71 @@ async function createTransaction(clubId, transactionData) {
         console.error('❌ Error creating transaction:', error);
         throw error;
     }
+}
+
+/**
+ * Crea en account_transactions los ingresos de torneo faltantes para participantes ya marcados como pagados.
+ * Útil cuando se cobró antes de asignar cuenta al torneo o falló el registro contable; el resumen "Ingresos torneos"
+ * puede mostrar montos por participantes pero la caja no reflejaba movimientos.
+ */
+async function syncMissingTournamentPaymentTransactions(courseId, tournamentId = null) {
+    const params = [courseId];
+    let tournamentFilter = '';
+    const tid = tournamentId != null ? Number(tournamentId) : null;
+    if (tid != null && Number.isFinite(tid) && tid > 0) {
+        tournamentFilter = ' AND tp.tournament_id = ?';
+        params.push(tid);
+    }
+    const listQuery = `
+        SELECT tp.participation_id, tp.tournament_id, tp.paid_amount,
+               COALESCE(tp.currency, 'ARS') AS currency,
+               t.account_id, t.tournament_date, t.tournament_name
+        FROM tournament_participants tp
+        INNER JOIN tournaments t ON t.tournament_id = tp.tournament_id AND t.course_id = ?
+        WHERE UPPER(TRIM(COALESCE(tp.payment_status, ''))) = 'PAID'
+          AND COALESCE(tp.paid_amount, 0) > 0
+        ${tournamentFilter}
+    `;
+    const { rows: participants } = await executeQuery(listQuery, params);
+    let created = 0;
+    let skipped_existing = 0;
+    const resolveCache = new Map();
+    for (const p of participants) {
+        const { rows: existing } = await executeQuery(
+            `SELECT transaction_id FROM account_transactions
+             WHERE club_id = ? AND transaction_type = 'income_tournament' AND reference_id = ?
+             LIMIT 1`,
+            [courseId, p.participation_id]
+        );
+        if (existing && existing.length > 0) {
+            skipped_existing++;
+            continue;
+        }
+        const cacheKey = `${p.tournament_id}:${p.account_id ?? ''}`;
+        let toAccountId = resolveCache.get(cacheKey);
+        if (toAccountId === undefined) {
+            toAccountId = await getResolvedTournamentPaymentTargetAccountId(courseId, p.account_id);
+            resolveCache.set(cacheKey, toAccountId ?? null);
+        }
+        if (!toAccountId) continue;
+        const txDate = toSqlDate(p.tournament_date);
+        await createTransaction(courseId, {
+            transaction_type: 'income_tournament',
+            transaction_date: txDate,
+            from_account_id: null,
+            to_account_id: toAccountId,
+            amount: Number(p.paid_amount),
+            currency: p.currency || 'ARS',
+            description: `Pago de torneo: ${p.tournament_name || 'Torneo'} - Participante ID: ${p.participation_id}`,
+            reference_type: 'tournament_payment',
+            reference_id: p.participation_id
+        });
+        created++;
+    }
+    console.log(
+        `✅ syncMissingTournamentPaymentTransactions club=${courseId} torneo=${tid ?? 'todos'}: creados=${created}, ya_existían=${skipped_existing}, revisados=${participants.length}`
+    );
+    return { created, skipped_existing, examined: participants.length };
 }
 
 /**
@@ -7957,6 +8410,8 @@ export {
     // Member functions
     getAllMembers, getMemberById, createMember, updateMember, deleteMember, updateMemberStatus,
     verifyMemberPhone, verifyMemberByMatricula, verifyReportToken,
+    isMemberTournamentParticipant, getMemberPortalTournaments, getAnnualRankingsForMemberPortal,
+    getTournamentResultsDataForMemberPortal,
     getTournamentForPublicInscription, getTournamentForPublicInscriptionUnfiltered, getTournamentGroupsForInscription, getTournamentParticipantsWithoutGroup, addPublicInscription, checkPublicInscriptionStatus,
     
     // Tournament functions
@@ -7969,7 +8424,7 @@ export {
     getTournamentGroups, generateTournamentGroups, assignTeeTimesToGroups, rebalanceGroupsByHcp, movePlayerToGroup, moveGroupToHole, swapGroupNumbers, createEmptyGroup, deleteEmptyGroup, clearTournamentGroups,
     
     // Scorecard functions
-    saveScorecard, getScorecardsByTournament, getScorecardByPlayer, updateScorecard, deleteScorecard, getScorecardForPrint,
+    saveScorecard, getScorecardsByTournament, getScorecardByPlayer, updateScorecard, deleteScorecard, getScorecardForPrint, getParticipantForPhysicalPrint,
     
     // Member details functions
     getMemberTournaments, getMemberScorecards, getMemberHandicapHistory, getMemberContributions,
@@ -7985,7 +8440,7 @@ export {
     getCurrencyBalance, getCustodians,
     
     // Custodian accounts functions
-    getAccounts, createAccount, updateAccount, deleteAccount, getTransactions, createTransaction, getAccountBalanceBreakdown,
+    getAccounts, createAccount, updateAccount, deleteAccount, getTransactions, createTransaction, syncMissingTournamentPaymentTransactions, getAccountBalanceBreakdown,
     
     // Course holes functions
     createCourseHolesTable, getCourseHoles, updateCourseHole, updateMultipleCourseHoles, getCourseStatistics,

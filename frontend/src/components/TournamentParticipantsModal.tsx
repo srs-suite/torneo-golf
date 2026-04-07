@@ -15,7 +15,8 @@ import {
   DollarSign,
   MessageCircle,
   Link2,
-  QrCode
+  QrCode,
+  Printer
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { SearchInput } from './SearchInput'
@@ -25,9 +26,8 @@ import { LoadingSpinner } from '@/components/LoadingSpinner'
 import { useParticipants, useAddParticipant, useRemoveParticipant, useUpdateParticipantHandicap, useUpdateParticipantTeePreference, useSearchPlayers, useExternalPlayers, useDeleteExternalPlayer } from '@/hooks/useParticipants'
 import { calculateHCPFromIndexDefault } from '@/utils/teeSelection'
 import { formatHcpForDisplay } from '@/utils/scoreUtils'
-import { getPublicAppOrigin } from '@/utils/publicAppOrigin'
 import { useTournamentGroups } from '@/hooks/useTournaments'
-import { generateMobilePaymentsPin, getParticipantWhatsAppInscriptionUrl } from '@/services/participantService'
+import { generateMobilePaymentsPin, getParticipantWhatsAppInscriptionUrl, getPublicAppOrigin } from '@/services/participantService'
 import { CreateExternalPlayerModal } from '@/components/CreateExternalPlayerModal'
 import { PaymentModal } from '@/components/PaymentModal'
 import { toast } from 'react-hot-toast'
@@ -1520,13 +1520,35 @@ export function TournamentParticipantsModal({
                               <MessageCircle className="w-4 h-4" />
                             </button>
                             <button
+                              type="button"
+                              onClick={() => {
+                                const printId = Number(participant.participation_id ?? participant.participant_id)
+                                if (!Number.isFinite(printId) || printId <= 0) {
+                                  toast.error('No se pudo obtener el ID del participante. Recargá la lista e intentá de nuevo.')
+                                  return
+                                }
+                                const url = `${window.location.origin}/club/${clubId}/tournaments/${tournament.tournament_id}/scorecards/print-overlay/participant/${printId}`
+                                window.open(url, '_blank', 'noopener,noreferrer')
+                              }}
+                              className="inline-flex items-center px-2 py-1 text-xs font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50 rounded border border-gray-200 hover:border-gray-300 transition-colors mr-2"
+                              title="Plancha física: nombre, salida, hora, matrícula, HCP y torneo"
+                            >
+                              <Printer className="w-4 h-4" />
+                            </button>
+                            <button
                               onClick={() => setPaymentEditing(participant)}
                               className={`inline-flex items-center px-2 py-1 text-xs font-medium rounded border transition-colors mr-2 ${
-                                (participant.payment_status === 'paid')
+                                (participant.payment_status === 'paid' || participant.payment_status === 'waived')
                                   ? 'text-green-700 hover:text-green-900 hover:bg-green-50 border-green-200 hover:border-green-300'
                                   : 'text-red-700 hover:text-red-900 hover:bg-red-50 border-red-200 hover:border-red-300'
                               }`}
-                              title={(participant.payment_status === 'paid') ? 'Cobro registrado' : 'Registrar cobro'}
+                              title={
+                                participant.payment_status === 'paid'
+                                  ? 'Cobro registrado'
+                                  : participant.payment_status === 'waived'
+                                    ? 'Bonificado'
+                                    : 'Registrar cobro'
+                              }
                             >
                               <DollarSign className="w-4 h-4" />
                             </button>
