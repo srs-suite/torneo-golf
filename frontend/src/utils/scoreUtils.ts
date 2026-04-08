@@ -14,6 +14,13 @@ export function formatHcpForDisplay(
   return String(n);
 }
 
+/** Índice WH para mostrar junto al nombre (una decimal; mismo signo que en datos). */
+export function formatHandicapIndexForDisplay(index: number | null | undefined): string {
+  if (index === null || index === undefined || Number.isNaN(Number(index))) return '';
+  const n = Math.round(Number(index) * 10) / 10;
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+
 /** Net = Gross - HCP normalmente; si índice negativo, Net = Gross + HCP (el HCP es "positivo" y se suma como penalidad). */
 export function computeNetScore(
   gross: number,

@@ -96,6 +96,9 @@ function App() {
       />
       {/* Impresión plancha: ?ids=1,2,3 tarjetas o ?participantIds= inscriptos */}
       <Route path="/club/:clubId/tournaments/:tournamentId/scorecards/print-overlay" element={<ScorecardOverlayPrint />} />
+      {/* Plancha desde gestión de socios: ?memberIds= sin torneo; fecha = día de impresión */}
+      <Route path="/club/:clubId/members/print-plancha" element={<ScorecardOverlayPrint />} />
+      <Route path="/club/:clubId/external-players/print-plancha" element={<ScorecardOverlayPrint />} />
 
       {/* Historial de tarjetas */}
       <Route path="/club/:clubId/tournaments/:tournamentId/scorecards" element={<ScorecardHistory />} />

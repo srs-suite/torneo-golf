@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import {
@@ -9,7 +9,9 @@ import {
   RefreshCw,
   Search,
   Loader2,
-  UserCircle2
+  UserCircle2,
+  Printer,
+  X
 } from 'lucide-react'
 import { toast } from 'react-hot-toast'
 import { useUserPermissions } from '@/hooks/useUserPermissions'
@@ -66,6 +68,11 @@ export default function ExternalPlayers() {
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState<ExternalPlayerRegistry | null>(null)
   const [syncingId, setSyncingId] = useState<number | null>(null)
+  const [externalPlanchaEmbed, setExternalPlanchaEmbed] = useState<{
+    externalPlayerIds: number[]
+  } | null>(null)
+  const [externalPlanchaSelectedIds, setExternalPlanchaSelectedIds] = useState<Set<number>>(() => new Set())
+  const externalPlanchaSelectAllRef = useRef<HTMLInputElement>(null)
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -76,6 +83,43 @@ export default function ExternalPlayers() {
       return name.includes(q) || mat.includes(q)
     })
   }, [players, search])
+
+  const visibleExternalIdsForPlancha = useMemo(
+    () => filtered.map((p) => p.external_id),
+    [filtered]
+  )
+
+  const allVisibleExternalPlanchaSelected =
+    visibleExternalIdsForPlancha.length > 0 &&
+    visibleExternalIdsForPlancha.every((id) => externalPlanchaSelectedIds.has(id))
+
+  useEffect(() => {
+    const el = externalPlanchaSelectAllRef.current
+    if (!el) return
+    const n = visibleExternalIdsForPlancha.filter((id) => externalPlanchaSelectedIds.has(id)).length
+    el.indeterminate = n > 0 && n < visibleExternalIdsForPlancha.length
+  }, [visibleExternalIdsForPlancha, externalPlanchaSelectedIds])
+
+  const toggleExternalPlanchaRowSelected = (externalId: number) => {
+    setExternalPlanchaSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(externalId)) next.delete(externalId)
+      else next.add(externalId)
+      return next
+    })
+  }
+
+  const toggleSelectAllExternalPlanchaVisible = () => {
+    setExternalPlanchaSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (allVisibleExternalPlanchaSelected) {
+        visibleExternalIdsForPlancha.forEach((id) => next.delete(id))
+      } else {
+        visibleExternalIdsForPlancha.forEach((id) => next.add(id))
+      }
+      return next
+    })
+  }
 
   const openCreate = () => {
     setEditing(null)
@@ -120,6 +164,24 @@ export default function ExternalPlayers() {
       setSyncingId(null)
     }
   }
+
+  const openExternalPlanchaPrint = (externalIds: number[]) => {
+    const ids = [...new Set(externalIds.filter((id) => Number.isFinite(id) && id > 0))]
+    if (ids.length === 0) {
+      toast.error('Seleccioná al menos un jugador.')
+      return
+    }
+    setExternalPlanchaEmbed({ externalPlayerIds: ids })
+  }
+
+  useEffect(() => {
+    if (externalPlanchaEmbed == null) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setExternalPlanchaEmbed(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [externalPlanchaEmbed])
 
   const handleDelete = (row: ExternalPlayerRegistry) => {
     if (!window.confirm(`¿Eliminar a "${row.full_name}"? Esta acción no se puede deshacer.`)) return
@@ -205,6 +267,32 @@ export default function ExternalPlayers() {
           </div>
         </div>
 
+        {externalPlanchaSelectedIds.size > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 bg-slate-50 px-3 py-2 text-sm">
+            <span className="text-gray-700">
+              {externalPlanchaSelectedIds.size} seleccionado
+              {externalPlanchaSelectedIds.size !== 1 ? 's' : ''} para plancha
+            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => openExternalPlanchaPrint(Array.from(externalPlanchaSelectedIds))}
+                className="inline-flex items-center gap-1 rounded-md bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800"
+              >
+                <Printer className="h-3.5 w-3.5" />
+                Imprimir planchas
+              </button>
+              <button
+                type="button"
+                onClick={() => setExternalPlanchaSelectedIds(new Set())}
+                className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+              >
+                Limpiar selección
+              </button>
+            </div>
+          </div>
+        )}
+
         {isLoading ? (
           <div className="flex justify-center py-16">
             <LoadingSpinner />
@@ -215,6 +303,19 @@ export default function ExternalPlayers() {
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
+                    <th className="w-10 px-2 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <input
+                        ref={externalPlanchaSelectAllRef}
+                        type="checkbox"
+                        checked={
+                          visibleExternalIdsForPlancha.length > 0 && allVisibleExternalPlanchaSelected
+                        }
+                        onChange={toggleSelectAllExternalPlanchaVisible}
+                        className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-500"
+                        title="Seleccionar filas visibles para imprimir plancha"
+                        aria-label="Seleccionar todos los jugadores visibles para plancha"
+                      />
+                    </th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Nombre
                     </th>
@@ -247,6 +348,16 @@ export default function ExternalPlayers() {
                 <tbody className="bg-white divide-y divide-gray-200">
                   {filtered.map((row) => (
                     <tr key={row.external_id} className="hover:bg-gray-50">
+                      <td className="px-2 py-3 text-center align-middle">
+                        <input
+                          type="checkbox"
+                          checked={externalPlanchaSelectedIds.has(row.external_id)}
+                          onChange={() => toggleExternalPlanchaRowSelected(row.external_id)}
+                          className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-500"
+                          title="Incluir en impresión de planchas"
+                          aria-label={`Incluir plancha de ${row.full_name}`}
+                        />
+                      </td>
                       <td className="px-4 py-3 text-sm font-medium text-gray-900">{row.full_name}</td>
                       <td className="px-4 py-3 text-sm text-gray-700">{row.member_number || '—'}</td>
                       <td className="px-4 py-3 text-sm text-gray-700 max-w-[140px] truncate" title={row.home_club || ''}>
@@ -276,6 +387,14 @@ export default function ExternalPlayers() {
                       </td>
                       <td className="px-4 py-3 text-right text-sm">
                         <div className="flex items-center justify-end gap-1 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => openExternalPlanchaPrint([row.external_id])}
+                            className="p-1.5 text-gray-500 hover:text-gray-800"
+                            title="Plancha física: nombre, matrícula, HCP; fecha del día"
+                          >
+                            <Printer className="w-4 h-4" />
+                          </button>
                           {canEditExternalPlayers && (
                             <>
                               <button
@@ -333,6 +452,43 @@ export default function ExternalPlayers() {
           <p className="text-xs text-gray-400 text-center">Actualizando…</p>
         )}
       </main>
+
+      {externalPlanchaEmbed != null && externalPlanchaEmbed.externalPlayerIds.length > 0 && (
+        <div
+          className="fixed inset-0 z-[75] flex items-center justify-center bg-black/50 p-3"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="ext-plancha-embed-title"
+          onClick={() => setExternalPlanchaEmbed(null)}
+        >
+          <div
+            className="flex h-[min(88vh,840px)] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-2xl"
+            onClick={(ev) => ev.stopPropagation()}
+          >
+            <div className="flex shrink-0 items-center justify-between gap-2 border-b bg-gray-50 px-3 py-2">
+              <span id="ext-plancha-embed-title" className="text-sm font-medium text-gray-800">
+                {externalPlanchaEmbed.externalPlayerIds.length > 1
+                  ? `Plancha física · ${externalPlanchaEmbed.externalPlayerIds.length} planchas`
+                  : 'Plancha física · vista previa'}
+              </span>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+                onClick={() => setExternalPlanchaEmbed(null)}
+              >
+                <X className="h-4 w-4" />
+                Cerrar
+              </button>
+            </div>
+            <iframe
+              key={externalPlanchaEmbed.externalPlayerIds.join(',')}
+              className="min-h-0 w-full flex-1 border-0 bg-gray-100"
+              title="Imprimir plancha física"
+              src={`/club/${clubId}/external-players/print-plancha?externalPlayerIds=${externalPlanchaEmbed.externalPlayerIds.join(',')}&embed=1`}
+            />
+          </div>
+        </div>
+      )}
 
       {showModal && (
         <CreateExternalPlayerModal

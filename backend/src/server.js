@@ -29,7 +29,7 @@ import {
     
     // Tournament functions
     getAllTournaments, getTournamentById, createTournament, updateTournament, deleteTournament,
-    getTournamentParticipants, getTournamentParticipantsById, addTournamentParticipant, removeTournamentParticipant, getParticipantForPhysicalPrint,
+    getTournamentParticipants, getTournamentParticipantsById, addTournamentParticipant, removeTournamentParticipant, getParticipantForPhysicalPrint, getMemberPhysicalPrintPreview, getExternalPhysicalPrintPreview, getMemberPhysicalPrintClubListing, getExternalPhysicalPrintClubListing,
     updateParticipantHandicap, updateParticipantTeePreference, updateParticipantPayment,
     getExternalPlayers, getExternalPlayersRegistry, createExternalPlayer, updateExternalPlayer, deleteExternalPlayer, findDuplicateExternalPlayers,
     // Tee time and groups functions
@@ -504,6 +504,23 @@ async function handleClubAPI(req, res, pathParts) {
                     sendError(res, 'Método no permitido', 405);
                 }
             } else {
+                if (resourceId === 'physical-print-club-listing' && method === 'GET') {
+                    const urlObj = new URL(req.url, `http://${req.headers.host}`);
+                    const memberIdRaw = urlObj.searchParams.get('memberId');
+                    const memberIdNum = memberIdRaw != null && memberIdRaw !== '' ? parseInt(memberIdRaw, 10) : NaN;
+                    if (!Number.isFinite(memberIdNum) || memberIdNum <= 0) {
+                        sendError(res, 'memberId es requerido', 400);
+                        return;
+                    }
+                    try {
+                        const row = await getMemberPhysicalPrintClubListing(parseInt(clubId, 10), memberIdNum);
+                        sendJSON(res, { success: true, data: row });
+                    } catch (e) {
+                        sendError(res, e.message || 'Error al obtener datos', 404);
+                    }
+                    return;
+                }
+
                 const subAction = pathParts[5]; // tournaments, scorecards, handicap-history
                 
                 console.log('🔍 Member details request:', { clubId, resourceId, subAction, pathParts });
@@ -798,12 +815,43 @@ async function handleClubAPI(req, res, pathParts) {
                 }
             }
             else if (method === 'PUT' && !subResource) {
-                const tournamentData = await parseBody(req);
-                const updatedTournament = await updateTournament(parseInt(clubId), parseInt(resourceId), tournamentData);
-                sendJSON(res, { success: true, data: updatedTournament, message: 'Torneo actualizado exitosamente' });
+                try {
+                    const tournamentData = await parseBody(req);
+                    const updatedTournament = await updateTournament(parseInt(clubId), parseInt(resourceId), tournamentData);
+                    sendJSON(res, { success: true, data: updatedTournament, message: 'Torneo actualizado exitosamente' });
+                } catch (tournamentUpdateErr) {
+                    const msg = tournamentUpdateErr?.message || 'Error al actualizar el torneo';
+                    const code = typeof msg === 'string' && (msg.includes('cerrado') || msg.includes('sellados')) ? 400 : 500;
+                    sendError(res, msg, code);
+                }
             } else if (method === 'DELETE' && !subResource) {
                 await deleteTournament(parseInt(clubId), parseInt(resourceId));
                 sendJSON(res, { success: true, message: 'Torneo eliminado exitosamente' });
+            }
+            // GET .../physical-print-preview?memberId= | externalPlayerId=  (plancha sin fila tournament_participants)
+            else if (subResource === 'physical-print-preview' && method === 'GET') {
+                const urlObj = new URL(req.url, `http://${req.headers.host}`);
+                const memberIdRaw = urlObj.searchParams.get('memberId');
+                const externalIdRaw = urlObj.searchParams.get('externalPlayerId');
+                const memberIdNum = memberIdRaw != null && memberIdRaw !== '' ? parseInt(memberIdRaw, 10) : NaN;
+                const externalIdNum = externalIdRaw != null && externalIdRaw !== '' ? parseInt(externalIdRaw, 10) : NaN;
+                const hasMember = Number.isFinite(memberIdNum) && memberIdNum > 0;
+                const hasExternal = Number.isFinite(externalIdNum) && externalIdNum > 0;
+                if (hasMember === hasExternal) {
+                    sendError(res, 'Indicá exactamente uno: memberId o externalPlayerId', 400);
+                    return;
+                }
+                try {
+                    const clubIdNum = parseInt(clubId, 10);
+                    const tournamentIdNum = parseInt(resourceId, 10);
+                    const row = hasMember
+                        ? await getMemberPhysicalPrintPreview(clubIdNum, tournamentIdNum, memberIdNum)
+                        : await getExternalPhysicalPrintPreview(clubIdNum, tournamentIdNum, externalIdNum);
+                    sendJSON(res, { success: true, data: row });
+                } catch (e) {
+                    sendError(res, e.message || 'Error al obtener datos', 404);
+                }
+                return;
             }
             
             // Tournament participants
@@ -1409,6 +1457,22 @@ async function handleClubAPI(req, res, pathParts) {
 
         else if (resource === 'external-players') {
             const cId = parseInt(clubId);
+            if (method === 'GET' && resourceId === 'physical-print-club-listing') {
+                const urlObj = new URL(req.url, `http://${req.headers.host}`);
+                const extRaw = urlObj.searchParams.get('externalPlayerId');
+                const extNum = extRaw != null && extRaw !== '' ? parseInt(extRaw, 10) : NaN;
+                if (!Number.isFinite(extNum) || extNum <= 0) {
+                    sendError(res, 'externalPlayerId es requerido', 400);
+                    return;
+                }
+                try {
+                    const row = await getExternalPhysicalPrintClubListing(cId, extNum);
+                    sendJSON(res, { success: true, data: row });
+                } catch (e) {
+                    sendError(res, e.message || 'Error al obtener datos', 404);
+                }
+                return;
+            }
             if (method === 'GET' && resourceId === 'registry') {
                 const list = await getExternalPlayersRegistry(cId);
                 sendJSON(res, { success: true, data: list });

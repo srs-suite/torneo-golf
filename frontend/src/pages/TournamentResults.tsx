@@ -3,7 +3,14 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Trophy, Medal, Award, Crown, Printer } from 'lucide-react';
 import { useTournamentScorecards } from '../hooks/useScorecards';
 import { useTournaments } from '../hooks/useTournaments';
-import { formatHcpForDisplay } from '@/utils/scoreUtils';
+import { formatHandicapIndexForDisplay, formatHcpForDisplay } from '@/utils/scoreUtils';
+import {
+  compareCategoryResults,
+  computeNetForResultsRow,
+  dedupeScorecardsForResults,
+  getEffectiveHcpForCategory,
+  normalizeIdaVueltaForResults,
+} from '@/utils/tournamentResultsByCategory';
 
 interface CategoryResult {
   position: number;
@@ -26,54 +33,6 @@ interface Category {
   color: string;
   icon: any;
   filter: (scorecard: any) => boolean;
-}
-
-function parseHcpField(v: unknown): number | null {
-  if (v === null || v === undefined) return null
-  if (typeof v === 'string' && v.trim() === '') return null
-  const h = parseFloat(String(v).trim())
-  return Number.isFinite(h) ? h : null
-}
-
-/** HCP para categorías: primero local, si no índice (0 = scratch válido). null = sin HCP útil. */
-function getEffectiveHcpForCategory(scorecard: any): number | null {
-  const hl = parseHcpField(scorecard.handicap_local)
-  if (hl !== null) return hl
-  return parseHcpField(scorecard.handicap_index)
-}
-
-function playerResultKey(scorecard: any): string {
-  if (scorecard.member_id != null && scorecard.member_id !== '')
-    return `m:${Number(scorecard.member_id)}`
-  if (scorecard.external_player_id != null && scorecard.external_player_id !== '')
-    return `e:${Number(scorecard.external_player_id)}`
-  return `n:${String(scorecard.player_name || '').trim().toLowerCase()}`
-}
-
-/** Una fila por jugador: evita duplicados en categorías si hay más de una tarjeta. Prioriza fila con HCP y mejor gross. */
-function dedupeScorecardsForResults(scorecards: any[]): any[] {
-  const map = new Map<string, any>()
-  for (const sc of scorecards) {
-    const key = playerResultKey(sc)
-    const existing = map.get(key)
-    if (!existing) {
-      map.set(key, sc)
-      continue
-    }
-    const rank = (row: any) => {
-      const hasHcp = getEffectiveHcpForCategory(row) !== null ? 1 : 0
-      const gross = Number(row.total_gross)
-      const g = Number.isFinite(gross) && gross > 0 ? gross : 999
-      const t = new Date(row.updated_at || row.created_at || 0).getTime()
-      return { hasHcp, g, t }
-    }
-    const a = rank(existing)
-    const b = rank(sc)
-    if (b.hasHcp > a.hasHcp) map.set(key, sc)
-    else if (b.hasHcp === a.hasHcp && b.g < a.g) map.set(key, sc)
-    else if (b.hasHcp === a.hasHcp && b.g === a.g && b.t > a.t) map.set(key, sc)
-  }
-  return Array.from(map.values())
 }
 
 /** Fondo amarillo: 1.er y 2.do en cada categoría; en Scratch (Gross) solo 1.er */
@@ -397,35 +356,25 @@ export default function TournamentResults() {
     categories.forEach(category => {
       const categoryScores = uniqueScorecards
         .filter(category.filter)
-        .map(scorecard => ({
-          player_name: scorecard.player_name,
-          player_type: (scorecard as any).player_type || 'member',
-          handicap_local: (scorecard as any).handicap_local,
-          handicap_index:
-            scorecard.handicap_index != null ? Number(scorecard.handicap_index) : null,
-          total_gross: scorecard.total_gross || 0,
-          // Calcular neto: si hay handicap_local usar redondeado; si no, usar index tal cual (puede ser negativo)
-          total_net: (() => {
-            // En categorías scratch, ordenar por gross: usamos gross como "neto" para el sort
-            if (category.id.startsWith('scratch')) {
-              return scorecard.total_gross || 0
-            }
-            const gross = scorecard.total_gross || 0
-            const hcp = (scorecard as any).handicap_local !== null && (scorecard as any).handicap_local !== undefined
-              ? Math.round((scorecard as any).handicap_local)
-              : Math.round(Number(scorecard.handicap_index ?? 0))
-            // Índice negativo: net = gross + HCP; si no: net = gross - HCP
-            const idx = scorecard.handicap_index != null ? Number(scorecard.handicap_index) : null
-            if (idx !== null && !Number.isNaN(idx) && idx < 0) return gross + hcp
-            return gross - hcp
-          })(),
-          front_nine: scorecard.front_nine || 0,
-          back_nine: scorecard.back_nine || 0,
-          member_number: (scorecard as any).member_number,
-          club_name: (scorecard as any).club_name,
-          position: 0
-        }))
-        .sort((a, b) => a.total_net - b.total_net) // Ordenar por score neto (menor es mejor)
+        .map((scorecard) => {
+          const rawNet = computeNetForResultsRow(scorecard, category.id)
+          const { front: ida, back: vuelta } = normalizeIdaVueltaForResults(scorecard)
+          return {
+            player_name: scorecard.player_name,
+            player_type: (scorecard as any).player_type || 'member',
+            handicap_local: (scorecard as any).handicap_local,
+            handicap_index:
+              scorecard.handicap_index != null ? Number(scorecard.handicap_index) : null,
+            total_gross: scorecard.total_gross || 0,
+            total_net: Math.round(rawNet),
+            front_nine: ida,
+            back_nine: vuelta,
+            member_number: (scorecard as any).member_number,
+            club_name: (scorecard as any).club_name,
+            position: 0,
+          }
+        })
+        .sort(compareCategoryResults)
         .map((result, index) => ({
           ...result,
           position: index + 1
@@ -572,13 +521,20 @@ export default function TournamentResults() {
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
-                      {categoryResults.map((result, index) => (
+                      {categoryResults.map((result, index) => {
+                        const indexLabel = formatHandicapIndexForDisplay(result.handicap_index);
+                        return (
                         <tr key={index} className={resultsRowHighlightClass(category.id, result.position)}>
                           <td className="px-4 py-4 whitespace-nowrap text-center">
                             {getPositionDisplay(result.position)}
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap">
-                            <div className="text-sm font-medium text-gray-900">{result.player_name}</div>
+                            <div className="text-sm font-medium text-gray-900">
+                              {result.player_name}
+                              {indexLabel ? (
+                                <span className="text-gray-600 font-normal"> ({indexLabel})</span>
+                              ) : null}
+                            </div>
                             {result.member_number && (
                               <div className="text-xs text-gray-500">#{result.member_number}</div>
                             )}
@@ -605,7 +561,8 @@ export default function TournamentResults() {
                             {sanitizeAscii(result.club_name) || 'Sin club'}
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -616,7 +573,7 @@ export default function TournamentResults() {
 
         {/* Nota al pie */}
         <div className="mt-8 text-center text-sm text-gray-500 print:mt-12">
-          <p>Resultados ordenados por score neto (Gross − HCP; si índice negativo: Gross + HCP)</p>
+          <p>Resultados ordenados por score neto (Gross − HCP; si índice negativo: Gross + HCP). Empate en neto: gana la mejor vuelta (menor golpes). Ida/vuelta se ajustan al gross si falta cargar una mitad.</p>
           <p className="mt-1">Generado el {new Date().toLocaleDateString('es-ES')} a las {new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false })}</p>
         </div>
       </div>

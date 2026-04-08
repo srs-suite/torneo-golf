@@ -117,6 +117,43 @@ export const getParticipantPhysicalPrintData = async (
   return response.data.data;
 };
 
+/** Misma forma que getParticipantPhysicalPrintData, para socio o externo aún no inscripto en el torneo. */
+export const getPhysicalPrintPreviewData = async (
+  clubId: number,
+  tournamentId: number,
+  opts: { memberId?: number; externalPlayerId?: number }
+): Promise<Record<string, unknown>> => {
+  const params = new URLSearchParams();
+  if (opts.memberId != null && opts.memberId > 0) params.set('memberId', String(opts.memberId));
+  if (opts.externalPlayerId != null && opts.externalPlayerId > 0) params.set('externalPlayerId', String(opts.externalPlayerId));
+  const response = await axios.get(
+    `${API_URL}/${clubId}/tournaments/${tournamentId}/physical-print-preview?${params.toString()}`
+  );
+  return response.data.data;
+};
+
+/** Plancha desde gestión de socios: sin nombre de torneo; la fecha debe fijarse en el cliente (día de impresión). */
+export const getMemberPhysicalPrintClubListingData = async (
+  clubId: number,
+  memberId: number
+): Promise<Record<string, unknown>> => {
+  const response = await axios.get(
+    `${API_URL}/${clubId}/members/physical-print-club-listing?memberId=${memberId}`
+  );
+  return response.data.data;
+};
+
+/** Igual que socios en listado global: sin torneo; fecha = día de impresión en el cliente. */
+export const getExternalPhysicalPrintClubListingData = async (
+  clubId: number,
+  externalPlayerId: number
+): Promise<Record<string, unknown>> => {
+  const response = await axios.get(
+    `${API_URL}/${clubId}/external-players/physical-print-club-listing?externalPlayerId=${externalPlayerId}`
+  );
+  return response.data.data;
+};
+
 export const updateParticipantPayment = async (
   clubId: number,
   tournamentId: number,

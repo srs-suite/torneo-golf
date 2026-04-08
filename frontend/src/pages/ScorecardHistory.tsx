@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, FileText, Eye, Printer, Edit, Search, X } from 'lucide-react';
 import { useTournamentScorecards } from '../hooks/useScorecards';
@@ -7,7 +7,6 @@ export default function ScorecardHistory() {
   const { clubId, tournamentId } = useParams<{ clubId: string; tournamentId: string }>();
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   
   const {
     data: scorecards = [],
@@ -52,32 +51,6 @@ export default function ScorecardHistory() {
              club.includes(term);
     });
   }, [scorecards, searchTerm]);
-
-  const toggleSelect = useCallback((id: number) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
-
-  const selectAllFiltered = useCallback(() => {
-    const next = new Set<number>();
-    filteredScorecards.forEach((sc: any) => {
-      const id = Number(sc.scorecard_id);
-      if (!Number.isNaN(id)) next.add(id);
-    });
-    setSelectedIds(next);
-  }, [filteredScorecards]);
-
-  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
-
-  const printSelectedOverlays = useCallback(() => {
-    if (selectedIds.size === 0) return;
-    const ids = Array.from(selectedIds).sort((a, b) => a - b).join(',');
-    navigate(`/club/${clubId}/tournaments/${tournamentId}/scorecards/print-overlay?ids=${ids}`);
-  }, [clubId, tournamentId, navigate, selectedIds]);
 
   if (isLoading) {
     return (
@@ -149,36 +122,6 @@ export default function ScorecardHistory() {
         </div>
       </div>
 
-      {/* Barra selección masiva */}
-      {filteredScorecards.length > 0 && (
-        <div className="bg-amber-50 border-b border-amber-200">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2 flex flex-wrap items-center gap-3 text-sm">
-            <button
-              type="button"
-              onClick={selectAllFiltered}
-              className="text-amber-900 underline hover:no-underline"
-            >
-              Seleccionar todas (lista actual)
-            </button>
-            <button type="button" onClick={clearSelection} className="text-gray-600 underline hover:no-underline">
-              Limpiar selección
-            </button>
-            <span className="text-gray-700">
-              {selectedIds.size} seleccionada{selectedIds.size !== 1 ? 's' : ''}
-            </span>
-            <button
-              type="button"
-              disabled={selectedIds.size === 0}
-              onClick={printSelectedOverlays}
-              className="ml-auto inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-gray-900 text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-800"
-            >
-              <Printer className="h-4 w-4" />
-              Imprimir en plancha física
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Search Bar */}
@@ -225,22 +168,9 @@ export default function ScorecardHistory() {
           </div>
         ) : (
           <div className="space-y-4">
-            {filteredScorecards.map((scorecard: any, index: number) => {
-              const sid = Number(scorecard.scorecard_id);
-              const checked = !Number.isNaN(sid) && selectedIds.has(sid);
-              return (
+            {filteredScorecards.map((scorecard: any, index: number) => (
               <div key={`scorecard_${scorecard.scorecard_id ?? index}`} className="bg-white rounded-lg shadow p-6">
                 <div className="flex items-center justify-between gap-3">
-                  <label className="flex items-start gap-3 cursor-pointer shrink-0">
-                    <input
-                      type="checkbox"
-                      className="mt-1 h-4 w-4 rounded border-gray-300"
-                      checked={checked}
-                      disabled={Number.isNaN(sid)}
-                      onChange={() => !Number.isNaN(sid) && toggleSelect(sid)}
-                    />
-                    <span className="sr-only">Seleccionar para imprimir en plancha</span>
-                  </label>
                   <div className="min-w-0 flex-1">
                     <h4 className="text-lg font-medium">
                       {scorecard.player_name || `Jugador ${index + 1}`}
@@ -275,17 +205,6 @@ export default function ScorecardHistory() {
                       <Eye className="h-4 w-4" />
                     </button>
                     <button
-                      onClick={() =>
-                        navigate(
-                          `/club/${clubId}/tournaments/${tournamentId}/scorecards/print-overlay?ids=${scorecard.scorecard_id}`
-                        )
-                      }
-                      className="px-3 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
-                      title="Solo datos sobre plancha impresa"
-                    >
-                      Plancha
-                    </button>
-                    <button
                       onClick={() => navigate(`/club/${clubId}/tournaments/${tournamentId}/scorecard/${scorecard.scorecard_id}/print`)}
                       className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg"
                       title="Vista completa"
@@ -295,8 +214,7 @@ export default function ScorecardHistory() {
                   </div>
                 </div>
               </div>
-              );
-            })}
+            ))}
           </div>
         )}
       </div>

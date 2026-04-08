@@ -1,14 +1,32 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom'
 import { ArrowLeft, Printer } from 'lucide-react'
 
 import { scorecardService } from '@/services/scorecardService'
-import { getParticipantPhysicalPrintData } from '@/services/participantService'
-import { parseDatePartsForPrint, playingHcpForPrint } from '@/utils/scorecardPrintHelpers'
+import {
+  getParticipantPhysicalPrintData,
+  getPhysicalPrintPreviewData,
+  getMemberPhysicalPrintClubListingData,
+  getExternalPhysicalPrintClubListingData,
+} from '@/services/participantService'
+import {
+  parseDatePartsForPrint,
+  playingHcpForPrint,
+} from '@/utils/scorecardPrintHelpers'
 
-type SheetOk = { rowKey: string; source: 'scorecard' | 'participant'; id: number; data: any }
-type SheetErr = { rowKey: string; source: 'scorecard' | 'participant'; id: number; error: string }
+type SheetOk = {
+  rowKey: string
+  source: 'scorecard' | 'participant' | 'preview-member' | 'preview-external'
+  id: number
+  data: any
+}
+type SheetErr = {
+  rowKey: string
+  source: 'scorecard' | 'participant' | 'preview-member' | 'preview-external'
+  id: number
+  error: string
+}
 type SheetResult = SheetOk | SheetErr
 
 function parseIdList(raw: string | null): number[] {
@@ -78,6 +96,22 @@ function safeText(value: unknown, fallback = '—'): string {
   if (value == null) return fallback
   const s = String(value).trim()
   return s.length > 0 ? s : fallback
+}
+
+/** YYYY-MM-DD en calendario local (día de impresión). */
+function todayLocalYmd(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/** Fecha YYYY-MM-DD interpretada como calendario local (evita corrimiento UTC). */
+function datePartsForPlancha(data: any): { day: string; month: string; year: string } {
+  if (data?.club_listing_plancha && data?.tournament_date != null) {
+    const s = String(data.tournament_date).trim()
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)
+    if (m) return { day: m[3], month: m[2], year: m[1] }
+  }
+  return parseDatePartsForPrint(data?.tournament_date || data?.created_at)
 }
 
 function readTeeStart(data: any): string {
@@ -176,7 +210,7 @@ function PositionedField({
 }
 
 function PhysicalPlanchaOverlay({ data, calibrationMode }: { data: any; calibrationMode: boolean }) {
-  const dateParts = parseDatePartsForPrint(data?.tournament_date || data?.created_at)
+  const dateParts = datePartsForPlancha(data)
   const playerName = safeText(
     data?.player_name ??
       data?.participant_name ??
@@ -187,7 +221,7 @@ function PhysicalPlanchaOverlay({ data, calibrationMode }: { data: any; calibrat
   const memberNumber =
     data?.member_number != null && data.member_number !== '' ? String(data.member_number) : '—'
   const handicap = playingHcpForPrint(data)
-  const tournamentName = safeText(data?.tournament_name)
+  const tournamentName = data?.club_listing_plancha ? '' : safeText(data?.tournament_name)
   const teeHole = readTeeStart(data)
   const teeTime = readTeeTime(data)
 
@@ -398,16 +432,17 @@ function PhysicalPlanchaOverlay({ data, calibrationMode }: { data: any; calibrat
 export default function ScorecardOverlayPrint() {
   const { clubId, tournamentId, participationId: participationIdParam } = useParams<{
     clubId: string
-    tournamentId: string
+    tournamentId?: string
     participationId?: string
   }>()
 
   const navigate = useNavigate()
+  const location = useLocation()
   const [searchParams] = useSearchParams()
   const embed = searchParams.get('embed') === '1'
 
   const clubIdNum = clubId ? parseInt(clubId, 10) : 0
-  const tournamentIdNum = tournamentId ? parseInt(tournamentId, 10) : 0
+  const tournamentIdNum = tournamentId ? parseInt(tournamentId, 10) : NaN
 
   const pathParticipantId = useMemo(() => {
     if (!participationIdParam) return NaN
@@ -427,15 +462,45 @@ export default function ScorecardOverlayPrint() {
     return Array.from(new Set(merged))
   }, [searchParams, pathParticipantId])
 
+  const previewMemberIds = useMemo(() => parseIdList(searchParams.get('memberIds')), [searchParams])
+  const previewExternalIds = useMemo(() => parseIdList(searchParams.get('externalPlayerIds')), [searchParams])
+
+  /** Gestión global de socios: sin torneo ni fecha de torneo; fecha = día de impresión (cliente). */
+  const useClubListingMemberPlancha =
+    location.pathname.includes('/members/print-plancha') &&
+    previewMemberIds.length > 0 &&
+    previewExternalIds.length === 0
+
+  /** Listado global de jugadores externos: mismo criterio que socios. */
+  const useClubListingExternalPlancha =
+    location.pathname.includes('/external-players/print-plancha') &&
+    previewExternalIds.length > 0 &&
+    previewMemberIds.length === 0
+
   const useParticipants = participantIds.length > 0
-  const activeIds = useParticipants ? participantIds : scorecardIds
+  const usePreviewPlayers =
+    !useParticipants &&
+    !useClubListingMemberPlancha &&
+    !useClubListingExternalPlancha &&
+    (previewMemberIds.length > 0 || previewExternalIds.length > 0)
+  const activeIdCount = useParticipants
+    ? participantIds.length
+    : useClubListingMemberPlancha
+      ? previewMemberIds.length
+      : useClubListingExternalPlancha
+        ? previewExternalIds.length
+        : usePreviewPlayers
+          ? previewMemberIds.length + previewExternalIds.length
+          : scorecardIds.length
 
   const overlayBackPath =
     clubId && tournamentId
       ? `/club/${clubId}/tournaments/${tournamentId}/scorecards`
-      : clubId
-        ? `/club/${clubId}/admin`
-        : '/'
+      : clubId && location.pathname.includes('/external-players/print-plancha')
+        ? `/club/${clubId}/external-players`
+        : clubId
+          ? `/club/${clubId}/admin`
+          : '/'
 
   const overlayBackLabel = tournamentId ? 'Volver al torneo' : 'Volver'
 
@@ -473,13 +538,65 @@ export default function ScorecardOverlayPrint() {
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
-    if (!clubIdNum || !tournamentIdNum || activeIds.length === 0) {
+    if (!clubIdNum || activeIdCount === 0) {
+      setSheets([])
+      setLoading(false)
+      return
+    }
+
+    const needsValidTournament =
+      useParticipants ||
+      usePreviewPlayers ||
+      scorecardIds.length > 0
+
+    if (
+      needsValidTournament &&
+      (!Number.isFinite(tournamentIdNum) || tournamentIdNum <= 0)
+    ) {
       setSheets([])
       setLoading(false)
       return
     }
 
     setLoading(true)
+
+    if (useClubListingMemberPlancha) {
+      const ymd = todayLocalYmd()
+      const results: SheetResult[] = await Promise.all(
+        previewMemberIds.map(async (mid): Promise<SheetResult> => {
+          const rowKey = `club-listing-${mid}`
+          try {
+            const raw = await getMemberPhysicalPrintClubListingData(clubIdNum, mid)
+            const data = { ...raw, tournament_date: ymd, club_listing_plancha: true }
+            return { rowKey, source: 'preview-member', id: mid, data }
+          } catch (e: any) {
+            return { rowKey, source: 'preview-member', id: mid, error: e?.message || 'Error al cargar' }
+          }
+        })
+      )
+      setSheets(results)
+      setLoading(false)
+      return
+    }
+
+    if (useClubListingExternalPlancha) {
+      const ymd = todayLocalYmd()
+      const results: SheetResult[] = await Promise.all(
+        previewExternalIds.map(async (eid): Promise<SheetResult> => {
+          const rowKey = `club-listing-ext-${eid}`
+          try {
+            const raw = await getExternalPhysicalPrintClubListingData(clubIdNum, eid)
+            const data = { ...raw, tournament_date: ymd, club_listing_plancha: true }
+            return { rowKey, source: 'preview-external', id: eid, data }
+          } catch (e: any) {
+            return { rowKey, source: 'preview-external', id: eid, error: e?.message || 'Error al cargar' }
+          }
+        })
+      )
+      setSheets(results)
+      setLoading(false)
+      return
+    }
 
     if (useParticipants) {
       const results: SheetResult[] = await Promise.all(
@@ -495,6 +612,32 @@ export default function ScorecardOverlayPrint() {
       )
 
       setSheets(results)
+    } else if (usePreviewPlayers) {
+      const memberResults: SheetResult[] = await Promise.all(
+        previewMemberIds.map(async (mid): Promise<SheetResult> => {
+          const rowKey = `preview-member-${mid}`
+          try {
+            const data = await getPhysicalPrintPreviewData(clubIdNum, tournamentIdNum, { memberId: mid })
+            return { rowKey, source: 'preview-member', id: mid, data }
+          } catch (e: any) {
+            return { rowKey, source: 'preview-member', id: mid, error: e?.message || 'Error al cargar' }
+          }
+        })
+      )
+      const externalResults: SheetResult[] = await Promise.all(
+        previewExternalIds.map(async (eid): Promise<SheetResult> => {
+          const rowKey = `preview-external-${eid}`
+          try {
+            const data = await getPhysicalPrintPreviewData(clubIdNum, tournamentIdNum, {
+              externalPlayerId: eid,
+            })
+            return { rowKey, source: 'preview-external', id: eid, data }
+          } catch (e: any) {
+            return { rowKey, source: 'preview-external', id: eid, error: e?.message || 'Error al cargar' }
+          }
+        })
+      )
+      setSheets([...memberResults, ...externalResults])
     } else {
       const results: SheetResult[] = await Promise.all(
         scorecardIds.map(async (scorecardId): Promise<SheetResult> => {
@@ -516,7 +659,19 @@ export default function ScorecardOverlayPrint() {
     }
 
     setLoading(false)
-  }, [clubIdNum, tournamentIdNum, activeIds.length, useParticipants, participantIds, scorecardIds])
+  }, [
+    clubIdNum,
+    tournamentIdNum,
+    activeIdCount,
+    useParticipants,
+    usePreviewPlayers,
+    useClubListingMemberPlancha,
+    useClubListingExternalPlancha,
+    participantIds,
+    previewMemberIds,
+    previewExternalIds,
+    scorecardIds,
+  ])
 
   useEffect(() => {
     load()
@@ -545,13 +700,18 @@ export default function ScorecardOverlayPrint() {
     )
   }
 
-  if (!activeIds.length) {
+  if (activeIdCount === 0) {
     return (
       <div
         className={`bg-gray-50 flex flex-col items-center justify-center gap-4 p-6 ${embed ? 'min-h-[280px]' : 'min-h-screen'}`}
       >
         <p className="text-gray-800 text-center max-w-md">
-          Falta un ID válido en la URL: <code className="bg-gray-200 px-1 rounded">…/print-overlay/participant/N</code>, <code className="bg-gray-200 px-1 rounded">?participantIds=N</code> o <code className="bg-gray-200 px-1 rounded">?ids=N</code>.
+          Falta un ID válido en la URL: <code className="bg-gray-200 px-1 rounded">…/members/print-plancha?memberIds=N</code>,{' '}
+          <code className="bg-gray-200 px-1 rounded">…/external-players/print-plancha?externalPlayerIds=N</code>,{' '}
+          <code className="bg-gray-200 px-1 rounded">…/print-overlay/participant/N</code>,{' '}
+          <code className="bg-gray-200 px-1 rounded">?participantIds=N</code>,{' '}
+          <code className="bg-gray-200 px-1 rounded">?memberIds=N</code> (con torneo en la ruta),{' '}
+          <code className="bg-gray-200 px-1 rounded">?externalPlayerIds=N</code> o <code className="bg-gray-200 px-1 rounded">?ids=N</code> (tarjeta).
         </p>
 
         {!embed && (
@@ -710,7 +870,14 @@ export default function ScorecardOverlayPrint() {
           >
             {'error' in sheet ? (
               <div className="p-6 text-sm text-red-700">
-                {sheet.source === 'participant' ? 'Participante' : 'Tarjeta'} #{sheet.id}: {sheet.error}
+                {sheet.source === 'participant'
+                  ? 'Participante'
+                  : sheet.source === 'preview-member'
+                    ? 'Socio'
+                    : sheet.source === 'preview-external'
+                      ? 'Externo'
+                      : 'Tarjeta'}{' '}
+                #{sheet.id}: {sheet.error}
               </div>
             ) : (
               <div

@@ -13,13 +13,20 @@ import {
 import { DateInput } from './DateInput'
 import { TimeInput } from './TimeInput'
 
+/** Estado del formulario: solo Abierto / Cerrado (legacy draft/en_progreso → abierto; completado/cancelado → cerrado). */
+function tournamentFormStatus(t: Tournament | null | undefined): 'open' | 'closed' {
+  if (!t?.status) return 'open'
+  if (t.status === 'closed' || t.status === 'completed' || t.status === 'cancelled') return 'closed'
+  return 'open'
+}
+
 const tournamentSchemaCreate = z.object({
   tournament_name: z.string().min(1, 'El nombre del torneo es requerido').max(255, 'Máximo 255 caracteres'),
   tournament_date: z.string().min(1, 'La fecha del torneo es requerida'),
   start_time: z.string().optional(),
   end_time: z.string().optional(),
   tournament_type: z.enum(['stroke_play', 'match_play', 'scramble', 'best_ball']),
-  status: z.enum(['draft', 'open', 'closed', 'in_progress', 'completed', 'cancelled']).optional(),
+  status: z.enum(['open', 'closed']),
   max_participants: z.number().min(1, 'Mínimo 1 participante').max(200, 'Máximo 200 participantes').optional(),
   registration_deadline: z.string().optional(),
   entry_fee: z.number().min(0, 'La tarifa debe ser mayor o igual a 0').default(0),
@@ -105,7 +112,7 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
       start_time: tournament?.start_time || '',
       end_time: tournament?.end_time || '',
       tournament_type: tournament?.tournament_type || 'stroke_play',
-      status: tournament?.status || 'draft',
+      status: tournamentFormStatus(tournament),
       max_participants: tournament?.max_participants || undefined,
       registration_deadline: tournament?.registration_deadline 
         ? new Date(tournament.registration_deadline).toISOString().split('T')[0]
@@ -116,6 +123,11 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
     }
   })
 
+  useEffect(() => {
+    if (isOpen && tournament) {
+      setValue('status', tournamentFormStatus(tournament))
+    }
+  }, [isOpen, tournament, setValue])
 
   const onSubmit = async (data: CreateTournamentData) => {
     console.log('Enviando datos del torneo:', data)
@@ -299,15 +311,11 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                     {...register('status')}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent"
                   >
-                    <option value="draft">🔸 Borrador - En configuración (no público)</option>
-                    <option value="open">🟢 Abierto - Inscripciones abiertas</option>
-                    <option value="closed">🟡 Cerrado - Inscripciones cerradas</option>
-                    <option value="in_progress">🔵 En Progreso - Torneo ejecutándose</option>
-                    <option value="completed">🟣 Completado - Torneo finalizado</option>
-                    <option value="cancelled">🔴 Cancelado - Torneo cancelado</option>
+                    <option value="open">Abierto — inscripciones y datos editables</option>
+                    <option value="closed">Cerrado — congela índice y HCP del torneo (histórico)</option>
                   </select>
                   <p className="mt-1 text-xs text-gray-500">
-                    Cambiar a "Abierto" cuando esté listo para recibir inscripciones
+                    En Cerrado no se puede editar el torneo ni la lista/HCP de jugadores; los resultados quedan alineados con lo jugado. Para corregir, reabrí con Abierto (solo estado, desde edición).
                   </p>
                 </div>
 

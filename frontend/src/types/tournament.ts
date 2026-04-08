@@ -35,6 +35,8 @@ export interface Tournament {
   created_by?: number
   created_at: string
   updated_at: string
+  /** Sellado de handicaps (ej. al cerrar torneo o asignar salidas); congelación histórica */
+  handicaps_sealed_at?: string | null
   
   // Campos calculados/adicionales
   current_participants?: number

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { 
   Users, 
@@ -28,7 +28,8 @@ import {
   QrCode,
   DollarSign,
   Link2,
-  UserCircle2
+  UserCircle2,
+  Printer
 
 } from 'lucide-react'
 import { useMembers, useClearClubMembers, useUpdateMember, useDeleteMember, useUpdateMemberStatus } from '@/hooks/useMembers'
@@ -98,6 +99,12 @@ export function ClubAdmin() {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   const [editingIndex, setEditingIndex] = useState<{memberId: number, value: string} | null>(null)
   const [editingHCP, setEditingHCP] = useState<{memberId: number, value: string} | null>(null)
+  /** Plancha física desde listado global de socios: elegir torneo y ver iframe */
+  const [memberPlanchaEmbed, setMemberPlanchaEmbed] = useState<{
+    memberIds: number[]
+  } | null>(null)
+  const [memberPlanchaSelectedIds, setMemberPlanchaSelectedIds] = useState<Set<number>>(() => new Set())
+  const memberPlanchaSelectAllRef = useRef<HTMLInputElement>(null)
 
   const { data: clubs = [] } = useClubs()
 
@@ -244,6 +251,25 @@ export function ClubAdmin() {
     setEditingHCP(null)
   }
 
+  const openMemberPlanchaPrint = (memberIds: number[]) => {
+    if (!clubId) return
+    const ids = [...new Set(memberIds.filter((id) => Number.isFinite(id) && id > 0))]
+    if (ids.length === 0) {
+      toast.error('Seleccioná al menos un socio.')
+      return
+    }
+    setMemberPlanchaEmbed({ memberIds: ids })
+  }
+
+  useEffect(() => {
+    if (memberPlanchaEmbed == null) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMemberPlanchaEmbed(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [memberPlanchaEmbed])
+
   const filteredMembers = members
     .filter(member => {
       const matchesSearch = 
@@ -268,6 +294,43 @@ export function ClubAdmin() {
         return nameB.localeCompare(nameA)
       }
     })
+
+  const toggleMemberPlanchaRowSelected = (memberId: number) => {
+    setMemberPlanchaSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(memberId)) next.delete(memberId)
+      else next.add(memberId)
+      return next
+    })
+  }
+
+  const visibleMemberIdsForPlancha = useMemo(
+    () => filteredMembers.map((m) => m.member_id),
+    [filteredMembers]
+  )
+
+  const allVisibleMemberPlanchaSelected =
+    visibleMemberIdsForPlancha.length > 0 &&
+    visibleMemberIdsForPlancha.every((id) => memberPlanchaSelectedIds.has(id))
+
+  useEffect(() => {
+    const el = memberPlanchaSelectAllRef.current
+    if (!el) return
+    const n = visibleMemberIdsForPlancha.filter((id) => memberPlanchaSelectedIds.has(id)).length
+    el.indeterminate = n > 0 && n < visibleMemberIdsForPlancha.length
+  }, [visibleMemberIdsForPlancha, memberPlanchaSelectedIds])
+
+  const toggleSelectAllMembersPlanchaVisible = () => {
+    setMemberPlanchaSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (allVisibleMemberPlanchaSelected) {
+        visibleMemberIdsForPlancha.forEach((id) => next.delete(id))
+      } else {
+        visibleMemberIdsForPlancha.forEach((id) => next.add(id))
+      }
+      return next
+    })
+  }
 
   const filteredTournaments = tournaments.filter(tournament => {
     const matchesSearch = tournament.tournament_name.toLowerCase().includes(tournamentSearchTerm.toLowerCase())
@@ -552,6 +615,32 @@ export function ClubAdmin() {
               </div>
             </div>
 
+            {memberPlanchaSelectedIds.size > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 bg-slate-50 px-3 py-2 text-sm">
+                <span className="text-gray-700">
+                  {memberPlanchaSelectedIds.size} seleccionado
+                  {memberPlanchaSelectedIds.size !== 1 ? 's' : ''} para plancha
+                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => openMemberPlanchaPrint(Array.from(memberPlanchaSelectedIds))}
+                    className="inline-flex items-center gap-1 rounded-md bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800"
+                  >
+                    <Printer className="h-3.5 w-3.5" />
+                    Imprimir planchas
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMemberPlanchaSelectedIds(new Set())}
+                    className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                  >
+                    Limpiar selección
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Members Table */}
             {membersLoading ? (
               <LoadingSpinner />
@@ -561,13 +650,27 @@ export function ClubAdmin() {
                 <div className="bg-gray-50 border-b border-gray-200">
                   <div className="grid grid-cols-6 gap-4 px-6 py-3">
                     <div className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      <button 
-                        onClick={handleSortToggle}
-                        className="flex items-center space-x-1 hover:text-gray-700"
-                      >
-                        <span>Socio</span>
-                        <ArrowUpDown className="w-3 h-3" />
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <input
+                          ref={memberPlanchaSelectAllRef}
+                          type="checkbox"
+                          checked={
+                            visibleMemberIdsForPlancha.length > 0 && allVisibleMemberPlanchaSelected
+                          }
+                          onChange={toggleSelectAllMembersPlanchaVisible}
+                          className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-500"
+                          title="Seleccionar socios visibles para imprimir plancha"
+                          aria-label="Seleccionar todos los socios visibles para plancha"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleSortToggle}
+                          className="flex items-center space-x-1 hover:text-gray-700"
+                        >
+                          <span>Socio</span>
+                          <ArrowUpDown className="w-3 h-3" />
+                        </button>
+                      </div>
                     </div>
                     <div className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Matrícula
@@ -592,12 +695,20 @@ export function ClubAdmin() {
                   <div className="divide-y divide-gray-200">
                       {filteredMembers.map((member) => (
                         <div key={member.member_id} className="grid grid-cols-6 gap-4 px-6 py-4 hover:bg-gray-50">
-                          <div className="flex items-center">
-                            <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <input
+                              type="checkbox"
+                              checked={memberPlanchaSelectedIds.has(member.member_id)}
+                              onChange={() => toggleMemberPlanchaRowSelected(member.member_id)}
+                              className="h-4 w-4 shrink-0 rounded border-gray-300 text-gray-900 focus:ring-gray-500"
+                              title="Incluir en impresión de planchas"
+                              aria-label={`Incluir plancha de ${member.first_name} ${member.last_name}`}
+                            />
+                            <div className="w-10 h-10 shrink-0 bg-gray-200 rounded-full flex items-center justify-center">
                               <User className="w-5 h-5 text-gray-500" />
                             </div>
-                            <div className="ml-4">
-                              <div className="text-sm font-medium text-gray-900">
+                            <div className="ml-1 min-w-0">
+                              <div className="text-sm font-medium text-gray-900 truncate">
                                 {member.first_name} {member.last_name}
                               </div>
                             </div>
@@ -724,6 +835,14 @@ export function ClubAdmin() {
                           </div>
                           <div className="text-right text-sm font-medium flex items-center justify-end">
                             <div className="flex items-center justify-end space-x-2">
+                              <button
+                                type="button"
+                                onClick={() => openMemberPlanchaPrint([member.member_id])}
+                                className="text-gray-400 hover:text-gray-600"
+                                title="Plancha física: nombre, matrícula, HCP; fecha del día"
+                              >
+                                <Printer className="w-4 h-4" />
+                              </button>
                               <button 
                                 onClick={() => handleViewMember(member)}
                                 className="text-gray-400 hover:text-gray-600"
@@ -1132,6 +1251,43 @@ export function ClubAdmin() {
           setShowExcelImportModal(false)
         }}
       />
+
+      {memberPlanchaEmbed != null && memberPlanchaEmbed.memberIds.length > 0 && clubId && (
+        <div
+          className="fixed inset-0 z-[75] flex items-center justify-center bg-black/50 p-3"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="member-plancha-embed-title"
+          onClick={() => setMemberPlanchaEmbed(null)}
+        >
+          <div
+            className="flex h-[min(88vh,840px)] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-2xl"
+            onClick={(ev) => ev.stopPropagation()}
+          >
+            <div className="flex shrink-0 items-center justify-between gap-2 border-b bg-gray-50 px-3 py-2">
+              <span id="member-plancha-embed-title" className="text-sm font-medium text-gray-800">
+                {memberPlanchaEmbed.memberIds.length > 1
+                  ? `Plancha física · ${memberPlanchaEmbed.memberIds.length} planchas`
+                  : 'Plancha física · vista previa'}
+              </span>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+                onClick={() => setMemberPlanchaEmbed(null)}
+              >
+                <X className="h-4 w-4" />
+                Cerrar
+              </button>
+            </div>
+            <iframe
+              key={memberPlanchaEmbed.memberIds.join(',')}
+              className="min-h-0 w-full flex-1 border-0 bg-gray-100"
+              title="Imprimir plancha física"
+              src={`/club/${clubId}/members/print-plancha?memberIds=${memberPlanchaEmbed.memberIds.join(',')}&embed=1`}
+            />
+          </div>
+        </div>
+      )}
 
     </div>
   )

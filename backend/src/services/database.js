@@ -3636,7 +3636,8 @@ async function updateMember(memberId, memberData) {
                 `UPDATE tournament_participants tp
                  INNER JOIN tournaments t ON t.tournament_id = tp.tournament_id
                  SET tp.handicap_used = ?
-                 WHERE tp.member_id = ? AND t.status IN ('draft', 'open', 'in_progress')`,
+                 WHERE tp.member_id = ? AND t.status IN ('draft', 'open', 'in_progress')
+                   AND (t.handicaps_sealed_at IS NULL)`,
                 [newHcpUsed, memberId]
             );
         }
@@ -3861,8 +3862,90 @@ async function createTournament(courseId, tournamentData) {
     };
 }
 
+const TOURNAMENT_CLOSED_STATUSES = new Set(['closed', 'completed', 'cancelled']);
+
+function isTournamentStatusClosed(status) {
+    if (status == null || status === '') return false;
+    return TOURNAMENT_CLOSED_STATUSES.has(String(status).toLowerCase());
+}
+
+async function getTournamentFreezeRow(courseId, tournamentId) {
+    const { rows } = await executeQuery(
+        `SELECT status, handicaps_sealed_at FROM tournaments WHERE course_id = ? AND tournament_id = ? LIMIT 1`,
+        [courseId, tournamentId]
+    );
+    return rows && rows[0] ? rows[0] : null;
+}
+
+async function tournamentHandicapsImmutable(courseId, tournamentId) {
+    const row = await getTournamentFreezeRow(courseId, tournamentId);
+    if (!row) return false;
+    if (isTournamentStatusClosed(row.status)) return true;
+    if (row.handicaps_sealed_at != null && row.handicaps_sealed_at !== '') return true;
+    return false;
+}
+
+async function assertTournamentHandicapsEditable(courseId, tournamentId) {
+    if (await tournamentHandicapsImmutable(courseId, tournamentId)) {
+        throw new Error('El torneo está cerrado o los handicaps ya fueron sellados; no se pueden agregar, quitar ni modificar jugadores ni sus handicaps.');
+    }
+}
+
+/** Al pasar a cerrado: fija índice y HCP de juego en tournament_participants (histórico del torneo). */
+async function finalizeTournamentHandicapsSnapshot(courseId, tournamentId) {
+    try {
+        const snap = `
+            UPDATE tournament_participants tp
+            LEFT JOIN members m ON tp.member_id = m.member_id AND tp.player_type IN ('member', 'visitor')
+            LEFT JOIN external_players ep ON tp.external_player_id = ep.external_id AND tp.player_type = 'external'
+            SET
+                tp.handicap_index_used = COALESCE(tp.handicap_index_used, m.handicap_index, ep.handicap_index),
+                tp.handicap_used = COALESCE(
+                    tp.handicap_used,
+                    m.handicap_local,
+                    m.handicap_index,
+                    ep.handicap_local,
+                    ep.handicap_index
+                )
+            WHERE tp.tournament_id = ?
+        `;
+        await executeQuery(snap, [tournamentId]);
+        await executeQuery(
+            `UPDATE tournaments SET handicaps_sealed_at = COALESCE(handicaps_sealed_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP
+             WHERE course_id = ? AND tournament_id = ?`,
+            [courseId, tournamentId]
+        );
+    } catch (e) {
+        if (e && (e.code === 'ER_BAD_FIELD_ERROR' || e.code === 'ER_NO_SUCH_TABLE')) {
+            console.warn('finalizeTournamentHandicapsSnapshot: columnas/tablas faltantes:', e.message);
+            return;
+        }
+        throw e;
+    }
+}
+
 async function updateTournament(courseId, tournamentId, tournamentData) {
     const whereParams = [courseId, tournamentId];
+
+    const existing = await getTournamentById(courseId, tournamentId);
+    if (!existing) return null;
+
+    const payloadKeys = Object.keys(tournamentData).filter(k => tournamentData[k] !== undefined);
+
+    if (isTournamentStatusClosed(existing.status)) {
+        const onlyReopen = payloadKeys.length === 1 && tournamentData.status === 'open';
+        if (!onlyReopen) {
+            throw new Error('El torneo está cerrado: no se puede modificar. Para reabrir, cambiá el estado únicamente a Abierto.');
+        }
+        await executeQuery(
+            `UPDATE tournaments SET status = 'open', updated_at = CURRENT_TIMESTAMP WHERE course_id = ? AND tournament_id = ?`,
+            [courseId, tournamentId]
+        );
+        return await getTournamentById(courseId, tournamentId);
+    }
+
+    const nextStatus = tournamentData.status !== undefined ? tournamentData.status : existing.status;
+    const isClosing = String(nextStatus).toLowerCase() === 'closed' && !isTournamentStatusClosed(existing.status);
 
     const maybeSyncTournamentPayments = async (result) => {
         if (result == null) return result;
@@ -3877,8 +3960,17 @@ async function updateTournament(courseId, tournamentId, tournamentData) {
         return result;
     };
 
+    const afterUpdateMaybeFinalize = async (result) => {
+        if (result == null) return result;
+        let out = await maybeSyncTournamentPayments(result);
+        if (isClosing) {
+            await finalizeTournamentHandicapsSnapshot(courseId, tournamentId);
+            out = await getTournamentById(courseId, tournamentId);
+        }
+        return out;
+    };
+
     // Actualización solo de groups_by_hcp cuando el body trae únicamente ese campo (sin reorganizar)
-    const payloadKeys = Object.keys(tournamentData).filter(k => tournamentData[k] !== undefined);
     if (payloadKeys.length === 1 && payloadKeys[0] === 'groups_by_hcp') {
         const val = (tournamentData.groups_by_hcp === true || tournamentData.groups_by_hcp === 1) ? 1 : 0;
         try {
@@ -3942,6 +4034,7 @@ async function updateTournament(courseId, tournamentId, tournamentData) {
         (tournamentData.preferred_session === 'afternoon') ? 'afternoon' : 'morning',
         tournamentData.tee_interval_minutes != null ? Number(tournamentData.tee_interval_minutes) : 10,
         teeTwoSessions,
+        nextStatus,
         ...whereParams
     ];
     const fullQuery = `
@@ -3951,13 +4044,14 @@ async function updateTournament(courseId, tournamentId, tournamentData) {
             entry_fee = ?, custodian = ?, account_id = ?, prize_pool = ?, description = ?, rules = ?,
             public_inscription = ?, public_inscription_allow_groups = ?, flyer_url = ?, results_mode = ?, separate_ladies = ?, ladies_by_hcp = ?, is_ranking_event = ?,
             enable_simultaneous_starts = ?, afternoon_start_time = ?, preferred_session = ?, tee_interval_minutes = ?, enable_two_sessions = ?,
+            status = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE course_id = ? AND tournament_id = ?
     `;
 
     try {
         const result = await runUpdate(fullQuery, fullParams);
-        if (result !== null) return await maybeSyncTournamentPayments(result);
+        if (result !== null) return await afterUpdateMaybeFinalize(result);
     } catch (err) {
         if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
         // Reintentar CON results_mode y tee config pero SIN custodian/account_id
@@ -3976,6 +4070,7 @@ async function updateTournament(courseId, tournamentId, tournamentData) {
                 (tournamentData.preferred_session === 'afternoon') ? 'afternoon' : 'morning',
                 tournamentData.tee_interval_minutes != null ? Number(tournamentData.tee_interval_minutes) : 10,
                 teeTwoSessions,
+                nextStatus,
                 ...whereParams
             ];
             const withResultsModeQuery = `
@@ -3985,11 +4080,12 @@ async function updateTournament(courseId, tournamentId, tournamentData) {
                     entry_fee = ?, prize_pool = ?, description = ?, rules = ?,
                     public_inscription = ?, public_inscription_allow_groups = ?, flyer_url = ?, results_mode = ?, separate_ladies = ?, ladies_by_hcp = ?, is_ranking_event = ?,
                     enable_simultaneous_starts = ?, afternoon_start_time = ?, preferred_session = ?, tee_interval_minutes = ?, enable_two_sessions = ?,
+                    status = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE course_id = ? AND tournament_id = ?
             `;
             const result = await runUpdate(withResultsModeQuery, withResultsModeParams);
-            if (result !== null) return await maybeSyncTournamentPayments(result);
+            if (result !== null) return await afterUpdateMaybeFinalize(result);
         } catch (e) {
             if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
         }
@@ -3998,6 +4094,7 @@ async function updateTournament(courseId, tournamentId, tournamentData) {
             const fallbackParams = [
                 ...minimalParams,
                 (tournamentData.public_inscription === true || tournamentData.public_inscription === 1) ? 1 : 0,
+                nextStatus,
                 ...whereParams
             ];
             const fallbackQuery = `
@@ -4005,11 +4102,11 @@ async function updateTournament(courseId, tournamentId, tournamentData) {
                     tournament_name = ?, tournament_date = ?, start_time = ?, end_time = ?,
                     tournament_type = ?, max_participants = ?, registration_deadline = ?,
                     entry_fee = ?, prize_pool = ?, description = ?, rules = ?,
-                    public_inscription = ?, updated_at = CURRENT_TIMESTAMP
+                    public_inscription = ?, status = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE course_id = ? AND tournament_id = ?
             `;
             const result = await runUpdate(fallbackQuery, fallbackParams);
-            if (result !== null) return await maybeSyncTournamentPayments(result);
+            if (result !== null) return await afterUpdateMaybeFinalize(result);
         } catch (e) {
             if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
         }
@@ -4018,11 +4115,11 @@ async function updateTournament(courseId, tournamentId, tournamentData) {
                 tournament_name = ?, tournament_date = ?, start_time = ?, end_time = ?,
                 tournament_type = ?, max_participants = ?, registration_deadline = ?,
                 entry_fee = ?, prize_pool = ?, description = ?, rules = ?,
-                updated_at = CURRENT_TIMESTAMP
+                status = ?, updated_at = CURRENT_TIMESTAMP
             WHERE course_id = ? AND tournament_id = ?
         `;
-        const result = await runUpdate(minimalQuery, [...minimalParams, ...whereParams]);
-        if (result !== null) return await maybeSyncTournamentPayments(result);
+        const result = await runUpdate(minimalQuery, [...minimalParams, nextStatus, ...whereParams]);
+        if (result !== null) return await afterUpdateMaybeFinalize(result);
         throw err;
     }
 
@@ -4042,6 +4139,8 @@ async function deleteTournament(courseId, tournamentId) {
 }
 
 async function updateTournamentStatus(courseId, tournamentId, status) {
+    const existing = await getTournamentById(courseId, tournamentId);
+    const isClosing = String(status).toLowerCase() === 'closed' && existing && !isTournamentStatusClosed(existing.status);
     const query = `
         UPDATE tournaments SET status = ?, updated_at = CURRENT_TIMESTAMP
         WHERE course_id = ? AND tournament_id = ?
@@ -4049,6 +4148,13 @@ async function updateTournamentStatus(courseId, tournamentId, status) {
     const { rows } = await executeQuery(query, [status, courseId, tournamentId]);
     
     if (rows.affectedRows > 0) {
+        if (isClosing) {
+            try {
+                await finalizeTournamentHandicapsSnapshot(courseId, tournamentId);
+            } catch (e) {
+                console.error('finalizeTournamentHandicapsSnapshot tras cambio de estado:', e);
+            }
+        }
         await logActivity(courseId, null, null, 'tournament_status_changed', 
                          'tournament', tournamentId, `Estado del torneo cambiado a ${status}`);
         return await getTournamentById(courseId, tournamentId);
@@ -4459,6 +4565,8 @@ async function addTournamentParticipant(courseId, tournamentId, participantData)
         participantData
     });
     
+    await assertTournamentHandicapsEditable(courseId, tournamentId);
+
     const tournament = await getTournamentById(courseId, tournamentId);
     const isByHcp = tournament && tournament.results_mode === 'scratch_bands';
     
@@ -4860,6 +4968,8 @@ async function removeTournamentParticipant(courseId, tournamentId, participantId
     console.log('🗑️ Ejecutando eliminación en DB:', { courseId, tournamentId, participantId });
     
     try {
+        await assertTournamentHandicapsEditable(courseId, tournamentId);
+
         // Primero, obtener el member_id o external_player_id del participante
         const getParticipantQuery = `
             SELECT member_id, external_player_id 
@@ -4922,6 +5032,8 @@ async function removeTournamentParticipant(courseId, tournamentId, participantId
 }
 
 async function updateParticipantHandicap(courseId, tournamentId, participationId, data) {
+    await assertTournamentHandicapsEditable(courseId, tournamentId);
+
     const { handicap_index, handicap_local } = data || {};
     const toNumOrNull = (v) => (v !== undefined && v !== null && v !== '' && !Number.isNaN(Number(v)) ? Number(v) : null);
     const hcpLocal = toNumOrNull(handicap_local);
@@ -4957,6 +5069,8 @@ async function updateParticipantHandicap(courseId, tournamentId, participationId
 }
 
 async function updateParticipantTeePreference(courseId, tournamentId, participationId, data) {
+    await assertTournamentHandicapsEditable(courseId, tournamentId);
+
     const raw = data?.preferred_session ?? data?.tee_time_preference;
     const value = raw === 'afternoon' || raw === 'morning' ? raw : null;
     await executeQuery(
@@ -7197,11 +7311,13 @@ async function getScorecardsByTournament(clubId, tournamentId, includeDidNotPres
             COALESCE(CONCAT(m.first_name, ' ', m.last_name), ep.full_name) as player_name,
             COALESCE(m.handicap_index, ep.handicap_index) as handicap_index,
             COALESCE(m.handicap_local, ep.handicap_local) as handicap_local,
+            COALESCE(tp.handicap_index_used, m.handicap_index, ep.handicap_index) as handicap_index_used_for_net,
             COALESCE(m.gender, ep.gender) as gender,
             m.member_number,
             t.tournament_name,
             gc.club_name as club_name,
-            tp.player_type
+            tp.player_type,
+            tp.handicap_used AS participant_handicap_used
         FROM scorecards s
         LEFT JOIN members m ON s.member_id = m.member_id
         LEFT JOIN external_players ep ON s.external_player_id = ep.external_id
@@ -7546,6 +7662,119 @@ async function getParticipantForPhysicalPrint(courseId, tournamentId, participat
     const rows = result.rows || result;
     if (!rows.length) {
         throw new Error('Participante no encontrado');
+    }
+    return rows[0];
+}
+
+/**
+ * Plancha física para un socio (o visitante de otro club) aún no inscripto en el torneo.
+ * Mismos alias de columnas que getParticipantForPhysicalPrint; sin hora/hoyo de salida de inscripción.
+ */
+async function getMemberPhysicalPrintPreview(courseId, tournamentId, memberId) {
+    const query = `
+        SELECT
+            t.tournament_name,
+            t.tournament_date,
+            NULL AS participant_tee_time,
+            NULL AS participant_starting_hole,
+            NULL AS participant_handicap_used,
+            CONCAT(m.first_name, ' ', m.last_name) AS player_name,
+            m.member_number,
+            m.handicap_local,
+            m.handicap_index,
+            m.created_at AS created_at
+        FROM tournaments t
+        INNER JOIN members m ON m.member_id = ?
+        WHERE t.tournament_id = ? AND t.course_id = ?
+    `;
+    const result = await executeQuery(query, [memberId, tournamentId, courseId]);
+    const rows = result.rows || result;
+    if (!rows.length) {
+        throw new Error('Socio no encontrado o torneo inválido');
+    }
+    return rows[0];
+}
+
+/**
+ * Plancha física para un jugador externo (tabla external_players) no inscripto aún.
+ */
+async function getExternalPhysicalPrintPreview(courseId, tournamentId, externalId) {
+    const query = `
+        SELECT
+            t.tournament_name,
+            t.tournament_date,
+            NULL AS participant_tee_time,
+            NULL AS participant_starting_hole,
+            NULL AS participant_handicap_used,
+            COALESCE(ep.full_name, '') AS player_name,
+            ep.member_number,
+            ep.handicap_local,
+            ep.handicap_index,
+            ep.created_at AS created_at
+        FROM tournaments t
+        INNER JOIN external_players ep ON ep.external_id = ?
+        WHERE t.tournament_id = ? AND t.course_id = ?
+    `;
+    const result = await executeQuery(query, [externalId, tournamentId, courseId]);
+    const rows = result.rows || result;
+    if (!rows.length) {
+        throw new Error('Jugador externo no encontrado o torneo inválido');
+    }
+    return rows[0];
+}
+
+/**
+ * Plancha desde gestión global de socios: sin torneo; fecha la define el cliente al imprimir.
+ * tournament_name nulo; tournament_date en BD no se usa para la UI (el front pone día de impresión).
+ */
+async function getMemberPhysicalPrintClubListing(courseId, memberId) {
+    const query = `
+        SELECT
+            NULL AS tournament_name,
+            CURDATE() AS tournament_date,
+            NULL AS participant_tee_time,
+            NULL AS participant_starting_hole,
+            NULL AS participant_handicap_used,
+            CONCAT(m.first_name, ' ', m.last_name) AS player_name,
+            m.member_number,
+            m.handicap_local,
+            m.handicap_index,
+            m.created_at AS created_at
+        FROM members m
+        WHERE m.member_id = ? AND m.course_id = ?
+    `;
+    const result = await executeQuery(query, [memberId, courseId]);
+    const rows = result.rows || result;
+    if (!rows.length) {
+        throw new Error('Socio no encontrado');
+    }
+    return rows[0];
+}
+
+/**
+ * Plancha desde listado global de jugadores externos: sin torneo; fecha la pone el cliente al imprimir.
+ * courseId reservado (API por club); el registro se identifica por external_id.
+ */
+async function getExternalPhysicalPrintClubListing(_courseId, externalId) {
+    const query = `
+        SELECT
+            NULL AS tournament_name,
+            CURDATE() AS tournament_date,
+            NULL AS participant_tee_time,
+            NULL AS participant_starting_hole,
+            NULL AS participant_handicap_used,
+            COALESCE(ep.full_name, '') AS player_name,
+            ep.member_number,
+            ep.handicap_local,
+            ep.handicap_index,
+            ep.created_at AS created_at
+        FROM external_players ep
+        WHERE ep.external_id = ?
+    `;
+    const result = await executeQuery(query, [externalId]);
+    const rows = result.rows || result;
+    if (!rows.length) {
+        throw new Error('Jugador externo no encontrado');
     }
     return rows[0];
 }
@@ -8424,7 +8653,7 @@ export {
     getTournamentGroups, generateTournamentGroups, assignTeeTimesToGroups, rebalanceGroupsByHcp, movePlayerToGroup, moveGroupToHole, swapGroupNumbers, createEmptyGroup, deleteEmptyGroup, clearTournamentGroups,
     
     // Scorecard functions
-    saveScorecard, getScorecardsByTournament, getScorecardByPlayer, updateScorecard, deleteScorecard, getScorecardForPrint, getParticipantForPhysicalPrint,
+    saveScorecard, getScorecardsByTournament, getScorecardByPlayer, updateScorecard, deleteScorecard, getScorecardForPrint, getParticipantForPhysicalPrint, getMemberPhysicalPrintPreview, getExternalPhysicalPrintPreview, getMemberPhysicalPrintClubListing, getExternalPhysicalPrintClubListing,
     
     // Member details functions
     getMemberTournaments, getMemberScorecards, getMemberHandicapHistory, getMemberContributions,

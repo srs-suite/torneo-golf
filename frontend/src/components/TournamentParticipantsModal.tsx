@@ -39,6 +39,45 @@ interface TournamentParticipantsModalProps {
   clubId: number
 }
 
+type PlanchaEmbedParams = {
+  participantIds?: number[]
+  memberIds?: number[]
+  externalPlayerIds?: number[]
+}
+
+function planchaEmbedToQuery(s: PlanchaEmbedParams): string {
+  const p = new URLSearchParams()
+  if (s.participantIds?.length) p.set('participantIds', s.participantIds.join(','))
+  if (s.memberIds?.length) p.set('memberIds', s.memberIds.join(','))
+  if (s.externalPlayerIds?.length) p.set('externalPlayerIds', s.externalPlayerIds.join(','))
+  return p.toString()
+}
+
+function planchaEmbedSheetCount(s: PlanchaEmbedParams): number {
+  return (s.participantIds?.length ?? 0) + (s.memberIds?.length ?? 0) + (s.externalPlayerIds?.length ?? 0)
+}
+
+function planchaEmbedCacheKey(s: PlanchaEmbedParams): string {
+  return `${(s.participantIds ?? []).join(',')}|${(s.memberIds ?? []).join(',')}|${(s.externalPlayerIds ?? []).join(',')}`
+}
+
+/** Jugadores de la lista “externos” pueden ser `external` o `visitor` (socio de otro club). */
+function buildPlanchaEmbedFromPickerPlayers(players: PlayerSearchResult[]): PlanchaEmbedParams {
+  const memberIds: number[] = []
+  const externalPlayerIds: number[] = []
+  for (const pl of players) {
+    const id = pl.player_id
+    if (id == null || !Number.isFinite(Number(id)) || Number(id) <= 0) continue
+    const n = Number(id)
+    if (pl.player_type === 'visitor') memberIds.push(n)
+    else externalPlayerIds.push(n)
+  }
+  const out: PlanchaEmbedParams = {}
+  if (memberIds.length) out.memberIds = memberIds
+  if (externalPlayerIds.length) out.externalPlayerIds = externalPlayerIds
+  return out
+}
+
 export function TournamentParticipantsModal({ 
   isOpen, 
   onClose, 
@@ -63,25 +102,25 @@ export function TournamentParticipantsModal({
   const [participantSearch, setParticipantSearch] = useState('')
   const [paymentFilter, setPaymentFilter] = useState<'all' | 'pending' | 'paid' | 'waived'>('all')
   const [showFilterPopover, setShowFilterPopover] = useState(false)
-  /** null = overlay cerrado; array de IDs de participación (misma resolución que botón impresora) */
-  const [physicalPrintParticipantIds, setPhysicalPrintParticipantIds] = useState<number[] | null>(null)
+  /** null = overlay de plancha cerrado */
+  const [planchaEmbed, setPlanchaEmbed] = useState<PlanchaEmbedParams | null>(null)
   const [physicalPlanchaSelectedIds, setPhysicalPlanchaSelectedIds] = useState<Set<number>>(() => new Set())
   const selectAllPlanchaRef = useRef<HTMLInputElement>(null)
   const filterPopoverRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!isOpen) {
-      setPhysicalPrintParticipantIds(null)
+      setPlanchaEmbed(null)
       setPhysicalPlanchaSelectedIds(new Set())
     }
   }, [isOpen])
   useEffect(() => {
-    if (physicalPrintParticipantIds == null) return
+    if (planchaEmbed == null) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setPhysicalPrintParticipantIds(null)
+      if (e.key === 'Escape') setPlanchaEmbed(null)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [physicalPrintParticipantIds])
+  }, [planchaEmbed])
   useEffect(() => {
     if (!showFilterPopover) return
     const onMouseDown = (e: MouseEvent) => {
@@ -758,7 +797,68 @@ export function TournamentParticipantsModal({
       toast.error('No hay participantes válidos seleccionados.')
       return
     }
-    setPhysicalPrintParticipantIds(ordered)
+    setPlanchaEmbed({ participantIds: ordered })
+  }
+
+  const openPlanchaPrintForSelectedMembers = () => {
+    const ids = clubMembers
+      .filter((member) => {
+        const isAlreadyAdded = participants.some((p) => {
+          const matchesPlayerId = p.player_id && member.player_id && p.player_id === member.player_id
+          const matchesMemberId = p.member_id && member.player_id && p.member_id === member.player_id
+          return matchesPlayerId || matchesMemberId
+        })
+        return !isAlreadyAdded && matchesMemberSearch(member, memberSearchTerm)
+      })
+      .filter((m) => m.player_id != null && selectedMembers.has(m.player_id))
+      .map((m) => Number(m.player_id))
+      .filter((id) => Number.isFinite(id) && id > 0)
+    if (ids.length === 0) {
+      toast.error('No hay socios seleccionados válidos para imprimir.')
+      return
+    }
+    setPlanchaEmbed({ memberIds: ids })
+  }
+
+  const openPlanchaPrintForSelectedPickerPlayers = () => {
+    const visible = externalPlayers.filter((player) => {
+      const isAlreadyAdded = participants.some((p) => {
+        if (player.player_type === 'external') {
+          if (p.external_player_id && player.player_id && p.external_player_id === player.player_id) return true
+          if (p.player_type === 'external' && !p.external_player_id) {
+            return (
+              p.player_name &&
+              player.player_name &&
+              p.player_name.toLowerCase().trim() === player.player_name.toLowerCase().trim()
+            )
+          }
+          return false
+        }
+        if (p.player_type === 'member' && p.player_id && player.player_id && p.player_id === player.player_id) {
+          return true
+        }
+        if (p.player_type === 'external' && p.external_player_id && player.player_id && p.external_player_id === player.player_id) {
+          return true
+        }
+        if (
+          p.player_type === 'external' &&
+          p.player_name &&
+          player.player_name &&
+          p.player_name.toLowerCase().trim() === player.player_name.toLowerCase().trim()
+        ) {
+          return true
+        }
+        return false
+      })
+      return !isAlreadyAdded && matchesMemberSearch(player, externalPlayerSearchTerm)
+    })
+    const picked = visible.filter((p) => p.player_id != null && selectedExternalPlayers.has(p.player_id))
+    const embed = buildPlanchaEmbedFromPickerPlayers(picked)
+    if (planchaEmbedSheetCount(embed) === 0) {
+      toast.error('No hay jugadores seleccionados válidos para imprimir.')
+      return
+    }
+    setPlanchaEmbed(embed)
   }
 
   // Statistics
@@ -1121,14 +1221,25 @@ export function TournamentParticipantsModal({
                     }).length ? 'Deseleccionar Todo' : 'Seleccionar Todo'}
                   </button>
                   {selectedMembers.size > 0 && (
-                    <button
-                      onClick={handleAddSelectedMembers}
-                      disabled={addParticipant.isPending}
-                      className="flex items-center space-x-2 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors disabled:opacity-50"
-                    >
-                      <Plus className="w-4 h-4" />
-                      <span>Agregar {selectedMembers.size} Seleccionados</span>
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={openPlanchaPrintForSelectedMembers}
+                        className="inline-flex items-center gap-1 px-3 py-2 text-sm font-medium text-gray-800 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+                        title="Imprimir plancha con datos del torneo (sin inscribir)"
+                      >
+                        <Printer className="w-4 h-4" />
+                        Imprimir selección
+                      </button>
+                      <button
+                        onClick={handleAddSelectedMembers}
+                        disabled={addParticipant.isPending}
+                        className="flex items-center space-x-2 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors disabled:opacity-50"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>Agregar {selectedMembers.size} Seleccionados</span>
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
@@ -1168,23 +1279,23 @@ export function TournamentParticipantsModal({
                     return (
                     <div
                       key={member.player_id}
-                      className={`flex items-center justify-between p-3 border rounded-lg transition-colors ${
+                      className={`flex items-center justify-between p-3 border rounded-lg transition-colors gap-2 ${
                         isSelected
                           ? 'bg-gray-200 border-gray-300'
                           : 'bg-white border-gray-200 hover:bg-gray-50'
                       }`}
                     >
-                      <div className="flex items-center space-x-3">
+                      <div className="flex items-center space-x-3 min-w-0">
                         <input
                           type="checkbox"
                           checked={isSelected}
                           onChange={() => handleToggleSelectMember(member.player_id!)}
-                          className="w-4 h-4 text-gray-600 border-gray-300 rounded focus:ring-gray-500"
+                          className="w-4 h-4 text-gray-600 border-gray-300 rounded focus:ring-gray-500 shrink-0"
                         />
-                        <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center">
+                        <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center shrink-0">
                           <UserCheck className="w-5 h-5 text-gray-600" />
                         </div>
-                        <div>
+                        <div className="min-w-0">
                           <div className="flex items-center space-x-2">
                             <span className="font-medium text-gray-900">
                               {member.player_name}
@@ -1200,6 +1311,21 @@ export function TournamentParticipantsModal({
                           </div>
                         </div>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const mid = member.player_id
+                          if (mid == null || !Number.isFinite(Number(mid)) || Number(mid) <= 0) {
+                            toast.error('No se pudo obtener el ID del socio.')
+                            return
+                          }
+                          setPlanchaEmbed({ memberIds: [Number(mid)] })
+                        }}
+                        className="inline-flex items-center px-2 py-1 text-xs font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50 rounded border border-gray-200 hover:border-gray-300 transition-colors shrink-0"
+                        title="Plancha física: nombre, matrícula, HCP y torneo (sin inscribir)"
+                      >
+                        <Printer className="w-4 h-4" />
+                      </button>
                     </div>
                   )
                 })}
@@ -1255,14 +1381,25 @@ export function TournamentParticipantsModal({
                     }).length ? 'Deseleccionar Todo' : 'Seleccionar Todo'}
                   </button>
                   {selectedExternalPlayers.size > 0 && (
-                    <button
-                      onClick={handleAddSelectedExternalPlayers}
-                      disabled={addParticipant.isPending}
-                      className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-                    >
-                      <Plus className="w-4 h-4" />
-                      <span>Agregar {selectedExternalPlayers.size} Seleccionados</span>
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={openPlanchaPrintForSelectedPickerPlayers}
+                        className="inline-flex items-center gap-1 px-3 py-2 text-sm font-medium text-blue-900 bg-white border border-blue-300 rounded-lg hover:bg-blue-50"
+                        title="Imprimir plancha con datos del torneo (sin inscribir)"
+                      >
+                        <Printer className="w-4 h-4" />
+                        Imprimir selección
+                      </button>
+                      <button
+                        onClick={handleAddSelectedExternalPlayers}
+                        disabled={addParticipant.isPending}
+                        className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>Agregar {selectedExternalPlayers.size} Seleccionados</span>
+                      </button>
+                    </>
                   )}
                   <button
                     onClick={() => {
@@ -1371,6 +1508,26 @@ export function TournamentParticipantsModal({
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              const pid = player.player_id
+                              if (pid == null || !Number.isFinite(Number(pid)) || Number(pid) <= 0) {
+                                toast.error('No se pudo obtener el ID del jugador.')
+                                return
+                              }
+                              if (player.player_type === 'visitor') {
+                                setPlanchaEmbed({ memberIds: [Number(pid)] })
+                              } else {
+                                setPlanchaEmbed({ externalPlayerIds: [Number(pid)] })
+                              }
+                            }}
+                            className="inline-flex items-center px-2 py-1 text-xs font-medium text-gray-700 hover:text-gray-900 bg-white border border-gray-300 rounded hover:bg-gray-50 transition-colors"
+                            title="Plancha física: nombre, matrícula, HCP y torneo (sin inscribir)"
+                          >
+                            <Printer className="w-3 h-3" />
+                          </button>
                           <button
                             onClick={(e) => {
                               e.stopPropagation()
@@ -1641,7 +1798,7 @@ export function TournamentParticipantsModal({
                                   toast.error('No se pudo obtener el ID del participante. Recargá la lista e intentá de nuevo.')
                                   return
                                 }
-                                setPhysicalPrintParticipantIds([printId])
+                                setPlanchaEmbed({ participantIds: [printId] })
                               }}
                               className="inline-flex items-center px-2 py-1 text-xs font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50 rounded border border-gray-200 hover:border-gray-300 transition-colors mr-2"
                               title="Plancha física: nombre, salida, hora, matrícula, HCP y torneo"
@@ -1698,13 +1855,13 @@ export function TournamentParticipantsModal({
         </div>
       </div>
 
-      {physicalPrintParticipantIds != null && physicalPrintParticipantIds.length > 0 && (
+      {planchaEmbed != null && planchaEmbedSheetCount(planchaEmbed) > 0 && (
         <div
           className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-3"
           role="dialog"
           aria-modal="true"
           aria-labelledby="plancha-embed-title"
-          onClick={() => setPhysicalPrintParticipantIds(null)}
+          onClick={() => setPlanchaEmbed(null)}
         >
           <div
             className="flex h-[min(88vh,840px)] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-2xl"
@@ -1712,24 +1869,24 @@ export function TournamentParticipantsModal({
           >
             <div className="flex shrink-0 items-center justify-between gap-2 border-b bg-gray-50 px-3 py-2">
               <span id="plancha-embed-title" className="text-sm font-medium text-gray-800">
-                {physicalPrintParticipantIds.length > 1
-                  ? `Plancha física · ${physicalPrintParticipantIds.length} planchas`
+                {planchaEmbedSheetCount(planchaEmbed) > 1
+                  ? `Plancha física · ${planchaEmbedSheetCount(planchaEmbed)} planchas`
                   : 'Plancha física · vista previa'}
               </span>
               <button
                 type="button"
                 className="inline-flex items-center gap-1 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
-                onClick={() => setPhysicalPrintParticipantIds(null)}
+                onClick={() => setPlanchaEmbed(null)}
               >
                 <X className="h-4 w-4" />
                 Cerrar
               </button>
             </div>
             <iframe
-              key={physicalPrintParticipantIds.join(',')}
+              key={planchaEmbedCacheKey(planchaEmbed)}
               className="min-h-0 w-full flex-1 border-0 bg-gray-100"
               title="Imprimir plancha física"
-              src={`/club/${clubId}/tournaments/${tournament.tournament_id}/scorecards/print-overlay?participantIds=${physicalPrintParticipantIds.join(',')}&embed=1`}
+              src={`/club/${clubId}/tournaments/${tournament.tournament_id}/scorecards/print-overlay?${planchaEmbedToQuery(planchaEmbed)}&embed=1`}
             />
           </div>
         </div>
