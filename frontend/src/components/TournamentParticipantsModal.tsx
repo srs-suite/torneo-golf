@@ -63,7 +63,25 @@ export function TournamentParticipantsModal({
   const [participantSearch, setParticipantSearch] = useState('')
   const [paymentFilter, setPaymentFilter] = useState<'all' | 'pending' | 'paid' | 'waived'>('all')
   const [showFilterPopover, setShowFilterPopover] = useState(false)
+  /** null = overlay cerrado; array de IDs de participación (misma resolución que botón impresora) */
+  const [physicalPrintParticipantIds, setPhysicalPrintParticipantIds] = useState<number[] | null>(null)
+  const [physicalPlanchaSelectedIds, setPhysicalPlanchaSelectedIds] = useState<Set<number>>(() => new Set())
+  const selectAllPlanchaRef = useRef<HTMLInputElement>(null)
   const filterPopoverRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!isOpen) {
+      setPhysicalPrintParticipantIds(null)
+      setPhysicalPlanchaSelectedIds(new Set())
+    }
+  }, [isOpen])
+  useEffect(() => {
+    if (physicalPrintParticipantIds == null) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPhysicalPrintParticipantIds(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [physicalPrintParticipantIds])
   useEffect(() => {
     if (!showFilterPopover) return
     const onMouseDown = (e: MouseEvent) => {
@@ -695,6 +713,53 @@ export function TournamentParticipantsModal({
         (participant.member_number || '').toLowerCase().includes(q)
       )
     })
+
+  const visiblePlanchaPrintIds = filteredParticipants
+    .map((p) => Number(p.participation_id ?? p.participant_id))
+    .filter((id) => Number.isFinite(id) && id > 0)
+
+  const allVisiblePlanchaSelected =
+    visiblePlanchaPrintIds.length > 0 &&
+    visiblePlanchaPrintIds.every((id) => physicalPlanchaSelectedIds.has(id))
+
+  useEffect(() => {
+    const el = selectAllPlanchaRef.current
+    if (!el) return
+    const n = visiblePlanchaPrintIds.filter((id) => physicalPlanchaSelectedIds.has(id)).length
+    el.indeterminate = n > 0 && n < visiblePlanchaPrintIds.length
+  }, [visiblePlanchaPrintIds, physicalPlanchaSelectedIds])
+
+  const togglePlanchaRowSelected = (printId: number) => {
+    setPhysicalPlanchaSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(printId)) next.delete(printId)
+      else next.add(printId)
+      return next
+    })
+  }
+
+  const toggleSelectAllPlanchaVisible = () => {
+    setPhysicalPlanchaSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (allVisiblePlanchaSelected) {
+        visiblePlanchaPrintIds.forEach((id) => next.delete(id))
+      } else {
+        visiblePlanchaPrintIds.forEach((id) => next.add(id))
+      }
+      return next
+    })
+  }
+
+  const openPlanchaPrintForSelected = () => {
+    const ordered = filteredParticipants
+      .map((p) => Number(p.participation_id ?? p.participant_id))
+      .filter((id) => physicalPlanchaSelectedIds.has(id) && Number.isFinite(id) && id > 0)
+    if (ordered.length === 0) {
+      toast.error('No hay participantes válidos seleccionados.')
+      return
+    }
+    setPhysicalPrintParticipantIds(ordered)
+  }
 
   // Statistics
   const stats = useMemo(() => {
@@ -1367,57 +1432,104 @@ export function TournamentParticipantsModal({
           {/* Participants List */}
           {!showMembersList && !showExternalPlayersList && (
           <div className="bg-white rounded-lg border border-gray-200 overflow-hidden mt-8">
+            {physicalPlanchaSelectedIds.size > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 bg-slate-50 px-3 py-2 text-sm">
+                <span className="text-gray-700">
+                  {physicalPlanchaSelectedIds.size} seleccionado{physicalPlanchaSelectedIds.size !== 1 ? 's' : ''} para plancha
+                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={openPlanchaPrintForSelected}
+                    className="inline-flex items-center gap-1 rounded-md bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800"
+                  >
+                    <Printer className="h-3.5 w-3.5" />
+                    Imprimir planchas
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPhysicalPlanchaSelectedIds(new Set())}
+                    className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                  >
+                    Limpiar selección
+                  </button>
+                </div>
+              </div>
+            )}
             {filteredParticipants.length > 0 ? (
               <div className="overflow-y-auto max-h-80 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
                     <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="w-10 px-2 py-3 text-center align-middle" title="Selección para imprimir varias planchas">
+                        <input
+                          ref={selectAllPlanchaRef}
+                          type="checkbox"
+                          checked={allVisiblePlanchaSelected}
+                          onChange={toggleSelectAllPlanchaVisible}
+                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          aria-label="Seleccionar todos los participantes visibles para plancha"
+                        />
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Participante
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Club
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Matrícula
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Index
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         HCP
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Estado
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Turno
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Fecha
                       </th>
-                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider" style={{width: '120px'}}>
+                      <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Acciones
                       </th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
                     {filteredParticipants.map((participant) => {
+                      const planchaPrintId = Number(participant.participation_id ?? participant.participant_id)
+                      const planchaOk = Number.isFinite(planchaPrintId) && planchaPrintId > 0
                       return (
                         <tr key={participant.participant_id} className="hover:bg-gray-50">
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="text-sm font-medium text-gray-900">{formatName(participant.player_name)}</div>
+                          <td className="w-10 px-2 py-4 text-center align-middle">
+                            <input
+                              type="checkbox"
+                              disabled={!planchaOk}
+                              checked={planchaOk && physicalPlanchaSelectedIds.has(planchaPrintId)}
+                              onChange={() => planchaOk && togglePlanchaRowSelected(planchaPrintId)}
+                              className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-40"
+                              aria-label={`Incluir plancha de ${participant.player_name}`}
+                            />
+                          </td>
+                          <td className="px-4 py-4 align-top">
+                            <div className="text-sm font-medium text-gray-900 leading-snug">
+                              {formatName(participant.player_name)}
+                            </div>
+                            <div className="text-xs text-gray-500 mt-0.5 tabular-nums">
+                              Mat.: {participant.member_number?.trim()
+                                ? participant.member_number
+                                : '—'}
+                            </div>
                             {participant.player_type === 'external' && (
-                              <div className="text-xs text-blue-600 font-medium">Externo</div>
+                              <div className="text-xs text-blue-600 font-medium mt-0.5">Externo</div>
                             )}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">
                             {sanitizeAscii(participant.display_club || participant.player_club)}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                            {participant.member_number || 'N/A'}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">
                             {savingIndexParticipantId === participant.participant_id ? (
                               <span className="inline-flex items-center gap-1 text-amber-600 text-sm">
                                 <span className="inline-block w-3 h-3 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
@@ -1469,17 +1581,17 @@ export function TournamentParticipantsModal({
                               </button>
                             )}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">
                             {formatHcpForDisplay(participant.handicap_local ?? (participant as any).handicap_index, (participant as any).handicap_index)}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
+                          <td className="px-3 py-4 whitespace-nowrap">
                             <div className="flex items-center space-x-2">
                               <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(participant.status)}`}>
                                 {getStatusLabel(participant.status)}
                               </span>
                             </div>
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">
                             <select
                               value={(() => {
                                 const turnoRaw = (participant as any).tee_time_preference ?? (participant as any).teeTimePreference ?? (participant as any).preferred_session
@@ -1500,10 +1612,10 @@ export function TournamentParticipantsModal({
                               <option value="afternoon">Tarde</option>
                             </select>
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-500">
                             {new Date(participant.registration_date).toLocaleDateString('es-ES')}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium" style={{width: '180px'}}>
+                          <td className="px-3 py-4 whitespace-nowrap text-right text-sm font-medium">
                             <button
                               onClick={async () => {
                                 try {
@@ -1521,14 +1633,15 @@ export function TournamentParticipantsModal({
                             </button>
                             <button
                               type="button"
-                              onClick={() => {
+                              onClick={(e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
                                 const printId = Number(participant.participation_id ?? participant.participant_id)
                                 if (!Number.isFinite(printId) || printId <= 0) {
                                   toast.error('No se pudo obtener el ID del participante. Recargá la lista e intentá de nuevo.')
                                   return
                                 }
-                                const url = `${window.location.origin}/club/${clubId}/tournaments/${tournament.tournament_id}/scorecards/print-overlay/participant/${printId}`
-                                window.open(url, '_blank', 'noopener,noreferrer')
+                                setPhysicalPrintParticipantIds([printId])
                               }}
                               className="inline-flex items-center px-2 py-1 text-xs font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50 rounded border border-gray-200 hover:border-gray-300 transition-colors mr-2"
                               title="Plancha física: nombre, salida, hora, matrícula, HCP y torneo"
@@ -1584,6 +1697,43 @@ export function TournamentParticipantsModal({
           
         </div>
       </div>
+
+      {physicalPrintParticipantIds != null && physicalPrintParticipantIds.length > 0 && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-3"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="plancha-embed-title"
+          onClick={() => setPhysicalPrintParticipantIds(null)}
+        >
+          <div
+            className="flex h-[min(88vh,840px)] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-2xl"
+            onClick={(ev) => ev.stopPropagation()}
+          >
+            <div className="flex shrink-0 items-center justify-between gap-2 border-b bg-gray-50 px-3 py-2">
+              <span id="plancha-embed-title" className="text-sm font-medium text-gray-800">
+                {physicalPrintParticipantIds.length > 1
+                  ? `Plancha física · ${physicalPrintParticipantIds.length} planchas`
+                  : 'Plancha física · vista previa'}
+              </span>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+                onClick={() => setPhysicalPrintParticipantIds(null)}
+              >
+                <X className="h-4 w-4" />
+                Cerrar
+              </button>
+            </div>
+            <iframe
+              key={physicalPrintParticipantIds.join(',')}
+              className="min-h-0 w-full flex-1 border-0 bg-gray-100"
+              title="Imprimir plancha física"
+              src={`/club/${clubId}/tournaments/${tournament.tournament_id}/scorecards/print-overlay?participantIds=${physicalPrintParticipantIds.join(',')}&embed=1`}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Modal para crear jugador externo */}
       {showCreateExternalModal && (
