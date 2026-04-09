@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Calendar, DollarSign, Users, Trophy, Settings, Camera, ChevronDown, LogOut, Filter, X, User, UserCircle2, Pencil, Download, MessageCircle } from 'lucide-react'
+import { Calendar, DollarSign, Users, Trophy, Settings, Camera, ChevronDown, LogOut, Filter, X, User, UserCircle2, Pencil, Download, MessageCircle, Printer } from 'lucide-react'
 import { paymentsService } from '@/services/paymentsService'
 import { accountsService } from '@/services/accountsService'
 import { DateInput } from '@/components/DateInput'
@@ -59,6 +59,123 @@ function tournamentRowToUpdatePayload(t: unknown, accountId: number): CreateTour
   }
 }
 
+function isPdfReceiptPath(path: string): boolean {
+  return path.toLowerCase().endsWith('.pdf')
+}
+
+function isPdfExpenseAttachmentPreview(src: string): boolean {
+  const s = src.trim().toLowerCase()
+  return s.startsWith('data:application/pdf') || s.split('?')[0].endsWith('.pdf')
+}
+
+function expenseReceiptAbsoluteUrl(relativePath: string): string {
+  const clean = relativePath.replace(/^\//, '')
+  return `${window.location.origin}/uploads/${clean}`
+}
+
+/** Imagen: ventana con el archivo para imprimir. PDF: abre en nueva pestaña (el visor del navegador permite imprimir). */
+function printExpenseReceipt(absoluteUrl: string, relativePath: string) {
+  if (isPdfReceiptPath(relativePath)) {
+    const w = window.open(absoluteUrl, '_blank', 'noopener,noreferrer')
+    if (!w) toast.error('Permití ventanas emergentes para imprimir el PDF.')
+    return
+  }
+  const w = window.open('', '_blank', 'noopener,noreferrer')
+  if (!w) {
+    toast.error('Permití ventanas emergentes para imprimir.')
+    return
+  }
+  const safeSrc = absoluteUrl.replace(/"/g, '&quot;')
+  w.document.open()
+  w.document.write(
+    `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Recibo</title>` +
+      `<style>@page{margin:12mm}body{margin:0;display:flex;justify-content:center;align-items:flex-start;background:#fff}` +
+      `img{max-width:100%;height:auto}</style></head><body>` +
+      `<img src="${safeSrc}" alt="Recibo" onload="setTimeout(function(){window.print()},300)"/>` +
+      `</body></html>`
+  )
+  w.document.close()
+}
+
+async function downloadExpenseReceiptFile(relativePath: string, expenseId: number, expenseDate: string) {
+  const absoluteUrl = expenseReceiptAbsoluteUrl(relativePath)
+  const ext = relativePath.includes('.') ? relativePath.split('.').pop() || 'jpg' : 'jpg'
+  let datePart: string
+  if (typeof expenseDate === 'string' && expenseDate.includes('T')) datePart = expenseDate.split('T')[0]
+  else if (typeof expenseDate === 'string' && /^\d{4}-\d{2}-\d{2}/.test(expenseDate)) datePart = expenseDate.slice(0, 10)
+  else datePart = new Date(expenseDate).toISOString().split('T')[0]
+  const idPart = expenseId > 0 ? String(expenseId) : 'archivo'
+  const filename = `recibo_gasto_${idPart}_${datePart}.${ext}`
+  try {
+    const res = await fetch(absoluteUrl)
+    if (!res.ok) throw new Error('fetch failed')
+    const blob = await res.blob()
+
+    /** PDF: no usar <a download> (fuerza guardar). Abrimos el visor del navegador para imprimir o guardar desde ahí. */
+    if (isPdfReceiptPath(relativePath)) {
+      const pdfBlob =
+        blob.type === 'application/pdf' ? blob : new Blob([blob], { type: 'application/pdf' })
+      const blobUrl = URL.createObjectURL(pdfBlob)
+      const w = window.open(blobUrl, '_blank', 'noopener,noreferrer')
+      if (!w) {
+        URL.revokeObjectURL(blobUrl)
+        toast.error('Permití ventanas emergentes para ver el PDF.')
+        return
+      }
+      toast.success('PDF abierto en una pestaña nueva. Desde el visor podés imprimir o descargar con el nombre que elijas.')
+      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000)
+      return
+    }
+
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = filename
+    a.rel = 'noopener'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(a.href)
+    toast.success('Descarga iniciada')
+  } catch {
+    toast.error('No se pudo descargar el archivo.')
+  }
+}
+
+/** Ruta relativa tipo `expenses/archivo.jpg` desde `/uploads/...` o URL absoluta. */
+function receiptPathFromUploadUrl(url: string): string | null {
+  let pathOnly = url
+  if (url.startsWith('http')) {
+    try {
+      pathOnly = new URL(url).pathname
+    } catch {
+      return null
+    }
+  }
+  const marker = '/uploads/'
+  const idx = pathOnly.indexOf(marker)
+  if (idx === -1) return null
+  return pathOnly.slice(idx + marker.length).replace(/^\/+/, '')
+}
+
+type ExpenseReceiptModalMeta = { path: string; expenseId: number; expenseDate: string }
+
+function effectiveExpenseReceiptMeta(
+  url: string | null,
+  meta: ExpenseReceiptModalMeta | null
+): ExpenseReceiptModalMeta | null {
+  if (meta) return meta
+  if (!url) return null
+  const path = receiptPathFromUploadUrl(url)
+  if (!path) return null
+  const m = path.match(/expense_[\d]+_(\d+)_/)
+  const expenseId = m ? parseInt(m[1], 10) : 0
+  return {
+    path,
+    expenseId,
+    expenseDate: new Date().toISOString().split('T')[0],
+  }
+}
+
 export default function Payments() {
   const { clubId } = useParams<{ clubId: string }>() 
   const navigate = useNavigate()
@@ -110,8 +227,33 @@ export default function Payments() {
   const [showExchangeModal, setShowExchangeModal] = useState(false)
   const [expenseDraft, setExpenseDraft] = useState({ expense_date: '', amount: '', currency: 'ARS', receipt_number: '', detail: '', custodian: '', account_id: '', receipt_photo_base64: '', receipt_photo_path: '' })
   const [expensePhotoPreview, setExpensePhotoPreview] = useState<string | null>(null)
+  const expenseReceiptFileInputRef = useRef<HTMLInputElement>(null)
+  /** Nombre del archivo elegido (UI en español; el input real va oculto). */
+  const [expenseReceiptChosenLabel, setExpenseReceiptChosenLabel] = useState('')
+  const clearExpenseReceiptFileInput = useCallback(() => {
+    setExpenseReceiptChosenLabel('')
+    if (expenseReceiptFileInputRef.current) expenseReceiptFileInputRef.current.value = ''
+  }, [])
   const [showPhotoModal, setShowPhotoModal] = useState(false)
   const [photoModalUrl, setPhotoModalUrl] = useState<string | null>(null)
+  /** Si el modal muestra un PDF, la URL es blob:… y hay que revocarla al cerrar. */
+  const photoModalObjectUrlRef = useRef<string | null>(null)
+  const [photoModalMeta, setPhotoModalMeta] = useState<ExpenseReceiptModalMeta | null>(null)
+  const revokePhotoModalBlobUrl = useCallback(() => {
+    if (photoModalObjectUrlRef.current) {
+      URL.revokeObjectURL(photoModalObjectUrlRef.current)
+      photoModalObjectUrlRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => revokePhotoModalBlobUrl()
+  }, [revokePhotoModalBlobUrl])
+
+  const expenseReceiptEffectiveMeta = useMemo(
+    () => effectiveExpenseReceiptMeta(photoModalUrl, photoModalMeta),
+    [photoModalUrl, photoModalMeta]
+  )
   const [photoZoom, setPhotoZoom] = useState(1)
   const [photoPosition, setPhotoPosition] = useState({ x: 0, y: 0 })
   const [isDragging, setIsDragging] = useState(false)
@@ -1619,6 +1761,7 @@ export default function Payments() {
                   const today = getLocalDateString()
                   setExpenseDraft({ expense_date: today, amount: '', currency: 'ARS', receipt_number: '', detail: '', custodian: '', account_id: '', receipt_photo_base64: '', receipt_photo_path: '' })
                   setExpensePhotoPreview(null)
+                  clearExpenseReceiptFileInput()
                   setShowExpenseModal(true)
                 }} className="px-3 py-2 bg-gray-900 text-white rounded hover:bg-gray-800">
                   Agregar gasto
@@ -2269,12 +2412,45 @@ export default function Payments() {
                       <td className="px-4 py-2 text-center">
                         {(e as any).receipt_photo_path ? (
                           <button
-                            onClick={() => {
-                              setPhotoModalUrl(`/uploads/${(e as any).receipt_photo_path}`)
+                            type="button"
+                            onClick={async () => {
+                              const path = String((e as any).receipt_photo_path)
+                              const meta = {
+                                path,
+                                expenseId: e.expense_id,
+                                expenseDate:
+                                  typeof e.expense_date === 'string'
+                                    ? e.expense_date
+                                    : new Date(e.expense_date as string).toISOString(),
+                              }
+                              setPhotoModalMeta(meta)
+                              revokePhotoModalBlobUrl()
+                              if (isPdfReceiptPath(path)) {
+                                try {
+                                  const res = await fetch(expenseReceiptAbsoluteUrl(path), {
+                                    credentials: 'include',
+                                  })
+                                  if (!res.ok) throw new Error('fetch failed')
+                                  const blob = await res.blob()
+                                  const pdf =
+                                    blob.type === 'application/pdf'
+                                      ? blob
+                                      : new Blob([blob], { type: 'application/pdf' })
+                                  const blobUrl = URL.createObjectURL(pdf)
+                                  photoModalObjectUrlRef.current = blobUrl
+                                  setPhotoModalUrl(blobUrl)
+                                } catch {
+                                  toast.error('No se pudo abrir el PDF.')
+                                  setPhotoModalMeta(null)
+                                  return
+                                }
+                              } else {
+                                setPhotoModalUrl(`/uploads/${path}`)
+                              }
                               setShowPhotoModal(true)
                             }}
                             className="text-blue-600 hover:text-blue-900"
-                            title="Ver foto del recibo"
+                            title="Ver adjunto del recibo"
                           >
                             <Camera className="h-5 w-5" />
                           </button>
@@ -2301,6 +2477,11 @@ export default function Payments() {
                                     receipt_photo_path: (e as any).receipt_photo_path || ''
                                   })
                                   setExpensePhotoPreview((e as any).receipt_photo_path ? `/uploads/${(e as any).receipt_photo_path}` : null)
+                                  const rp = (e as any).receipt_photo_path as string | undefined
+                                  setExpenseReceiptChosenLabel(
+                                    rp ? (String(rp).split('/').pop() || 'Archivo guardado') : ''
+                                  )
+                                  if (expenseReceiptFileInputRef.current) expenseReceiptFileInputRef.current.value = ''
                                   setEditingExpenseId(e.expense_id)
                                   setShowExpenseModal(true)
                                 }}
@@ -3528,6 +3709,7 @@ export default function Payments() {
               setShowExpenseModal(false)
               setExpenseDraft({ expense_date: '', amount: '', currency: 'ARS', receipt_number: '', detail: '', custodian: '', account_id: '', receipt_photo_base64: '', receipt_photo_path: '' })
               setExpensePhotoPreview(null)
+              clearExpenseReceiptFileInput()
               setEditingExpenseId(null)
               setShowCustodianDropdown(false)
             }} />
@@ -3594,56 +3776,174 @@ export default function Payments() {
                   <textarea value={expenseDraft.detail} onChange={(e) => setExpenseDraft(d => ({ ...d, detail: e.target.value }))} className="w-full px-3 py-2 border rounded" rows={3} />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-600 mb-1">Foto del recibo (opcional)</label>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0]
-                      if (file) {
-                        if (file.size > 5 * 1024 * 1024) {
-                          toast.error('La imagen es demasiado grande. Máximo 5MB')
+                  <span className="block text-sm text-gray-600 mb-1">
+                    Adjunto del recibo (opcional) — imagen o PDF
+                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/*
+                      Input oculto + botón propio: así no aparece "Choose file" / "No file chosen" del navegador.
+                      Sin accept restrictivo: en algunos equipos PDF se oculta o llega como octet-stream; validamos en código.
+                    */}
+                    <input
+                      ref={expenseReceiptFileInputRef}
+                      type="file"
+                      className="hidden"
+                      aria-label="Seleccionar archivo de recibo"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0]
+                        if (!file) {
+                          setExpenseReceiptChosenLabel('')
                           return
                         }
+                        const maxBytes = 10 * 1024 * 1024
+                        if (file.size > maxBytes) {
+                          toast.error('El archivo es demasiado grande. Máximo 10 MB.')
+                          e.target.value = ''
+                          setExpenseReceiptChosenLabel('')
+                          return
+                        }
+                        const lower = file.name.toLowerCase()
+                        const looksPdf = lower.endsWith('.pdf')
+                        const looksImage = /\.(jpe?g|png|gif|webp)$/i.test(file.name)
+                        const mime = (file.type || '').toLowerCase()
+                        const pdfMimeOk =
+                          mime === 'application/pdf' ||
+                          mime === 'application/x-pdf' ||
+                          /** Windows / descargas a veces reportan PDF como binario genérico */
+                          (mime === 'application/octet-stream' && looksPdf)
+                        const imageMimeOk = mime.startsWith('image/')
+                        const okType =
+                          (looksPdf && (pdfMimeOk || mime === '')) ||
+                          (looksImage && (imageMimeOk || mime === ''))
+                        if (!okType) {
+                          toast.error('Solo se permiten imágenes (JPG, PNG, GIF, WEBP) o archivos PDF.')
+                          e.target.value = ''
+                          setExpenseReceiptChosenLabel('')
+                          return
+                        }
+                        setExpenseReceiptChosenLabel(file.name)
                         const reader = new FileReader()
                         reader.onloadend = () => {
-                          const base64String = reader.result as string
-                          setExpenseDraft(d => ({ ...d, receipt_photo_base64: base64String, receipt_photo_path: '' }))
+                          let base64String = reader.result as string
+                          if (
+                            looksPdf &&
+                            /^data:application\/octet-stream/i.test(base64String)
+                          ) {
+                            base64String = base64String.replace(
+                              /^data:application\/octet-stream/i,
+                              'data:application/pdf'
+                            )
+                          }
+                          setExpenseDraft(d => ({
+                            ...d,
+                            receipt_photo_base64: base64String,
+                            receipt_photo_path: '',
+                          }))
                           setExpensePhotoPreview(base64String)
                         }
+                        reader.onerror = () => {
+                          toast.error('No se pudo leer el archivo.')
+                          e.target.value = ''
+                          setExpenseReceiptChosenLabel('')
+                        }
                         reader.readAsDataURL(file)
-                      }
-                    }}
-                    className="w-full px-3 py-2 border rounded"
-                  />
-                  {expensePhotoPreview && (
-                    <div className="mt-2 relative">
-                      <img src={expensePhotoPreview} alt="Vista previa" className="max-w-full h-32 object-contain border rounded" />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setExpensePhotoPreview(null)
-                          setExpenseDraft(d => ({ ...d, receipt_photo_base64: '', receipt_photo_path: '' }))
-                        }}
-                        className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
-                        title="Eliminar foto"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                  )}
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => expenseReceiptFileInputRef.current?.click()}
+                      className="inline-flex shrink-0 items-center rounded border border-gray-300 bg-gray-50 px-3 py-2 text-sm text-gray-800 hover:bg-gray-100"
+                    >
+                      Elegir archivo…
+                    </button>
+                    <span
+                      className="min-w-0 flex-1 truncate text-sm text-gray-600"
+                      title={expenseReceiptChosenLabel || undefined}
+                    >
+                      {expenseReceiptChosenLabel.trim()
+                        ? expenseReceiptChosenLabel
+                        : 'Ningún archivo seleccionado'}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Elegí una imagen (JPG, PNG, GIF, WEBP) o un PDF. Máximo 10 MB.
+                  </p>
+                  {expensePhotoPreview &&
+                    (isPdfExpenseAttachmentPreview(expensePhotoPreview) ? (
+                      <div className="mt-2 relative">
+                        <iframe
+                          src={expensePhotoPreview}
+                          title="Vista previa PDF"
+                          className="w-full h-40 border rounded bg-gray-50"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExpensePhotoPreview(null)
+                            clearExpenseReceiptFileInput()
+                            setExpenseDraft(d => ({
+                              ...d,
+                              receipt_photo_base64: '',
+                              receipt_photo_path: '',
+                            }))
+                          }}
+                          className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
+                          title="Quitar adjunto"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="mt-2 relative">
+                        <img
+                          src={expensePhotoPreview}
+                          alt="Vista previa"
+                          className="max-w-full h-32 object-contain border rounded"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExpensePhotoPreview(null)
+                            clearExpenseReceiptFileInput()
+                            setExpenseDraft(d => ({
+                              ...d,
+                              receipt_photo_base64: '',
+                              receipt_photo_path: '',
+                            }))
+                          }}
+                          className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
+                          title="Quitar adjunto"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
                   {expenseDraft.receipt_photo_path && !expensePhotoPreview && (
                     <div className="mt-2 relative">
-                      <img src={`/uploads/${expenseDraft.receipt_photo_path}`} alt="Foto actual" className="max-w-full h-32 object-contain border rounded" onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = 'none'
-                      }} />
+                      {expenseDraft.receipt_photo_path.toLowerCase().endsWith('.pdf') ? (
+                        <iframe
+                          src={`/uploads/${expenseDraft.receipt_photo_path}`}
+                          title="PDF actual"
+                          className="w-full h-40 border rounded bg-gray-50"
+                        />
+                      ) : (
+                        <img
+                          src={`/uploads/${expenseDraft.receipt_photo_path}`}
+                          alt="Adjunto actual"
+                          className="max-w-full h-32 object-contain border rounded"
+                          onError={(ev) => {
+                            (ev.target as HTMLImageElement).style.display = 'none'
+                          }}
+                        />
+                      )}
                       <button
                         type="button"
                         onClick={() => {
+                          clearExpenseReceiptFileInput()
                           setExpenseDraft(d => ({ ...d, receipt_photo_path: '' }))
                         }}
                         className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
-                        title="Eliminar foto"
+                        title="Quitar adjunto"
                       >
                         <X className="h-4 w-4" />
                       </button>
@@ -3656,6 +3956,7 @@ export default function Payments() {
                   setShowExpenseModal(false)
                   setExpenseDraft({ expense_date: '', amount: '', currency: 'ARS', receipt_number: '', detail: '', custodian: '', account_id: '', receipt_photo_base64: '', receipt_photo_path: '' })
                   setExpensePhotoPreview(null)
+                  clearExpenseReceiptFileInput()
                   setEditingExpenseId(null)
                   setShowCustodianDropdown(false)
                 }} className="px-4 py-2 border rounded">Cancelar</button>
@@ -3681,6 +3982,7 @@ export default function Payments() {
                       setShowExpenseModal(false)
                       setExpenseDraft({ expense_date: '', amount: '', currency: 'ARS', receipt_number: '', detail: '', custodian: '', account_id: '', receipt_photo_base64: '', receipt_photo_path: '' })
                       setExpensePhotoPreview(null)
+                      clearExpenseReceiptFileInput()
                       setEditingExpenseId(null)
                       setShowCustodianDropdown(false)
                       const ex = await paymentsService.getExpenses(clubIdNum, { from: from || undefined, to: to || undefined })
@@ -4355,59 +4657,109 @@ export default function Payments() {
           </div>
         )}
 
-        {/* Modal para ver foto del recibo */}
+        {/* Modal para ver foto del recibo (barra de acciones en flujo normal para que siempre se vea) */}
         {showPhotoModal && photoModalUrl && (
-          <div 
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" 
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-3 sm:p-4"
             onClick={() => {
+              revokePhotoModalBlobUrl()
               setShowPhotoModal(false)
               setPhotoModalUrl(null)
+              setPhotoModalMeta(null)
               setPhotoZoom(1)
               setPhotoPosition({ x: 0, y: 0 })
             }}
           >
-            <div 
-              className="relative max-w-4xl max-h-[90vh] p-4" 
+            <div
+              className="relative flex w-full max-w-5xl flex-col max-h-[92vh]"
               onClick={(e) => e.stopPropagation()}
             >
-              {/* Botones de control */}
-              <div className="absolute top-2 right-2 flex gap-2 z-20">
+              <div className="flex flex-wrap items-center justify-end gap-2 shrink-0 pb-2 border-b border-white/20">
+                {expenseReceiptEffectiveMeta ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        const m = expenseReceiptEffectiveMeta
+                        const abs = expenseReceiptAbsoluteUrl(m.path)
+                        printExpenseReceipt(abs, m.path)
+                      }}
+                      className="bg-white hover:bg-gray-100 text-gray-900 rounded-lg px-3 py-2 text-sm font-medium flex items-center gap-1.5 shadow"
+                      title="Imprimir recibo (PDF: otra pestaña, imprimir desde el visor)"
+                    >
+                      <Printer className="h-4 w-4 shrink-0" />
+                      Imprimir
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        const m = expenseReceiptEffectiveMeta
+                        void downloadExpenseReceiptFile(m.path, m.expenseId, m.expenseDate)
+                      }}
+                      className="bg-white hover:bg-gray-100 text-gray-900 rounded-lg px-3 py-2 text-sm font-medium flex items-center gap-1.5 shadow"
+                      title={
+                        expenseReceiptEffectiveMeta &&
+                        isPdfReceiptPath(expenseReceiptEffectiveMeta.path)
+                          ? 'Abre el PDF en otra pestaña; desde el visor elegís imprimir o guardar.'
+                          : 'Descargar imagen al equipo'
+                      }
+                    >
+                      <Download className="h-4 w-4 shrink-0" />
+                      {expenseReceiptEffectiveMeta &&
+                      isPdfReceiptPath(expenseReceiptEffectiveMeta.path)
+                        ? 'Abrir PDF'
+                        : 'Descargar'}
+                    </button>
+                  </>
+                ) : null}
+                {expenseReceiptEffectiveMeta && !isPdfReceiptPath(expenseReceiptEffectiveMeta.path) ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setPhotoZoom(Math.max(0.5, photoZoom - 0.25))
+                      }}
+                      className="bg-white/90 hover:bg-white text-gray-800 rounded-full p-2"
+                      title="Alejar"
+                    >
+                      <span className="text-xl font-bold leading-none">−</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setPhotoZoom(1)
+                        setPhotoPosition({ x: 0, y: 0 })
+                      }}
+                      className="bg-white/90 hover:bg-white text-gray-800 rounded-full px-3 py-2 text-sm"
+                      title="Resetear zoom"
+                    >
+                      {Math.round(photoZoom * 100)}%
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setPhotoZoom(Math.min(3, photoZoom + 0.25))
+                      }}
+                      className="bg-white/90 hover:bg-white text-gray-800 rounded-full p-2"
+                      title="Acercar"
+                    >
+                      <span className="text-xl font-bold leading-none">+</span>
+                    </button>
+                  </>
+                ) : null}
                 <button
+                  type="button"
                   onClick={(e) => {
                     e.stopPropagation()
-                    setPhotoZoom(Math.max(0.5, photoZoom - 0.25))
-                  }}
-                  className="bg-white/90 hover:bg-white text-gray-800 rounded-full p-2"
-                  title="Alejar"
-                >
-                  <span className="text-xl font-bold">−</span>
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setPhotoZoom(1)
-                    setPhotoPosition({ x: 0, y: 0 })
-                  }}
-                  className="bg-white/90 hover:bg-white text-gray-800 rounded-full px-3 py-2 text-sm"
-                  title="Resetear zoom"
-                >
-                  {Math.round(photoZoom * 100)}%
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setPhotoZoom(Math.min(3, photoZoom + 0.25))
-                  }}
-                  className="bg-white/90 hover:bg-white text-gray-800 rounded-full p-2"
-                  title="Acercar"
-                >
-                  <span className="text-xl font-bold">+</span>
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
+                    revokePhotoModalBlobUrl()
                     setShowPhotoModal(false)
                     setPhotoModalUrl(null)
+                    setPhotoModalMeta(null)
                     setPhotoZoom(1)
                     setPhotoPosition({ x: 0, y: 0 })
                   }}
@@ -4417,93 +4769,116 @@ export default function Payments() {
                   <X className="h-6 w-6" />
                 </button>
               </div>
-              
-              {/* Contenedor de la imagen con zoom y arrastre */}
-              <div 
-                className="relative rounded-lg shadow-2xl bg-gray-900"
-                style={{ 
-                  width: '90vw',
-                  maxWidth: '1400px',
-                  height: '90vh',
-                  maxHeight: '900px',
-                  overflow: 'auto',
-                  cursor: photoZoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default'
+
+              <div
+                className="relative mt-2 flex min-h-[200px] flex-1 flex-col overflow-auto rounded-lg bg-gray-900 shadow-2xl"
+                style={{
+                  maxHeight: 'calc(92vh - 6rem)',
+                  cursor:
+                    expenseReceiptEffectiveMeta &&
+                    !isPdfReceiptPath(expenseReceiptEffectiveMeta.path) &&
+                    photoZoom > 1
+                      ? isDragging
+                        ? 'grabbing'
+                        : 'grab'
+                      : 'default',
                 }}
-                onWheel={(e) => {
-                  e.stopPropagation()
-                  const delta = e.deltaY > 0 ? -0.1 : 0.1
-                  const newZoom = Math.max(0.5, Math.min(3, photoZoom + delta))
-                  setPhotoZoom(newZoom)
-                  if (newZoom === 1) {
-                    setPhotoPosition({ x: 0, y: 0 })
-                  }
-                }}
-                onMouseDown={(e) => {
-                  if (photoZoom > 1) {
-                    e.preventDefault()
-                    setIsDragging(true)
-                    setDragStart({ x: e.clientX - photoPosition.x, y: e.clientY - photoPosition.y })
-                  }
-                }}
-                onMouseMove={(e) => {
-                  if (isDragging && photoZoom > 1) {
-                    e.preventDefault()
-                    setPhotoPosition({
-                      x: e.clientX - dragStart.x,
-                      y: e.clientY - dragStart.y
-                    })
-                  }
-                }}
-                onMouseUp={() => setIsDragging(false)}
-                onMouseLeave={() => setIsDragging(false)}
-              >
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    width: '100%',
-                    height: '100%',
-                    transform: `translate(${photoPosition.x}px, ${photoPosition.y}px)`,
-                    transition: isDragging ? 'none' : 'transform 0.1s ease-out'
-                  }}
-                >
-                  <img 
-                    src={photoModalUrl} 
-                    alt="Foto del recibo" 
-                    style={{
-                      maxWidth: 'calc(100% - 40px)',
-                      maxHeight: 'calc(100% - 40px)',
-                      width: 'auto',
-                      height: 'auto',
-                      transform: `scale(${photoZoom})`,
-                      transformOrigin: 'center center',
-                      transition: isDragging ? 'none' : 'transform 0.2s ease-out',
-                      userSelect: 'none',
-                      pointerEvents: 'none',
-                      objectFit: 'contain',
-                      margin: 'auto'
-                    }}
-                    draggable={false}
-                    onError={(e) => {
-                      const target = e.target as HTMLImageElement
-                      target.style.display = 'none'
-                      const errorDiv = document.createElement('div')
-                      errorDiv.className = 'bg-red-100 text-red-800 p-4 rounded-lg text-center'
-                      errorDiv.textContent = 'Error al cargar la imagen'
-                      const parent = target.parentElement?.parentElement
-                      if (parent) {
-                        parent.appendChild(errorDiv)
+                onWheel={
+                  expenseReceiptEffectiveMeta && isPdfReceiptPath(expenseReceiptEffectiveMeta.path)
+                    ? undefined
+                    : (e) => {
+                        e.stopPropagation()
+                        const delta = e.deltaY > 0 ? -0.1 : 0.1
+                        const newZoom = Math.max(0.5, Math.min(3, photoZoom + delta))
+                        setPhotoZoom(newZoom)
+                        if (newZoom === 1) setPhotoPosition({ x: 0, y: 0 })
                       }
-                    }}
+                }
+                onMouseDown={
+                  expenseReceiptEffectiveMeta && !isPdfReceiptPath(expenseReceiptEffectiveMeta.path)
+                    ? (e) => {
+                        if (photoZoom > 1) {
+                          e.preventDefault()
+                          setIsDragging(true)
+                          setDragStart({ x: e.clientX - photoPosition.x, y: e.clientY - photoPosition.y })
+                        }
+                      }
+                    : undefined
+                }
+                onMouseMove={
+                  expenseReceiptEffectiveMeta && !isPdfReceiptPath(expenseReceiptEffectiveMeta.path)
+                    ? (e) => {
+                        if (isDragging && photoZoom > 1) {
+                          e.preventDefault()
+                          setPhotoPosition({
+                            x: e.clientX - dragStart.x,
+                            y: e.clientY - dragStart.y,
+                          })
+                        }
+                      }
+                    : undefined
+                }
+                onMouseUp={
+                  expenseReceiptEffectiveMeta && !isPdfReceiptPath(expenseReceiptEffectiveMeta.path)
+                    ? () => setIsDragging(false)
+                    : undefined
+                }
+                onMouseLeave={
+                  expenseReceiptEffectiveMeta && !isPdfReceiptPath(expenseReceiptEffectiveMeta.path)
+                    ? () => setIsDragging(false)
+                    : undefined
+                }
+              >
+                {expenseReceiptEffectiveMeta && isPdfReceiptPath(expenseReceiptEffectiveMeta.path) ? (
+                  <iframe
+                    title="Recibo PDF"
+                    src={photoModalUrl}
+                    className="min-h-[50vh] w-full flex-1 rounded-lg border-0 bg-white"
+                    style={{ minHeight: 'min(70vh, calc(92vh - 7rem))' }}
                   />
-                </div>
+                ) : (
+                  <div
+                    className="flex min-h-[min(70vh,calc(92vh-7rem))] w-full flex-1 items-center justify-center p-2"
+                    style={{
+                      transform: `translate(${photoPosition.x}px, ${photoPosition.y}px)`,
+                      transition: isDragging ? 'none' : 'transform 0.1s ease-out',
+                    }}
+                  >
+                    <img
+                      src={photoModalUrl}
+                      alt="Foto del recibo"
+                      style={{
+                        maxWidth: '100%',
+                        maxHeight: 'min(68vh, calc(92vh - 8rem))',
+                        width: 'auto',
+                        height: 'auto',
+                        transform: `scale(${photoZoom})`,
+                        transformOrigin: 'center center',
+                        transition: isDragging ? 'none' : 'transform 0.2s ease-out',
+                        userSelect: 'none',
+                        pointerEvents: 'none',
+                        objectFit: 'contain',
+                      }}
+                      draggable={false}
+                      onError={(e) => {
+                        const target = e.target as HTMLImageElement
+                        target.style.display = 'none'
+                        const errorDiv = document.createElement('div')
+                        errorDiv.className = 'bg-red-100 text-red-800 p-4 rounded-lg text-center'
+                        errorDiv.textContent = 'Error al cargar la imagen'
+                        const parent = target.parentElement?.parentElement
+                        if (parent) parent.appendChild(errorDiv)
+                      }}
+                    />
+                  </div>
+                )}
               </div>
-              
-              {/* Instrucciones */}
-              <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 bg-black/50 text-white text-xs px-3 py-1 rounded z-20">
-                Rueda del mouse: zoom | Click y arrastrar: mover imagen
-              </div>
+
+              <p className="mt-2 shrink-0 text-center text-xs text-white/90 px-1">
+                {expenseReceiptEffectiveMeta && isPdfReceiptPath(expenseReceiptEffectiveMeta.path)
+                  ? 'Usá Imprimir o Descargar arriba.'
+                  : 'Imprimir y Descargar arriba. Rueda del mouse: zoom · arrastrar: mover (con zoom).'}
+              </p>
             </div>
           </div>
         )}

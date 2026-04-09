@@ -315,7 +315,8 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                     <option value="closed">Cerrado — congela índice y HCP del torneo (histórico)</option>
                   </select>
                   <p className="mt-1 text-xs text-gray-500">
-                    En Cerrado no se puede editar el torneo ni la lista/HCP de jugadores; los resultados quedan alineados con lo jugado. Para corregir, reabrí con Abierto (solo estado, desde edición).
+                    Al pasar a Cerrado se guardan en cada inscripto el índice y HCP usados en el torneo; no se pueden crear ni editar tarjetas; los resultados no siguen al HCP actual del socio. Reabrí con Abierto
+                    para permitir correcciones y volvé a Cerrado para congelar de nuevo.
                   </p>
                 </div>
 

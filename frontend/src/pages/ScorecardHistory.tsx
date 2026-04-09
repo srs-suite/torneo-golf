@@ -2,21 +2,28 @@ import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, FileText, Eye, Printer, Edit, Search, X } from 'lucide-react';
 import { useTournamentScorecards } from '../hooks/useScorecards';
+import { useTournaments } from '../hooks/useTournaments';
+import { isTournamentStatusClosed } from '../types/tournament';
+import { TournamentClosedNotice } from '../components/TournamentClosedNotice';
 
 export default function ScorecardHistory() {
   const { clubId, tournamentId } = useParams<{ clubId: string; tournamentId: string }>();
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   
+  const clubIdNum = parseInt(clubId || '0');
+  const tournamentIdNum = parseInt(tournamentId || '0');
+
+  const { data: tournaments = [] } = useTournaments(clubIdNum);
+  const tournament = tournaments.find((t) => t.tournament_id === tournamentIdNum);
+  const tournamentClosed = tournament ? isTournamentStatusClosed(tournament.status) : false;
+
   const {
     data: scorecards = [],
     isLoading,
     error,
     refetch
-  } = useTournamentScorecards(
-    parseInt(clubId || '0'),
-    parseInt(tournamentId || '0')
-  );
+  } = useTournamentScorecards(clubIdNum, tournamentIdNum);
 
   // Debug logging
   console.log('🔍 ScorecardHistory Debug:', {
@@ -96,6 +103,14 @@ export default function ScorecardHistory() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {tournamentClosed && (
+        <TournamentClosedNotice layout="bar">
+          <span>
+            No se pueden <strong>editar</strong> tarjetas desde aquí. Sí podés <strong>ver</strong> e <strong>imprimir</strong>. El HCP del
+            torneo es el del cierre, no el actual del socio.
+          </span>
+        </TournamentClosedNotice>
+      )}
       {/* Header */}
       <div className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -188,11 +203,15 @@ export default function ScorecardHistory() {
                   <div className="flex flex-wrap gap-2">
                     <button
                       onClick={() => {
+                        if (tournamentClosed) return;
                         const playerId = scorecard.member_id || scorecard.external_player_id;
-                        navigate(`/club/${clubId}/tournaments/${tournamentId}/manual-entry/${playerId}`);
+                        navigate(`/club/${clubId}/tournaments/${tournamentId}/manual-entry/${playerId}`, {
+                          state: { manualEntryBack: 'scorecard-history' as const },
+                        });
                       }}
-                      className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 text-sm"
-                      title="Editar tarjeta"
+                      disabled={tournamentClosed}
+                      className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                      title={tournamentClosed ? 'Torneo cerrado' : 'Editar tarjeta'}
                     >
                       <Edit className="h-4 w-4" />
                       Editar

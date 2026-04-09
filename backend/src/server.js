@@ -2211,13 +2211,20 @@ const server = http.createServer(async (req, res) => {
                 '.jpeg': 'image/jpeg',
                 '.gif': 'image/gif',
                 '.webp': 'image/webp',
-                '.svg': 'image/svg+xml'
+                '.svg': 'image/svg+xml',
+                '.pdf': 'application/pdf',
             }[ext] || 'application/octet-stream';
-            
-            res.writeHead(200, { 
+
+            const headers = {
                 'Content-Type': contentType,
-                'Cache-Control': 'public, max-age=31536000' // Cache 1 year
-            });
+                'Cache-Control': 'public, max-age=31536000', // Cache 1 year
+            };
+            /** Evitar que el navegador descargue el PDF al abrir en visor / iframe. */
+            if (ext === '.pdf') {
+                headers['Content-Disposition'] = 'inline';
+            }
+
+            res.writeHead(200, headers);
             fs.createReadStream(filePath).pipe(res);
             return;
         }

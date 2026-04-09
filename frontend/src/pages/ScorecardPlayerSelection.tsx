@@ -1,14 +1,35 @@
 import { useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, FileText, User, CheckCircle, Search, X, Trophy, Printer, Edit } from 'lucide-react';
-import { useTournamentParticipants } from '../hooks/useTournaments';
+import { useTournamentParticipants, useTournaments } from '../hooks/useTournaments';
+import { isTournamentStatusClosed } from '../types/tournament';
 import { useTournamentScorecards } from '../hooks/useScorecards';
 import { getScoreStyle, formatHcpForDisplay, computeNetScore } from '../utils/scoreUtils';
+import { TournamentClosedNotice, TORNEO_CERRADO_ALERT } from '../components/TournamentClosedNotice';
 
 // Score styling moved to shared utility
 
+/** Misma clave que al indexar scorecards por member_id / external_player_id (no usar participant_id para socios). */
+function participantToScorecardKey(participant: any): string | null {
+  const pt = String(participant?.player_type || '').toLowerCase()
+  if (pt === 'external') {
+    if (participant.external_player_id == null || participant.external_player_id === '') return null
+    return `external_${Number(participant.external_player_id)}`
+  }
+  if (participant.member_id == null || participant.member_id === '') return null
+  return `member_${Number(participant.member_id)}`
+}
+
 // Componente Modal para mostrar la tarjeta
-function ScorecardModal({ scorecard, onClose }: { scorecard: any, onClose: () => void }) {
+function ScorecardModal({
+  scorecard,
+  onClose,
+  readOnly = false,
+}: {
+  scorecard: any
+  onClose: () => void
+  readOnly?: boolean
+}) {
   const { clubId, tournamentId } = useParams<{ clubId: string; tournamentId: string }>();
   const navigate = useNavigate();
   const sanitizeAscii = (text: string | undefined | null) => {
@@ -40,26 +61,31 @@ function ScorecardModal({ scorecard, onClose }: { scorecard: any, onClose: () =>
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {!readOnly && (
+              <button
+                onClick={() => {
+                  const playerId = scorecard.member_id || scorecard.external_player_id;
+                  navigate(`/club/${clubId}/tournaments/${tournamentId}/manual-entry/${playerId}`, {
+                    state: { manualEntryBack: 'scorecard-selection' as const },
+                  });
+                }}
+                className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 text-sm"
+                title="Editar tarjeta"
+              >
+                <Edit className="h-4 w-4" />
+                Editar
+              </button>
+            )}
             <button
+              type="button"
               onClick={() => {
-                // Navegar a editar la tarjeta
-                const playerId = scorecard.member_id || scorecard.external_player_id;
-                navigate(`/club/${clubId}/tournaments/${tournamentId}/manual-entry/${playerId}`);
-              }}
-              className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 text-sm"
-              title="Editar tarjeta"
-            >
-              <Edit className="h-4 w-4" />
-              Editar
-            </button>
-            <button
-              onClick={() => {
-                // Abrir página de impresión con auto-print
                 const scorecardId = scorecard.scorecard_id;
+                if (!scorecardId) return;
                 window.open(`/club/${clubId}/tournaments/${tournamentId}/scorecard/${scorecardId}/print?autoprint=true`, '_blank');
               }}
-              className="p-2 hover:bg-gray-100 rounded-full text-gray-600 hover:text-gray-800"
-              title="Imprimir tarjeta directamente"
+              disabled={!scorecard.scorecard_id}
+              className="p-2 hover:bg-gray-100 rounded-full text-gray-600 hover:text-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Imprimir tarjeta"
             >
               <Printer className="h-5 w-5" />
             </button>
@@ -74,6 +100,13 @@ function ScorecardModal({ scorecard, onClose }: { scorecard: any, onClose: () =>
         
         
         <div className="p-6">
+          {readOnly && (
+            <div className="mb-4">
+              <TournamentClosedNotice layout="box">
+                <span>Solo lectura e impresión. Los golpes y el HCP del torneo no se pueden cambiar hasta reabrir el torneo.</span>
+              </TournamentClosedNotice>
+            </div>
+          )}
           {/* Información del jugador */}
           <div className="mb-6 p-4 bg-gray-50 rounded-lg">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
@@ -378,137 +411,122 @@ export default function ScorecardPlayerSelection() {
   
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedFilter, setSelectedFilter] = useState<'pending' | 'completed' | 'all' | 'no_show'>('pending')
-  const [viewMode, setViewMode] = useState<'participants' | 'scorecards'>('participants')
   const [selectedScorecard, setSelectedScorecard] = useState<any>(null)
   
-  // Función para mostrar datos detallados de una tarjeta
-  const fetchScorecardDetails = async (searchId: number) => {
+  function holeScoresRecordToModalRows(holeScores: Record<string | number, unknown> | null | undefined): any[] {
+    if (!holeScores || typeof holeScores !== 'object') return []
+    const out: any[] = []
+    for (const k of Object.keys(holeScores)) {
+      const hole = parseInt(String(k), 10)
+      const strokes = Number((holeScores as any)[k])
+      if (!Number.isFinite(hole) || hole < 1 || hole > 18) continue
+      if (!Number.isFinite(strokes)) continue
+      out.push({ hole, strokes, par: 4, handicap: hole })
+    }
+    out.sort((a, b) => a.hole - b.hole)
+    return out
+  }
+
+  /** Debe recibir el participante completo (no solo participant_id): la tarjeta se cruza por member_id / external_player_id. */
+  const fetchScorecardDetails = async (participant: any) => {
     try {
-      console.log('🔍 Looking for scorecard for searchId:', searchId);
-      
-      // Buscar la tarjeta en los datos que ya tenemos
-      // Intentar por participant_id, member_id, o external_player_id
-      let existingScorecard = scorecards?.find(s => 
-        s.member_id === searchId || 
-        s.external_player_id === searchId
-      );
-      
-      let participantData = participants.find(p => 
-        p.participant_id === searchId || 
-        p.member_id === searchId || 
-        p.external_player_id === searchId
-      );
-      
-      console.log('🔍 Found participant data:', participantData);
-      console.log('🔍 Found scorecard:', existingScorecard);
-      
+      const pk = participantToScorecardKey(participant)
+      const existingScorecard = scorecards?.find((sc: any) => {
+        const sk =
+          sc.member_id != null && sc.member_id !== ''
+            ? `member_${Number(sc.member_id)}`
+            : sc.external_player_id != null && sc.external_player_id !== ''
+              ? `external_${Number(sc.external_player_id)}`
+              : null
+        return sk != null && sk === pk
+      })
+
+      const participantData = participant
+
       if (existingScorecard) {
-        
-        // console.log('👤 Found participant data:', participantData);
-        
-        const scorecardData = {
+        const scRow = existingScorecard as unknown as Record<string, unknown>
+        const scorecardData: any = {
           ...existingScorecard,
           player_name: participantData?.player_name || 'Sin nombre',
           player_type: participantData?.player_type || 'member',
           player_club: participantData?.player_club || 'Sin club',
-          handicap_local: participantData?.handicap_local,
-          scores: []
-        };
-        
-        console.log('📋 Final scorecard data:', scorecardData);
-        
-        // Si tiene scorecard_id, obtener los scores detallados
-        console.log('🎯 Scorecard ID:', existingScorecard.scorecard_id);
+          handicap_local:
+            (scRow.handicap_local as number | undefined) ?? participantData?.handicap_local,
+          handicap_index:
+            (scRow.handicap_index as number | undefined) ?? (participantData as any)?.handicap_index,
+          scores: [] as any[],
+        }
+
+        let loaded: any[] = []
+
         if (existingScorecard.scorecard_id) {
           try {
-            const detailUrl = `/api/club/${clubId}/tournaments/${tournamentId}/scorecard/${existingScorecard.scorecard_id}`;
-            console.log('🌐 Fetching scorecard details from:', detailUrl);
-            const detailResponse = await fetch(detailUrl);
+            const detailUrl = `/api/club/${clubId}/tournaments/${tournamentId}/scorecard/${existingScorecard.scorecard_id}`
+            const detailResponse = await fetch(detailUrl)
             if (detailResponse.ok) {
-              const detailData = await detailResponse.json();
-              console.log('🏌️ Detailed scorecard from API:', detailData);
-              console.log('🔍 detailData.data:', detailData.data);
-              console.log('🔍 detailData.data.scores:', detailData.data?.scores);
-              console.log('🔍 detailData.scores:', detailData.scores);
-              
-              // La API devuelve los scores en formato 'holes' array
-              const apiData = detailData.data || detailData;
-              scorecardData.scores = apiData.holes || apiData.scores || [];
-              console.log('🔍 API holes data:', apiData.holes);
-              
-              // También actualizar el nombre del jugador desde la API si está disponible
-              if (apiData.player_name) {
-                scorecardData.player_name = apiData.player_name;
+              const detailData = await detailResponse.json()
+              const apiData = detailData.data || detailData
+              const holes = apiData.holes || apiData.scores
+              if (Array.isArray(holes) && holes.length > 0) {
+                loaded = holes
+              } else if (apiData.hole_scores && typeof apiData.hole_scores === 'object') {
+                loaded = holeScoresRecordToModalRows(apiData.hole_scores)
               }
-              if (apiData.player_type) {
-                scorecardData.player_type = apiData.player_type;
-              }
-              if (apiData.player_club) {
-                scorecardData.player_club = apiData.player_club;
-              }
-              if (apiData.handicap_local !== undefined) {
-                scorecardData.handicap_local = apiData.handicap_local;
-              }
-            } else {
-              console.error('❌ Failed to fetch scorecard details. Status:', detailResponse.status);
-              const errorText = await detailResponse.text();
-              console.error('❌ Error response:', errorText);
+              if (apiData.player_name) scorecardData.player_name = apiData.player_name
+              if (apiData.player_type) scorecardData.player_type = apiData.player_type
+              if (apiData.player_club) scorecardData.player_club = apiData.player_club
+              if (apiData.handicap_local !== undefined) scorecardData.handicap_local = apiData.handicap_local
+              if (apiData.handicap_index !== undefined) scorecardData.handicap_index = apiData.handicap_index
             }
           } catch (detailError) {
-            console.error('❌ Exception fetching scorecard scores:', detailError);
+            console.error('❌ Exception fetching scorecard scores:', detailError)
           }
         }
-        
-        console.log('🎉 Setting final scorecard:', scorecardData);
-        setSelectedScorecard(scorecardData);
-      } else {
-        console.error('❌ Scorecard not found for participant:', searchId);
-        
-        // Si no encontramos scorecard, crear una tarjeta básica con los datos del participante
-        if (participantData) {
-          // console.log('📋 Creating basic scorecard for participant:', participantData.player_name);
-          
-          const basicScorecardData = {
-            player_name: participantData.player_name || 'Sin nombre',
-            player_type: participantData.player_type || 'member',
-            player_club: participantData.player_club || 'Sin club',
-            handicap_local: participantData.handicap_local,
-            scores: [], // Sin scores por ahora
-            created_at: new Date().toISOString(),
-            // Datos simulados para que el modal funcione
-            scorecard_id: null,
-            member_id: participantData.member_id,
-            external_player_id: participantData.external_player_id
-          };
-          
-          setSelectedScorecard(basicScorecardData);
-        } else {
-          console.error('❌ Participant data not found either');
+
+        if (!loaded.length && scRow.hole_scores) {
+          loaded = holeScoresRecordToModalRows(scRow.hole_scores as Record<string | number, unknown>)
         }
+
+        scorecardData.scores = loaded
+        setSelectedScorecard(scorecardData)
+      } else if (participantData) {
+        const basicScorecardData = {
+          player_name: participantData.player_name || 'Sin nombre',
+          player_type: participantData.player_type || 'member',
+          player_club: participantData.player_club || 'Sin club',
+          handicap_local: participantData.handicap_local,
+          scores: [] as any[],
+          created_at: new Date().toISOString(),
+          scorecard_id: null,
+          member_id: participantData.member_id,
+          external_player_id: participantData.external_player_id,
+        }
+
+        setSelectedScorecard(basicScorecardData)
       }
     } catch (error) {
-      console.error('Error fetching scorecard details:', error);
+      console.error('Error fetching scorecard details:', error)
     }
-  };
+  }
   
+  const clubIdNum = parseInt(clubId || '0')
+  const tournamentIdNum = parseInt(tournamentId || '0')
+
+  const { data: tournaments = [] } = useTournaments(clubIdNum)
+  const tournamentMeta = tournaments.find((t: any) => t.tournament_id === tournamentIdNum)
+  const tournamentClosed = tournamentMeta ? isTournamentStatusClosed(tournamentMeta.status) : false
+
   const {
     data: participants = [],
     isLoading: participantsLoading,
     error: participantsError
-  } = useTournamentParticipants(
-    parseInt(clubId || '0'),
-    parseInt(tournamentId || '0')
-  );
+  } = useTournamentParticipants(clubIdNum, tournamentIdNum)
 
   const {
     data: scorecards = [],
     isLoading: scorecardsLoading,
     error: scorecardsError
-  } = useTournamentScorecards(
-    parseInt(clubId || '0'),
-    parseInt(tournamentId || '0'),
-    true // includeAll = true para ver también los que no presentaron
-  );
+  } = useTournamentScorecards(clubIdNum, tournamentIdNum, true);
 
   // Separate participants into completed, pending, and no-show
   const participantsWithScorecards = useMemo(() => {
@@ -517,24 +535,19 @@ export default function ScorecardPlayerSelection() {
     const playersWithScorecard = new Set();
     
     scorecards.forEach((scorecard: any) => {
-      // Solo agregar si NO es "no presentó" (verificar 0, false, null, undefined)
       if (!scorecard.did_not_present || scorecard.did_not_present === 0) {
-        if (scorecard.member_id) {
-          playersWithScorecard.add(`member_${scorecard.member_id}`);
+        if (scorecard.member_id != null && scorecard.member_id !== '') {
+          playersWithScorecard.add(`member_${Number(scorecard.member_id)}`);
         }
-        if (scorecard.external_player_id) {
-          playersWithScorecard.add(`external_${scorecard.external_player_id}`);
+        if (scorecard.external_player_id != null && scorecard.external_player_id !== '') {
+          playersWithScorecard.add(`external_${Number(scorecard.external_player_id)}`);
         }
       }
     });
 
     const result = participants.filter((participant: any) => {
-      const playerKey = participant.player_type === 'external' 
-        ? `external_${participant.external_player_id || participant.player_id}`
-        : `member_${participant.member_id || participant.player_id}`;
-      
-      const hasScorecard = playersWithScorecard.has(playerKey);
-      return hasScorecard;
+      const playerKey = participantToScorecardKey(participant)
+      return playerKey != null && playersWithScorecard.has(playerKey)
     });
     
     return result;
@@ -547,23 +560,19 @@ export default function ScorecardPlayerSelection() {
     const playersNoShow = new Set();
     
     scorecards.forEach((scorecard: any) => {
-      // Solo agregar si ES "no presentó" (1 o true)
       if (scorecard.did_not_present === 1 || scorecard.did_not_present === true) {
-        if (scorecard.member_id) {
-          playersNoShow.add(`member_${scorecard.member_id}`);
+        if (scorecard.member_id != null && scorecard.member_id !== '') {
+          playersNoShow.add(`member_${Number(scorecard.member_id)}`);
         }
-        if (scorecard.external_player_id) {
-          playersNoShow.add(`external_${scorecard.external_player_id}`);
+        if (scorecard.external_player_id != null && scorecard.external_player_id !== '') {
+          playersNoShow.add(`external_${Number(scorecard.external_player_id)}`);
         }
       }
     });
 
     const result = participants.filter((participant: any) => {
-      const playerKey = participant.player_type === 'external' 
-        ? `external_${participant.external_player_id || participant.player_id}`
-        : `member_${participant.member_id || participant.player_id}`;
-      
-      return playersNoShow.has(playerKey);
+      const playerKey = participantToScorecardKey(participant)
+      return playerKey != null && playersNoShow.has(playerKey)
     });
     
     return result;
@@ -576,20 +585,17 @@ export default function ScorecardPlayerSelection() {
     const playersWithAnyScorecard = new Set();
     
     scorecards.forEach((scorecard: any) => {
-      if (scorecard.member_id) {
-        playersWithAnyScorecard.add(`member_${scorecard.member_id}`);
+      if (scorecard.member_id != null && scorecard.member_id !== '') {
+        playersWithAnyScorecard.add(`member_${Number(scorecard.member_id)}`);
       }
-      if (scorecard.external_player_id) {
-        playersWithAnyScorecard.add(`external_${scorecard.external_player_id}`);
+      if (scorecard.external_player_id != null && scorecard.external_player_id !== '') {
+        playersWithAnyScorecard.add(`external_${Number(scorecard.external_player_id)}`);
       }
     });
 
     return participants.filter((participant: any) => {
-      const playerKey = participant.player_type === 'external' 
-        ? `external_${participant.external_player_id || participant.player_id}`
-        : `member_${participant.member_id || participant.player_id}`;
-      
-      return !playersWithAnyScorecard.has(playerKey);
+      const playerKey = participantToScorecardKey(participant)
+      return playerKey == null || !playersWithAnyScorecard.has(playerKey)
     });
   }, [participants, scorecards]);
 
@@ -661,7 +667,7 @@ export default function ScorecardPlayerSelection() {
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center space-x-4">
               <button
-                onClick={() => navigate(-1)}
+                onClick={() => navigate(`/club/${clubId}/admin?tab=tournaments`)}
                 className="flex items-center text-gray-600 hover:text-gray-900"
               >
                 <ArrowLeft className="h-5 w-5 mr-2" />
@@ -683,16 +689,24 @@ export default function ScorecardPlayerSelection() {
         </div>
       </div>
 
+      {tournamentClosed && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 mb-4">
+          <TournamentClosedNotice layout="box">
+            <span>
+              No se pueden <strong>cargar ni editar</strong> tarjetas. Sí podés <strong>ver</strong> cada tarjeta e{' '}
+              <strong>imprimirla</strong>. El HCP de este torneo es el registrado al cerrarlo, no el actual del socio.
+            </span>
+          </TournamentClosedNotice>
+        </div>
+      )}
+
       {/* Stats Cards - Clickeable */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
           <button
-            onClick={() => {
-              setViewMode('participants')
-              setSelectedFilter('all')
-            }}
+            onClick={() => setSelectedFilter('all')}
             className={`bg-white rounded-lg shadow p-4 transition-all hover:shadow-lg hover:scale-105 text-left ${
-              selectedFilter === 'all' && viewMode === 'participants' ? 'ring-2 ring-blue-500 bg-blue-50' : ''
+              selectedFilter === 'all' ? 'ring-2 ring-blue-500 bg-blue-50' : ''
             }`}
           >
             <div className="flex items-center">
@@ -705,12 +719,9 @@ export default function ScorecardPlayerSelection() {
           </button>
           
           <button
-            onClick={() => {
-              setViewMode('scorecards')
-              setSelectedFilter('completed')
-            }}
+            onClick={() => setSelectedFilter('completed')}
             className={`bg-white rounded-lg shadow p-4 transition-all hover:shadow-lg hover:scale-105 text-left ${
-              viewMode === 'scorecards' ? 'ring-2 ring-green-500 bg-green-50' : 'hover:bg-green-50'
+              selectedFilter === 'completed' ? 'ring-2 ring-green-500 bg-green-50' : 'hover:bg-green-50'
             }`}
           >
             <div className="flex items-center">
@@ -723,12 +734,9 @@ export default function ScorecardPlayerSelection() {
           </button>
           
           <button
-            onClick={() => {
-              setViewMode('participants')
-              setSelectedFilter('pending')
-            }}
+            onClick={() => setSelectedFilter('pending')}
             className={`bg-white rounded-lg shadow p-4 transition-all hover:shadow-lg hover:scale-105 text-left ${
-              selectedFilter === 'pending' && viewMode === 'participants' ? 'ring-2 ring-orange-500 bg-orange-50' : ''
+              selectedFilter === 'pending' ? 'ring-2 ring-orange-500 bg-orange-50' : ''
             }`}
           >
             <div className="flex items-center">
@@ -741,12 +749,9 @@ export default function ScorecardPlayerSelection() {
           </button>
           
           <button
-            onClick={() => {
-              setViewMode('participants')
-              setSelectedFilter('no_show')
-            }}
+            onClick={() => setSelectedFilter('no_show')}
             className={`bg-white rounded-lg shadow p-4 transition-all hover:shadow-lg hover:scale-105 text-left ${
-              selectedFilter === 'no_show' && viewMode === 'participants' ? 'ring-2 ring-red-500 bg-red-50' : ''
+              selectedFilter === 'no_show' ? 'ring-2 ring-red-500 bg-red-50' : ''
             }`}
           >
             <div className="flex items-center">
@@ -784,44 +789,7 @@ export default function ScorecardPlayerSelection() {
           )}
         </div>
 
-        {/* Content - Switch between participants and scorecards view */}
-        {viewMode === 'scorecards' ? (
-          /* Scorecards View */
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold">
-                Tarjetas Cargadas (0)
-              </h3>
-              <button
-                onClick={() => navigate(`/club/${clubId}/tournaments/${tournamentId}/scorecards`)}
-                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
-              >
-                Ver Historial Completo
-              </button>
-            </div>
-            
-            <div className="text-center py-12">
-              <FileText className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">
-                No hay tarjetas cargadas aún
-              </h3>
-              <p className="text-gray-600 mb-6">
-                Comienza cargando tarjetas de los participantes pendientes.
-              </p>
-              <button
-                onClick={() => {
-                  setViewMode('participants')
-                  setSelectedFilter('pending')
-                }}
-                className="px-6 py-3 bg-orange-600 text-white rounded-lg hover:bg-orange-700"
-              >
-                Ver Pendientes
-              </button>
-            </div>
-          </div>
-        ) : (
-          /* Participants View */
-          filteredParticipants.length === 0 ? (
+        {filteredParticipants.length === 0 ? (
             <div className="text-center py-12">
             {selectedFilter === 'pending' && playersWithoutScorecard.length === 0 ? (
               <>
@@ -883,14 +851,16 @@ export default function ScorecardPlayerSelection() {
             <div className="grid gap-4">
               {filteredParticipants.map((participant: any) => {
                 // Verificar si el participante tiene tarjeta cargada y obtener el scorecard
-                const participantScorecard = scorecards?.find((scorecard: any) => {
-                  if (participant.player_type === 'external') {
-                    return scorecard.external_player_id === participant.external_player_id || 
-                           scorecard.external_player_id === participant.participant_id;
-                  } else {
-                    return scorecard.member_id === participant.member_id || 
-                           scorecard.member_id === participant.participant_id;
-                  }
+                const pk = participantToScorecardKey(participant)
+                const participantScorecard = scorecards?.find((sc: any) => {
+                  if (sc.did_not_present === 1 || sc.did_not_present === true) return false
+                  const sk =
+                    sc.member_id != null && sc.member_id !== ''
+                      ? `member_${Number(sc.member_id)}`
+                      : sc.external_player_id != null && sc.external_player_id !== ''
+                        ? `external_${Number(sc.external_player_id)}`
+                        : null
+                  return sk != null && sk === pk
                 });
                 const hasScorecard = !!participantScorecard;
                 
@@ -972,36 +942,29 @@ export default function ScorecardPlayerSelection() {
                       <div className="flex items-center gap-2">
                                                   <button
                             onClick={() => {
+                              if (tournamentClosed && !hasScorecard) {
+                                alert(TORNEO_CERRADO_ALERT)
+                                return
+                              }
                               if (hasScorecard) {
-                                console.log('🎯 Clicked Ver Tarjeta (filtered list) for participant:', {
-                                  participant_id: participant.participant_id,
-                                  member_id: participant.member_id,
-                                  external_player_id: participant.external_player_id,
-                                  player_name: participant.player_name,
-                                  fullParticipant: participant
-                                });
-                                // Usar el ID correcto dependiendo del tipo de jugador
-                                const searchId = participant.participant_id || participant.member_id || participant.external_player_id;
-                                fetchScorecardDetails(searchId)
+                                fetchScorecardDetails(participant)
                               } else {
-                                console.log('🎯 Clicked Cargar Tarjeta for:', {
-                                  name: participant.player_name,
-                                  participant_id: participant.participant_id,
-                                  member_id: participant.member_id,
-                                  external_player_id: participant.external_player_id,
-                                  navigation_url: `/club/${clubId}/tournaments/${tournamentId}/manual-entry/${participant.participant_id}`
-                                });
-                                
-                                // Usar member_id si participant_id no existe
-                                const playerId = participant.participant_id || participant.member_id || participant.external_player_id;
-                                
+                                const playerId =
+                                  participant.participant_id ||
+                                  participant.member_id ||
+                                  participant.external_player_id
+
                                 if (playerId) {
+                                  if (tournamentClosed) {
+                                    alert(TORNEO_CERRADO_ALERT)
+                                    return
+                                  }
                                   const targetUrl = `/club/${clubId}/tournaments/${tournamentId}/manual-entry/${playerId}`
-                                  console.log('🎯 Navigating to:', targetUrl)
-                                  navigate(targetUrl)
+                                  navigate(targetUrl, {
+                                    state: { manualEntryBack: 'scorecard-selection' as const },
+                                  })
                                 } else {
-                                  console.error('❌ No valid ID found for participant:', participant);
-                                  alert('Error: No se pudo identificar al jugador');
+                                  alert('No se pudo identificar al jugador.')
                                 }
                               }
                             }}
@@ -1020,15 +983,15 @@ export default function ScorecardPlayerSelection() {
               })}
             </div>
             </div>
-          )
-        )}
+          )}
       </div>
 
       {/* Modal de tarjeta */}
       {selectedScorecard && (
-        <ScorecardModal 
-          scorecard={selectedScorecard} 
-          onClose={() => setSelectedScorecard(null)} 
+        <ScorecardModal
+          scorecard={selectedScorecard}
+          onClose={() => setSelectedScorecard(null)}
+          readOnly={tournamentClosed}
         />
       )}
     </div>

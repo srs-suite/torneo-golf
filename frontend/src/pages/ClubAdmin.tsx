@@ -48,7 +48,7 @@ import { UserManagement } from '@/components/UserManagement'
 import { FinancialReportQR } from '@/components/FinancialReportQR'
 import { AagMassSyncPanel } from '@/components/AagMassSyncPanel'
 import { Member } from '@/types/member'
-import { Tournament } from '@/types/tournament'
+import { Tournament, isTournamentStatusClosed, tournamentStatusDisplayLabel } from '@/types/tournament'
 import { toast } from 'react-hot-toast'
 import { formatHcpForDisplay } from '@/utils/scoreUtils'
 import { computeHcpFromIndexSanJeronimo, formatHcpDisplayForClubPlayer } from '@/utils/clubHandicap'
@@ -94,7 +94,7 @@ export function ClubAdmin() {
   const [memberSearchTerm, setMemberSearchTerm] = useState('')
   const [tournamentSearchTerm, setTournamentSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'Activo' | 'Inactivo'>('all')
-  const [tournamentStatusFilter, setTournamentStatusFilter] = useState<'all' | Tournament['status']>('all')
+  const [tournamentStatusFilter, setTournamentStatusFilter] = useState<'all' | 'open' | 'closed'>('all')
   const [clubData, setClubData] = useState<ClubData | null>(null)
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   const [editingIndex, setEditingIndex] = useState<{memberId: number, value: string} | null>(null)
@@ -334,7 +334,10 @@ export function ClubAdmin() {
 
   const filteredTournaments = tournaments.filter(tournament => {
     const matchesSearch = tournament.tournament_name.toLowerCase().includes(tournamentSearchTerm.toLowerCase())
-    const matchesStatus = tournamentStatusFilter === 'all' || tournament.status === tournamentStatusFilter
+    const matchesStatus =
+      tournamentStatusFilter === 'all' ||
+      (tournamentStatusFilter === 'open' && !isTournamentStatusClosed(tournament.status)) ||
+      (tournamentStatusFilter === 'closed' && isTournamentStatusClosed(tournament.status))
     return matchesSearch && matchesStatus
   })
 
@@ -354,29 +357,10 @@ export function ClubAdmin() {
   }, [permissions.canViewMembers, permissions.canViewTournaments, permissions.canViewAccounting, 
       permissions.canViewPhotos, permissions.canViewSettings, permissionsLoading])
 
-  const getStatusColor = (status: Tournament['status']) => {
-    switch (status) {
-      case 'draft': return 'bg-gray-100 text-gray-800'
-      case 'open': return 'bg-green-100 text-green-800'
-      case 'closed': return 'bg-yellow-100 text-yellow-800'
-      case 'in_progress': return 'bg-blue-100 text-blue-800'
-      case 'completed': return 'bg-purple-100 text-purple-800'
-      case 'cancelled': return 'bg-red-100 text-red-800'
-      default: return 'bg-gray-100 text-gray-800'
-    }
-  }
+  const getStatusColor = (status: Tournament['status']) =>
+    isTournamentStatusClosed(status) ? 'bg-amber-100 text-amber-900' : 'bg-green-100 text-green-900'
 
-  const getStatusLabel = (status: Tournament['status']) => {
-    switch (status) {
-      case 'draft': return 'Borrador'
-      case 'open': return 'Abierto'
-      case 'closed': return 'Cerrado'
-      case 'in_progress': return 'En Progreso'
-      case 'completed': return 'Completado'
-      case 'cancelled': return 'Cancelado'
-      default: return status
-    }
-  }
+  const getStatusLabel = (status: Tournament['status']) => tournamentStatusDisplayLabel(status)
 
   const handleEditTournament = (tournament: Tournament) => {
     setSelectedTournament(tournament)
@@ -934,16 +918,12 @@ export function ClubAdmin() {
                     <Filter className="w-4 h-4 text-gray-500" />
                     <select
                       value={tournamentStatusFilter}
-                      onChange={(e) => setTournamentStatusFilter(e.target.value as 'all' | Tournament['status'])}
+                      onChange={(e) => setTournamentStatusFilter(e.target.value as 'all' | 'open' | 'closed')}
                       className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-gray-500 focus:border-transparent"
                     >
-                      <option value="all">Todos los estados</option>
-                      <option value="draft">Borrador</option>
-                      <option value="open">Abierto</option>
-                      <option value="closed">Cerrado</option>
-                      <option value="in_progress">En Progreso</option>
-                      <option value="completed">Completado</option>
-                      <option value="cancelled">Cancelado</option>
+                      <option value="all">Todos</option>
+                      <option value="open">Abierto (en curso o preparación)</option>
+                      <option value="closed">Cerrado (finalizado)</option>
                     </select>
                   </div>
                 </div>

@@ -1745,35 +1745,39 @@ async function getPaymentsSummary(clubId, fromDate, toDate) {
 }
 
 /**
- * Save expense photo from base64
+ * Save expense receipt attachment from base64 data URL (imagen o PDF).
  */
 async function saveExpensePhoto(clubId, base64Data, expenseId) {
     try {
         if (!base64Data) return null;
-        
-        // Parse base64 data (format: data:image/jpeg;base64,/9j/4AAQ...)
-        const matches = base64Data.match(/^data:image\/(\w+);base64,(.+)$/);
-        if (!matches) {
-            throw new Error('Invalid base64 image data');
+
+        let ext;
+        let binaryB64;
+
+        const pdfMatch = /^data:application\/pdf;base64,(.+)$/i.exec(base64Data);
+        const imgMatch = /^data:image\/(\w+);base64,(.+)$/i.exec(base64Data);
+
+        if (pdfMatch) {
+            ext = 'pdf';
+            binaryB64 = pdfMatch[1];
+        } else if (imgMatch) {
+            const imageType = imgMatch[1].toLowerCase();
+            ext = imageType === 'jpeg' ? 'jpg' : imageType;
+            binaryB64 = imgMatch[2];
+        } else {
+            throw new Error('Formato no soportado. Usá imagen (JPG, PNG, etc.) o PDF.');
         }
-        
-        const imageType = matches[1]; // jpeg, png, etc.
-        const imageData = matches[2];
-        
-        // Create uploads/expenses directory if it doesn't exist
+
         const uploadsDir = path.join(__dirname, '..', 'uploads', 'expenses');
         if (!fs.existsSync(uploadsDir)) {
             fs.mkdirSync(uploadsDir, { recursive: true });
         }
-        
-        // Generate unique filename
-        const filename = `expense_${clubId}_${expenseId || Date.now()}_${crypto.randomBytes(8).toString('hex')}.${imageType}`;
+
+        const filename = `expense_${clubId}_${expenseId || Date.now()}_${crypto.randomBytes(8).toString('hex')}.${ext}`;
         const filePath = path.join(uploadsDir, filename);
-        
-        // Write file
-        fs.writeFileSync(filePath, imageData, 'base64');
-        
-        // Return relative path for database storage
+
+        fs.writeFileSync(filePath, binaryB64, 'base64');
+
         return `expenses/${filename}`;
     } catch (error) {
         console.error('❌ Error saving expense photo:', error);
@@ -3891,6 +3895,15 @@ async function assertTournamentHandicapsEditable(courseId, tournamentId) {
     }
 }
 
+/** Tarjetas: solo si el torneo no está en estado final (cerrado / completado / cancelado). */
+async function assertTournamentOpenForScorecards(clubId, tournamentId) {
+    const t = await getTournamentById(clubId, tournamentId);
+    if (!t) throw new Error('Torneo no encontrado');
+    if (isTournamentStatusClosed(t.status)) {
+        throw new Error('El torneo está cerrado: no se pueden crear, modificar ni eliminar tarjetas. Reabrilo desde editar torneo si necesitás corregir algo.');
+    }
+}
+
 /** Al pasar a cerrado: fija índice y HCP de juego en tournament_participants (histórico del torneo). */
 async function finalizeTournamentHandicapsSnapshot(courseId, tournamentId) {
     try {
@@ -3933,19 +3946,26 @@ async function updateTournament(courseId, tournamentId, tournamentData) {
     const payloadKeys = Object.keys(tournamentData).filter(k => tournamentData[k] !== undefined);
 
     if (isTournamentStatusClosed(existing.status)) {
-        const onlyReopen = payloadKeys.length === 1 && tournamentData.status === 'open';
-        if (!onlyReopen) {
-            throw new Error('El torneo está cerrado: no se puede modificar. Para reabrir, cambiá el estado únicamente a Abierto.');
+        if (tournamentData.status !== 'open') {
+            throw new Error(
+                'El torneo está cerrado: guardá primero el estado en Abierto para reabrirlo (podés cambiar el resto en el mismo guardado).'
+            );
         }
         await executeQuery(
             `UPDATE tournaments SET status = 'open', updated_at = CURRENT_TIMESTAMP WHERE course_id = ? AND tournament_id = ?`,
             [courseId, tournamentId]
         );
-        return await getTournamentById(courseId, tournamentId);
+        const rest = { ...tournamentData };
+        delete rest.status;
+        const restKeys = Object.keys(rest).filter((k) => rest[k] !== undefined);
+        if (restKeys.length === 0) {
+            return await getTournamentById(courseId, tournamentId);
+        }
+        return await updateTournament(courseId, tournamentId, rest);
     }
 
     const nextStatus = tournamentData.status !== undefined ? tournamentData.status : existing.status;
-    const isClosing = String(nextStatus).toLowerCase() === 'closed' && !isTournamentStatusClosed(existing.status);
+    const isClosing = isTournamentStatusClosed(nextStatus) && !isTournamentStatusClosed(existing.status);
 
     const maybeSyncTournamentPayments = async (result) => {
         if (result == null) return result;
@@ -4140,7 +4160,7 @@ async function deleteTournament(courseId, tournamentId) {
 
 async function updateTournamentStatus(courseId, tournamentId, status) {
     const existing = await getTournamentById(courseId, tournamentId);
-    const isClosing = String(status).toLowerCase() === 'closed' && existing && !isTournamentStatusClosed(existing.status);
+    const isClosing = existing && isTournamentStatusClosed(status) && !isTournamentStatusClosed(existing.status);
     const query = `
         UPDATE tournaments SET status = ?, updated_at = CURRENT_TIMESTAMP
         WHERE course_id = ? AND tournament_id = ?
@@ -7139,6 +7159,8 @@ async function saveScorecard(clubId, tournamentId, scorecardData) {
     console.log('📝 Saving scorecard:', { clubId, tournamentId, playerData: scorecardData });
     
     try {
+        await assertTournamentOpenForScorecards(clubId, tournamentId);
+
         const {
             member_id,
             external_player_id,
@@ -7309,8 +7331,8 @@ async function getScorecardsByTournament(clubId, tournamentId, includeDidNotPres
         SELECT 
             s.*,
             COALESCE(CONCAT(m.first_name, ' ', m.last_name), ep.full_name) as player_name,
-            COALESCE(m.handicap_index, ep.handicap_index) as handicap_index,
-            COALESCE(m.handicap_local, ep.handicap_local) as handicap_local,
+            COALESCE(tp.handicap_index_used, m.handicap_index, ep.handicap_index) as handicap_index,
+            COALESCE(tp.handicap_used, m.handicap_local, ep.handicap_local) as handicap_local,
             COALESCE(tp.handicap_index_used, m.handicap_index, ep.handicap_index) as handicap_index_used_for_net,
             COALESCE(m.gender, ep.gender) as gender,
             m.member_number,
@@ -7368,10 +7390,16 @@ async function getScorecardByPlayer(clubId, tournamentId, playerId, isExternal =
             COALESCE(m.first_name, ep.first_name) as player_first_name,
             COALESCE(m.last_name, ep.last_name) as player_last_name,
             COALESCE(CONCAT(m.first_name, ' ', m.last_name), CONCAT(ep.first_name, ' ', ep.last_name)) as player_name,
-            m.handicap_index
+            COALESCE(tp.handicap_index_used, m.handicap_index, ep.handicap_index) as handicap_index,
+            COALESCE(tp.handicap_used, m.handicap_local, ep.handicap_local) as handicap_local,
+            COALESCE(tp.handicap_index_used, m.handicap_index, ep.handicap_index) as handicap_index_used_for_net,
+            tp.handicap_used AS participant_handicap_used
         FROM scorecards s
         LEFT JOIN members m ON s.member_id = m.member_id
         LEFT JOIN external_players ep ON s.external_player_id = ep.external_id
+        LEFT JOIN tournament_participants tp ON tp.tournament_id = s.tournament_id 
+            AND ((tp.member_id = s.member_id AND s.member_id IS NOT NULL) 
+                OR (tp.external_player_id = s.external_player_id AND s.external_player_id IS NOT NULL))
         WHERE s.tournament_id = ? AND s.course_id = ? 
         AND ${isExternal ? 's.external_player_id = ?' : 's.member_id = ?'}
         ORDER BY s.updated_at DESC
@@ -7413,6 +7441,14 @@ async function updateScorecard(clubId, scorecardId, updateData) {
     console.log('📝 Updating scorecard:', { clubId, scorecardId, updateData });
     
     try {
+        const loc = await executeQuery(
+            'SELECT tournament_id FROM scorecards WHERE scorecard_id = ? AND course_id = ? LIMIT 1',
+            [scorecardId, clubId]
+        );
+        const locRows = loc.rows || loc;
+        if (!locRows || !locRows[0]) throw new Error('Tarjeta no encontrada');
+        await assertTournamentOpenForScorecards(clubId, locRows[0].tournament_id);
+
         const { scores, entry_notes, verified_card } = updateData;
 
         if (scores) {
@@ -7471,6 +7507,14 @@ async function deleteScorecard(clubId, scorecardId) {
     console.log('🗑️ Deleting scorecard:', { clubId, scorecardId });
     
     try {
+        const loc = await executeQuery(
+            'SELECT tournament_id FROM scorecards WHERE scorecard_id = ? AND course_id = ? LIMIT 1',
+            [scorecardId, clubId]
+        );
+        const locRows = loc.rows || loc;
+        if (!locRows || !locRows[0]) throw new Error('Tarjeta no encontrada');
+        await assertTournamentOpenForScorecards(clubId, locRows[0].tournament_id);
+
         // Delete hole scores first
         await executeQuery('DELETE FROM scorecard_holes WHERE scorecard_id = ?', [scorecardId]);
         
@@ -7514,8 +7558,18 @@ async function getScorecardForPrint(clubId, tournamentId, scorecardId) {
                 s.*,
                 COALESCE(CONCAT(m.first_name, ' ', m.last_name), ep.full_name) as player_name,
                 m.member_number,
-                COALESCE(m.handicap_index, ep.handicap_index) as handicap_index,
-                COALESCE(m.handicap_local, ep.handicap_local) as handicap_local,
+                COALESCE(
+                    (SELECT tp2.handicap_index_used FROM tournament_participants tp2
+                     WHERE ${participantMatchSql}
+                     ORDER BY tp2.participation_id DESC LIMIT 1),
+                    m.handicap_index, ep.handicap_index
+                ) as handicap_index,
+                COALESCE(
+                    (SELECT tp2.handicap_used FROM tournament_participants tp2
+                     WHERE ${participantMatchSql}
+                     ORDER BY tp2.participation_id DESC LIMIT 1),
+                    m.handicap_local, ep.handicap_local
+                ) as handicap_local,
                 t.tournament_name,
                 t.tournament_date,
                 (SELECT tp2.tee_time FROM tournament_participants tp2

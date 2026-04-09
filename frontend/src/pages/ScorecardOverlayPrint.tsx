@@ -59,31 +59,37 @@ const PLANCHA_FIELD: CSSProperties = {
 }
 
 const FIELD_POS = {
+  /** Etiquetas papel común (izquierda del valor). */
+  labelJugador: { x: 2, y: 2, w: 14, h: 5 },
   playerName: { x: 17, y: 2, w: 95, h: 5 },
   teeHole: { x: 120, y: 2, w: 20, h: 5 },
   teeTime: { x: 145, y: 2, w: 22, h: 5 },
 
-  memberNumber: { x: 17, y: 9, w: 42, h: 5 },
+  labelMatricula: { x: 2, y: 9, w: 14, h: 5 },
+  memberNumber: { x: 17, y: 9, w: 38, h: 5 },
+  labelHcp: { x: 57, y: 9, w: 17, h: 5 },
   handicap: { x: 77, y: 9, w: 16, h: 5 },
-  tournamentName: { x: 116, y: 9, w: 50, h: 5 },
-
-  dateDay: { x: 172, y: 9, w: 6, h: 5 },
-  dateMonth: { x: 179, y: 9, w: 6, h: 5 },
-  dateYear: { x: 187, y: 9, w: 8, h: 5 },
+  labelTorneo: { x: 95, y: 9, w: 18, h: 5 },
+  tournamentName: { x: 115, y: 9, w: 40, h: 5 },
+  labelFecha: { x: 157, y: 9, w: 15, h: 5 },
+  /** Fecha en un solo bloque DD/MM/AAAA */
+  dateCombined: { x: 173, y: 9, w: 25, h: 5 },
 }
 
 const FIELD_TUNE = {
+  labelJugador: { x: 0, y: 0 },
   playerName: { x: 0, y: 0 },
   teeHole: { x: 0, y: 0 },
   teeTime: { x: 0, y: 0 },
 
+  labelMatricula: { x: 0, y: 0 },
   memberNumber: { x: 0, y: 0 },
+  labelHcp: { x: 0, y: 0 },
   handicap: { x: 0, y: 0 },
+  labelTorneo: { x: 0, y: 0 },
   tournamentName: { x: 0, y: 0 },
-
-  dateDay: { x: 0, y: 0 },
-  dateMonth: { x: 0, y: 0 },
-  dateYear: { x: 0, y: 0 },
+  labelFecha: { x: 0, y: 0 },
+  dateCombined: { x: 0, y: 0 },
 }
 
 const FONT = {
@@ -112,6 +118,15 @@ function datePartsForPlancha(data: any): { day: string; month: string; year: str
     if (m) return { day: m[3], month: m[2], year: m[1] }
   }
   return parseDatePartsForPrint(data?.tournament_date || data?.created_at)
+}
+
+/** Fecha para plancha en papel común: DD/MM/AAAA con barras. */
+function dateSlashForPlancha(data: any): string {
+  const { day, month, year } = datePartsForPlancha(data)
+  const d = String(day).padStart(2, '0')
+  const mo = String(month).padStart(2, '0')
+  const y = String(year).trim()
+  return `${d}/${mo}/${y}`
 }
 
 function readTeeStart(data: any): string {
@@ -210,7 +225,6 @@ function PositionedField({
 }
 
 function PhysicalPlanchaOverlay({ data, calibrationMode }: { data: any; calibrationMode: boolean }) {
-  const dateParts = datePartsForPlancha(data)
   const playerName = safeText(
     data?.player_name ??
       data?.participant_name ??
@@ -279,7 +293,7 @@ function PhysicalPlanchaOverlay({ data, calibrationMode }: { data: any; calibrat
             }}
           />
 
-          {[17, 77, 116, 172, 179, 187].map((x) => (
+          {[2, 17, 57, 77, 95, 115, 157, 173].map((x) => (
             <div
               key={`guide-x-${x}`}
               style={{
@@ -294,6 +308,21 @@ function PhysicalPlanchaOverlay({ data, calibrationMode }: { data: any; calibrat
           ))}
         </div>
       )}
+
+      <PositionedField
+        x={FIELD_POS.labelJugador.x}
+        y={FIELD_POS.labelJugador.y}
+        w={FIELD_POS.labelJugador.w}
+        h={FIELD_POS.labelJugador.h}
+        tuneX={FIELD_TUNE.labelJugador.x}
+        tuneY={FIELD_TUNE.labelJugador.y}
+        fontSize={FONT.small}
+        fontWeight={600}
+        alignItems="flex-end"
+        lineHeight={1}
+      >
+        Jugador:
+      </PositionedField>
 
       <PositionedField
         x={FIELD_POS.playerName.x}
@@ -341,6 +370,21 @@ function PhysicalPlanchaOverlay({ data, calibrationMode }: { data: any; calibrat
       </PositionedField>
 
       <PositionedField
+        x={FIELD_POS.labelMatricula.x}
+        y={FIELD_POS.labelMatricula.y}
+        w={FIELD_POS.labelMatricula.w}
+        h={FIELD_POS.labelMatricula.h}
+        tuneX={FIELD_TUNE.labelMatricula.x}
+        tuneY={FIELD_TUNE.labelMatricula.y}
+        fontSize={FONT.small}
+        fontWeight={600}
+        alignItems="flex-end"
+        lineHeight={1}
+      >
+        Matrícula:
+      </PositionedField>
+
+      <PositionedField
         x={FIELD_POS.memberNumber.x}
         y={FIELD_POS.memberNumber.y}
         w={FIELD_POS.memberNumber.w}
@@ -351,6 +395,23 @@ function PhysicalPlanchaOverlay({ data, calibrationMode }: { data: any; calibrat
         fontWeight={600}
       >
         {memberNumber}
+      </PositionedField>
+
+      <PositionedField
+        x={FIELD_POS.labelHcp.x}
+        y={FIELD_POS.labelHcp.y}
+        w={FIELD_POS.labelHcp.w}
+        h={FIELD_POS.labelHcp.h}
+        tuneX={FIELD_TUNE.labelHcp.x}
+        tuneY={FIELD_TUNE.labelHcp.y}
+        fontSize={FONT.small}
+        fontWeight={600}
+        justify="flex-end"
+        align="right"
+        alignItems="center"
+        lineHeight={1}
+      >
+        HCP:
       </PositionedField>
 
       <PositionedField
@@ -369,6 +430,21 @@ function PhysicalPlanchaOverlay({ data, calibrationMode }: { data: any; calibrat
       </PositionedField>
 
       <PositionedField
+        x={FIELD_POS.labelTorneo.x}
+        y={FIELD_POS.labelTorneo.y}
+        w={FIELD_POS.labelTorneo.w}
+        h={FIELD_POS.labelTorneo.h}
+        tuneX={FIELD_TUNE.labelTorneo.x}
+        tuneY={FIELD_TUNE.labelTorneo.y}
+        fontSize={FONT.small}
+        fontWeight={600}
+        alignItems="flex-end"
+        lineHeight={1}
+      >
+        Torneo:
+      </PositionedField>
+
+      <PositionedField
         x={FIELD_POS.tournamentName.x}
         y={FIELD_POS.tournamentName.y}
         w={FIELD_POS.tournamentName.w}
@@ -382,48 +458,34 @@ function PhysicalPlanchaOverlay({ data, calibrationMode }: { data: any; calibrat
       </PositionedField>
 
       <PositionedField
-        x={FIELD_POS.dateDay.x}
-        y={FIELD_POS.dateDay.y}
-        w={FIELD_POS.dateDay.w}
-        h={FIELD_POS.dateDay.h}
-        tuneX={FIELD_TUNE.dateDay.x}
-        tuneY={FIELD_TUNE.dateDay.y}
+        x={FIELD_POS.labelFecha.x}
+        y={FIELD_POS.labelFecha.y}
+        w={FIELD_POS.labelFecha.w}
+        h={FIELD_POS.labelFecha.h}
+        tuneX={FIELD_TUNE.labelFecha.x}
+        tuneY={FIELD_TUNE.labelFecha.y}
         fontSize={FONT.small}
         fontWeight={600}
-        justify="center"
-        align="center"
+        alignItems="flex-end"
+        lineHeight={1}
       >
-        {dateParts.day}
+        Fecha:
       </PositionedField>
 
       <PositionedField
-        x={FIELD_POS.dateMonth.x}
-        y={FIELD_POS.dateMonth.y}
-        w={FIELD_POS.dateMonth.w}
-        h={FIELD_POS.dateMonth.h}
-        tuneX={FIELD_TUNE.dateMonth.x}
-        tuneY={FIELD_TUNE.dateMonth.y}
+        x={FIELD_POS.dateCombined.x}
+        y={FIELD_POS.dateCombined.y}
+        w={FIELD_POS.dateCombined.w}
+        h={FIELD_POS.dateCombined.h}
+        tuneX={FIELD_TUNE.dateCombined.x}
+        tuneY={FIELD_TUNE.dateCombined.y}
         fontSize={FONT.small}
         fontWeight={600}
-        justify="center"
-        align="center"
+        justify="flex-start"
+        align="left"
+        whiteSpace="nowrap"
       >
-        {dateParts.month}
-      </PositionedField>
-
-      <PositionedField
-        x={FIELD_POS.dateYear.x}
-        y={FIELD_POS.dateYear.y}
-        w={FIELD_POS.dateYear.w}
-        h={FIELD_POS.dateYear.h}
-        tuneX={FIELD_TUNE.dateYear.x}
-        tuneY={FIELD_TUNE.dateYear.y}
-        fontSize={FONT.small}
-        fontWeight={600}
-        justify="center"
-        align="center"
-      >
-        {dateParts.year}
+        {dateSlashForPlancha(data)}
       </PositionedField>
     </div>
   )
@@ -729,6 +791,9 @@ export default function ScorecardOverlayPrint() {
   }
 
   const okCount = sheets.filter((s) => 'data' in s).length
+  /** Más de un renglón: apilar en columna para recortar y pegar cada tira en la tarjeta. */
+  const stackVertical = sheets.length > 1
+  const STRIP_GAP_MM = 6
 
   return (
     <>
@@ -790,6 +855,18 @@ export default function ScorecardOverlayPrint() {
               -webkit-print-color-adjust: economy !important;
             }
 
+            /* Varias planchas: una hoja continua; saltos de página solo entre tiras. */
+            .overlay-print-page.overlay-print-page--stack {
+              height: auto !important;
+              min-height: 0 !important;
+              page-break-after: auto !important;
+            }
+
+            .plancha-print-strip {
+              break-inside: avoid !important;
+              page-break-inside: avoid !important;
+            }
+
             .plancha-print-body {
               display: flex !important;
               justify-content: center !important;
@@ -846,7 +923,13 @@ export default function ScorecardOverlayPrint() {
 
         {!embed && (
           <p className="max-w-3xl mx-auto px-4 text-xs text-amber-900 mb-4">
-            <strong>Impresión</strong>: solo el texto de datos, para usar sobre plancha/tarjeta ya impresa. En pantalla el recuadro punteado es guía del tamaño ({CARD_W_MM}×{CARD_H_MM} mm). Parámetros: <strong>?topmm=</strong>, <strong>?leftmm=</strong>, <strong>?scale=</strong>, <strong>?calibrate=1</strong>. Márgenes ninguno, escala <strong>100 %</strong>.
+            <strong>Impresión</strong>: solo el texto de datos, para usar sobre plancha/tarjeta ya impresa. En pantalla el recuadro punteado es guía del tamaño ({CARD_W_MM}×{CARD_H_MM} mm).{' '}
+            {stackVertical ? (
+              <>
+                Con <strong>varios jugadores</strong>, las planchas salen <strong>una debajo de la otra</strong> en el mismo papel; podés recortar cada banda y pegarla en la tarjeta.
+              </>
+            ) : null}{' '}
+            Parámetros: <strong>?topmm=</strong>, <strong>?leftmm=</strong>, <strong>?scale=</strong>, <strong>?calibrate=1</strong>. Márgenes ninguno, escala <strong>100 %</strong>.
           </p>
         )}
         {embed && (
@@ -857,68 +940,144 @@ export default function ScorecardOverlayPrint() {
       </div>
 
       <div id="overlay-print-root" className="bg-gray-200 print:bg-transparent pb-8 print:pb-0">
-        {sheets.map((sheet, idx) => (
+        {stackVertical ? (
           <div
-            key={sheet.rowKey}
-            className="overlay-print-page mx-auto mb-8 print:mb-0 print:mx-0 bg-white print:bg-transparent"
+            className="overlay-print-page overlay-print-page--stack mx-auto mb-8 print:mb-0 print:mx-0 bg-white print:bg-transparent"
             style={{
               width: mm(A4_W_MM),
-              height: mm(A4_H_MM),
-              minHeight: mm(A4_H_MM),
-              pageBreakAfter: idx < sheets.length - 1 ? 'always' : 'auto',
+              height: 'auto',
+              minHeight: 0,
             }}
           >
-            {'error' in sheet ? (
-              <div className="p-6 text-sm text-red-700">
-                {sheet.source === 'participant'
-                  ? 'Participante'
-                  : sheet.source === 'preview-member'
-                    ? 'Socio'
-                    : sheet.source === 'preview-external'
-                      ? 'Externo'
-                      : 'Tarjeta'}{' '}
-                #{sheet.id}: {sheet.error}
-              </div>
-            ) : (
+            {sheets.map((sheet, idx) => (
               <div
-                className="plancha-print-body"
+                key={sheet.rowKey}
+                className="plancha-print-strip"
                 style={{
-                  width: mm(A4_W_MM),
-                  minHeight: mm(A4_H_MM),
-                  boxSizing: 'border-box',
-                  margin: 0,
-                  paddingTop: mm(topMarginMm),
-                  display: 'flex',
-                  justifyContent: 'center',
-                  alignItems: 'flex-start',
+                  breakInside: 'avoid',
+                  pageBreakInside: 'avoid',
+                  borderBottom:
+                    idx < sheets.length - 1 ? '0.35mm dashed rgb(120,120,120)' : undefined,
+                  marginBottom: idx < sheets.length - 1 ? mm(STRIP_GAP_MM) : 0,
+                  paddingBottom: idx < sheets.length - 1 ? mm(2) : 0,
                 }}
               >
+                {'error' in sheet ? (
+                  <div className="p-6 text-sm text-red-700">
+                    {sheet.source === 'participant'
+                      ? 'Participante'
+                      : sheet.source === 'preview-member'
+                        ? 'Socio'
+                        : sheet.source === 'preview-external'
+                          ? 'Externo'
+                          : 'Tarjeta'}{' '}
+                    #{sheet.id}: {sheet.error}
+                  </div>
+                ) : (
+                  <div
+                    className="plancha-print-body"
+                    style={{
+                      width: mm(A4_W_MM),
+                      minHeight: 0,
+                      boxSizing: 'border-box',
+                      margin: 0,
+                      paddingTop: mm(idx === 0 ? topMarginMm : 3),
+                      display: 'flex',
+                      justifyContent: 'center',
+                      alignItems: 'flex-start',
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: mm(finalCardWidthMm),
+                        height: mm(finalCardHeightMm),
+                        overflow: 'hidden',
+                        flexShrink: 0,
+                        position: 'relative',
+                        transform: `translateX(${leftMarginMm}mm)`,
+                        transformOrigin: 'top center',
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: mm(CARD_W_MM),
+                          height: mm(CARD_H_MM),
+                          transform: `scale(${finalScale})`,
+                          transformOrigin: 'top left',
+                        }}
+                      >
+                        <PhysicalPlanchaOverlay data={sheet.data} calibrationMode={calibrationMode} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          sheets.map((sheet, idx) => (
+            <div
+              key={sheet.rowKey}
+              className="overlay-print-page mx-auto mb-8 print:mb-0 print:mx-0 bg-white print:bg-transparent"
+              style={{
+                width: mm(A4_W_MM),
+                height: mm(A4_H_MM),
+                minHeight: mm(A4_H_MM),
+                pageBreakAfter: idx < sheets.length - 1 ? 'always' : 'auto',
+              }}
+            >
+              {'error' in sheet ? (
+                <div className="p-6 text-sm text-red-700">
+                  {sheet.source === 'participant'
+                    ? 'Participante'
+                    : sheet.source === 'preview-member'
+                      ? 'Socio'
+                      : sheet.source === 'preview-external'
+                        ? 'Externo'
+                        : 'Tarjeta'}{' '}
+                  #{sheet.id}: {sheet.error}
+                </div>
+              ) : (
                 <div
+                  className="plancha-print-body"
                   style={{
-                    width: mm(finalCardWidthMm),
-                    height: mm(finalCardHeightMm),
-                    overflow: 'hidden',
-                    flexShrink: 0,
-                    position: 'relative',
-                    transform: `translateX(${leftMarginMm}mm)`,
-                    transformOrigin: 'top center',
+                    width: mm(A4_W_MM),
+                    minHeight: mm(A4_H_MM),
+                    boxSizing: 'border-box',
+                    margin: 0,
+                    paddingTop: mm(topMarginMm),
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'flex-start',
                   }}
                 >
                   <div
                     style={{
-                      width: mm(CARD_W_MM),
-                      height: mm(CARD_H_MM),
-                      transform: `scale(${finalScale})`,
-                      transformOrigin: 'top left',
+                      width: mm(finalCardWidthMm),
+                      height: mm(finalCardHeightMm),
+                      overflow: 'hidden',
+                      flexShrink: 0,
+                      position: 'relative',
+                      transform: `translateX(${leftMarginMm}mm)`,
+                      transformOrigin: 'top center',
                     }}
                   >
-                    <PhysicalPlanchaOverlay data={sheet.data} calibrationMode={calibrationMode} />
+                    <div
+                      style={{
+                        width: mm(CARD_W_MM),
+                        height: mm(CARD_H_MM),
+                        transform: `scale(${finalScale})`,
+                        transformOrigin: 'top left',
+                      }}
+                    >
+                      <PhysicalPlanchaOverlay data={sheet.data} calibrationMode={calibrationMode} />
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
-          </div>
-        ))}
+              )}
+            </div>
+          ))
+        )}
       </div>
     </>
   )

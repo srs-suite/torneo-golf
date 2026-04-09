@@ -139,3 +139,18 @@ export interface TournamentStats {
   total_revenue: number
   average_handicap: number
 }
+
+/** Estados finales: no editar tarjetas; HCP del torneo queda en tournament_participants. */
+export function isTournamentStatusClosed(
+  status: Tournament['status'] | string | null | undefined
+): boolean {
+  if (status == null || status === '') return false
+  const s = String(status).toLowerCase()
+  return s === 'closed' || s === 'completed' || s === 'cancelled'
+}
+
+export function tournamentStatusDisplayLabel(
+  status: Tournament['status'] | string | undefined
+): 'Abierto' | 'Cerrado' {
+  return isTournamentStatusClosed(status) ? 'Cerrado' : 'Abierto'
+}

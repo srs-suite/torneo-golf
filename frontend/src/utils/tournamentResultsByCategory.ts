@@ -1,7 +1,8 @@
 /**
  * Misma lógica que TournamentResults: categorías + orden por neto (scratch por gross).
  * Las **bandas de categoría** usan índice primero; sin índice útil, HCP local.
- * **Empates:** mejor vuelta (`back_nine` de la tarjeta, como en pantalla), luego ida, luego gross.
+ * **Empates (neto y gross/scratch):** mejor vuelta (`back_nine`); si empatan → gross en hoyos 13–18;
+ *   si empatan → gross en 16–18; si empatan → menor `handicap_index`; luego ida, luego gross total.
  * Sin dependencias de React ni iconos.
  */
 
@@ -15,6 +16,10 @@ export interface CategoryResult {
   total_net: number
   front_nine: number
   back_nine: number
+  /** Gross en hoyos 13–18 (últimos 6 de la vuelta); null si falta algún golpe en ese tramo */
+  vuelta_last6_gross: number | null
+  /** Gross en hoyos 16–18 (últimos 3 de la vuelta); null si falta algún golpe en ese tramo */
+  vuelta_last3_gross: number | null
   member_number?: string
   club_name?: string
 }
@@ -86,10 +91,60 @@ export function computeNetForResultsRow(scorecard: any, categoryId: string): num
   return gross - hcpStrokes
 }
 
-/** Menor net (redondeado al entero) gana; empate → mejor 2.ª vuelta (menor `back_nine`), luego ida, luego gross. */
+/**
+ * Suma golpes gross en [firstHole, lastHole] usando `hole_scores` o `scores`.
+ * null si falta algún hoyo o el valor no es un entero de golpes válido (> 0).
+ */
+export function sumGrossStrokesHoleRange(
+  scorecard: any,
+  firstHole: number,
+  lastHole: number
+): number | null {
+  const hs = scorecard?.hole_scores ?? scorecard?.scores
+  if (!hs || typeof hs !== 'object') return null
+  let sum = 0
+  for (let h = firstHole; h <= lastHole; h++) {
+    const raw = hs[h] ?? hs[String(h)]
+    const s = Number(raw)
+    if (!Number.isFinite(s) || s < 1) return null
+    sum += Math.round(s)
+  }
+  return sum
+}
+
+function handicapIndexForTiebreak(v: unknown): number | null {
+  if (v === null || v === undefined) return null
+  if (typeof v === 'string') {
+    if (v.trim() === '') return null
+    const n = Number(v)
+    return Number.isFinite(n) ? n : null
+  }
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
+/** Menor net gana; empate fino en net; luego mejor vuelta; luego 13–18; 16–18; menor índice; ida; gross. */
 export function compareCategoryResults(
-  a: Pick<CategoryResult, 'total_net' | 'back_nine' | 'front_nine' | 'total_gross'>,
-  b: Pick<CategoryResult, 'total_net' | 'back_nine' | 'front_nine' | 'total_gross'>
+  a: Pick<
+    CategoryResult,
+    | 'total_net'
+    | 'back_nine'
+    | 'front_nine'
+    | 'total_gross'
+    | 'handicap_index'
+    | 'vuelta_last6_gross'
+    | 'vuelta_last3_gross'
+  >,
+  b: Pick<
+    CategoryResult,
+    | 'total_net'
+    | 'back_nine'
+    | 'front_nine'
+    | 'total_gross'
+    | 'handicap_index'
+    | 'vuelta_last6_gross'
+    | 'vuelta_last3_gross'
+  >
 ): number {
   const na = Math.round(Number(a.total_net))
   const nb = Math.round(Number(b.total_net))
@@ -98,6 +153,31 @@ export function compareCategoryResults(
   if (dNetFine !== 0) return dNetFine < 0 ? -1 : 1
   const dBack = Number(a.back_nine) - Number(b.back_nine)
   if (dBack !== 0) return dBack
+
+  const a6 = a.vuelta_last6_gross
+  const b6 = b.vuelta_last6_gross
+  if (a6 != null && b6 != null) {
+    const d6 = a6 - b6
+    if (d6 !== 0) return d6
+  } else if (a6 != null && b6 == null) return -1
+  else if (a6 == null && b6 != null) return 1
+
+  const a3 = a.vuelta_last3_gross
+  const b3 = b.vuelta_last3_gross
+  if (a3 != null && b3 != null) {
+    const d3 = a3 - b3
+    if (d3 !== 0) return d3
+  } else if (a3 != null && b3 == null) return -1
+  else if (a3 == null && b3 != null) return 1
+
+  const ia = handicapIndexForTiebreak(a.handicap_index)
+  const ib = handicapIndexForTiebreak(b.handicap_index)
+  if (ia != null && ib != null) {
+    const dIdx = ia - ib
+    if (dIdx !== 0) return dIdx
+  } else if (ia != null && ib == null) return -1
+  else if (ia == null && ib != null) return 1
+
   const dFront = Number(a.front_nine) - Number(b.front_nine)
   if (dFront !== 0) return dFront
   return Number(a.total_gross) - Number(b.total_gross)
@@ -443,6 +523,8 @@ export function computeResultsByCategory(
         total_net: Math.round(rawNet),
         front_nine: ida,
         back_nine: vuelta,
+        vuelta_last6_gross: sumGrossStrokesHoleRange(scorecard, 13, 18),
+        vuelta_last3_gross: sumGrossStrokesHoleRange(scorecard, 16, 18),
         member_number: (scorecard as any).member_number,
         club_name: (scorecard as any).club_name,
         position: 0,

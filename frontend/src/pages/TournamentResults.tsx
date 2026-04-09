@@ -10,6 +10,7 @@ import {
   dedupeScorecardsForResults,
   getEffectiveHcpForCategory,
   normalizeIdaVueltaForResults,
+  sumGrossStrokesHoleRange,
 } from '@/utils/tournamentResultsByCategory';
 
 interface CategoryResult {
@@ -22,6 +23,8 @@ interface CategoryResult {
   total_net: number;
   front_nine: number;
   back_nine: number;
+  vuelta_last6_gross: number | null;
+  vuelta_last3_gross: number | null;
   member_number?: string;
   club_name?: string;
 }
@@ -369,6 +372,8 @@ export default function TournamentResults() {
             total_net: Math.round(rawNet),
             front_nine: ida,
             back_nine: vuelta,
+            vuelta_last6_gross: sumGrossStrokesHoleRange(scorecard, 13, 18),
+            vuelta_last3_gross: sumGrossStrokesHoleRange(scorecard, 16, 18),
             member_number: (scorecard as any).member_number,
             club_name: (scorecard as any).club_name,
             position: 0,
@@ -573,7 +578,12 @@ export default function TournamentResults() {
 
         {/* Nota al pie */}
         <div className="mt-8 text-center text-sm text-gray-500 print:mt-12">
-          <p>Resultados ordenados por score neto (Gross − HCP; si índice negativo: Gross + HCP). Empate en neto: gana la mejor vuelta (menor golpes). Ida/vuelta se ajustan al gross si falta cargar una mitad.</p>
+          <p>
+            Resultados por score neto (Gross − HCP; índice negativo: Gross + HCP). Empates en neto (o en gross en Scratch):
+            mejor vuelta (menor golpes en la segunda mitad); si empatan, menor gross en hoyos 13–18; si empatan, en 16–18;
+            si empatan, menor handicap índice; luego mejor ida y gross total. Si en un tramo (13–18 o 16–18) solo uno
+            tiene todos los golpes cargados por hoyo, se lo favorece en ese paso. Ida/vuelta se ajustan al gross si falta cargar una mitad.
+          </p>
           <p className="mt-1">Generado el {new Date().toLocaleDateString('es-ES')} a las {new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false })}</p>
         </div>
       </div>

@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { ArrowLeft, Save, CheckCircle2, AlertCircle, Eye, Camera, Upload } from 'lucide-react'
 import { useTournaments, useTournamentParticipants } from '@/hooks/useTournaments'
 import { useSaveScorecard, useTournamentScorecards } from '@/hooks/useScorecards'
 import { useQuery } from '@tanstack/react-query'
 import { getScoreStyle } from '@/utils/scoreUtils'
+import { isTournamentStatusClosed } from '@/types/tournament'
+import { TournamentClosedNotice, TORNEO_CERRADO_ALERT } from '@/components/TournamentClosedNotice'
 // Score styling moved to shared utility
 
 interface ManualScorecardData {
@@ -26,9 +28,13 @@ interface CourseHole {
   description: string | null
 }
 
+type ManualEntryBackState = 'scorecard-history' | 'scorecard-selection'
+
 export default function ManualScorecardEntry() {
   const { clubId, tournamentId, playerId } = useParams<{ clubId: string; tournamentId: string; playerId?: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
+  const manualEntryBack = (location.state as { manualEntryBack?: ManualEntryBackState } | null)?.manualEntryBack
   
   const clubIdNum = clubId ? parseInt(clubId) : 0
   const tournamentIdNum = tournamentId ? parseInt(tournamentId) : 0
@@ -53,6 +59,7 @@ export default function ManualScorecardEntry() {
   })
   
   const tournament = tournaments?.find(t => t.tournament_id === tournamentIdNum)
+  const tournamentClosed = tournament ? isTournamentStatusClosed(tournament.status) : false
   
   const [selectedPlayer, setSelectedPlayer] = useState<any>(null)
   const [searchTerm, setSearchTerm] = useState('')
@@ -340,6 +347,10 @@ export default function ManualScorecardEntry() {
   }
 
   const handleSaveScorecard = async () => {
+    if (tournamentClosed) {
+      alert(TORNEO_CERRADO_ALERT)
+      return
+    }
     if (!validateScorecard()) {
       alert('Por favor complete al menos un hoyo')
       return
@@ -373,7 +384,7 @@ export default function ManualScorecardEntry() {
     saveScorecard.mutate(data, {
       onSuccess: () => {
         console.log('✅ Tarjeta guardada exitosamente')
-        navigate(`/club/${clubId}/tournaments/${tournamentId}/scorecard-selection`)
+        navigate(`/club/${clubId}/tournaments/${tournamentId}/scorecard-selection`, { replace: true })
       },
       onError: (error) => {
         console.error('❌ Error al guardar tarjeta:', error)
@@ -397,6 +408,15 @@ export default function ManualScorecardEntry() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {tournamentClosed && (
+        <TournamentClosedNotice layout="bar">
+          <span>
+            Las tarjetas y el HCP del torneo son solo lectura. Podés <strong>ver</strong> e <strong>imprimir</strong> desde la lista de
+            tarjetas. Para editar datos, reabrí el torneo en{' '}
+            <strong>Administración → Torneos → Editar → Abierto</strong>.
+          </span>
+        </TournamentClosedNotice>
+      )}
       {/* Header */}
       <div className="bg-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -404,11 +424,11 @@ export default function ManualScorecardEntry() {
             <div className="flex items-center gap-4">
               <button
                 onClick={() => {
-                  if (playerId) {
-                    // Si viene de la selección de jugadores, regresar ahí
-                    navigate(`/club/${clubId}/tournaments/${tournamentId}/scorecard-selection`)
+                  if (manualEntryBack === 'scorecard-history') {
+                    navigate(`/club/${clubId}/tournaments/${tournamentId}/scorecards`, { replace: true })
+                  } else if (playerId) {
+                    navigate(`/club/${clubId}/tournaments/${tournamentId}/scorecard-selection`, { replace: true })
                   } else {
-                    // Si accedió directamente, ir al admin
                     navigate(`/club/${clubId}/admin?tab=tournaments`)
                   }
                 }}
@@ -426,15 +446,18 @@ export default function ManualScorecardEntry() {
             {currentStep === 'scorecard' && (
               <div className="flex items-center gap-3">
                 <button
+                  type="button"
                   onClick={() => setShowPhotoUpload(true)}
-                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100"
+                  disabled={tournamentClosed}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Camera className="h-4 w-4" />
                   Usar Foto/OCR
                 </button>
                 <button
+                  type="button"
                   onClick={() => setCurrentStep('verification')}
-                  disabled={getCompletedHoles() === 0}
+                  disabled={getCompletedHoles() === 0 || tournamentClosed}
                   className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50"
                 >
                   <Eye className="h-4 w-4" />
@@ -752,6 +775,10 @@ export default function ManualScorecardEntry() {
                   {/* Botón "No presentó" en la esquina superior derecha */}
                   <button
                     onClick={async () => {
+                      if (tournamentClosed) {
+                        alert(TORNEO_CERRADO_ALERT)
+                        return
+                      }
                       const confirmAction = confirm('¿Confirmas que este jugador NO PRESENTÓ tarjeta? No aparecerá en los resultados.')
                       if (!confirmAction) return
 
@@ -769,14 +796,16 @@ export default function ManualScorecardEntry() {
 
                       saveScorecard.mutate(data, {
                         onSuccess: () => {
-                          navigate(`/club/${clubId}/tournaments/${tournamentId}/scorecard-selection`)
+                          navigate(`/club/${clubId}/tournaments/${tournamentId}/scorecard-selection`, {
+                            replace: true,
+                          })
                         },
                         onError: (error: any) => {
                           alert(`Error: ${error.response?.data?.message || error.message}`)
                         }
                       })
                     }}
-                    disabled={saveScorecard.isPending}
+                    disabled={saveScorecard.isPending || tournamentClosed}
                     className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                   >
                     ❌ No Presentó Tarjeta
@@ -839,6 +868,7 @@ export default function ManualScorecardEntry() {
                                     type="number"
                                     min="1"
                                     max="12"
+                                    disabled={tournamentClosed}
                                     value={scorecard.scores[hole] || ''}
                                     onChange={(e) => {
                                       const value = parseInt(e.target.value)
@@ -852,7 +882,7 @@ export default function ManualScorecardEntry() {
                                       hasScore && style ? 
                                         `${style.bgColor} ${style.textColor} ${style.borderColor} ${style.shape}` :
                                         'border-gray-300 rounded bg-white'
-                                    }`}
+                                    } disabled:opacity-60`}
                                   />
 
                                 </div>
@@ -926,6 +956,7 @@ export default function ManualScorecardEntry() {
                                     type="number"
                                     min="1"
                                     max="12"
+                                    disabled={tournamentClosed}
                                     value={scorecard.scores[hole] || ''}
                                     onChange={(e) => {
                                       const value = parseInt(e.target.value)
@@ -939,7 +970,7 @@ export default function ManualScorecardEntry() {
                                       hasScore && style ? 
                                         `${style.bgColor} ${style.textColor} ${style.borderColor} ${style.shape}` :
                                         'border-gray-300 rounded bg-white'
-                                    }`}
+                                    } disabled:opacity-60`}
                                   />
 
                                 </div>
@@ -1001,6 +1032,7 @@ export default function ManualScorecardEntry() {
                   <input
                     type="checkbox"
                     checked={scorecard.verified}
+                    disabled={tournamentClosed}
                     onChange={(e) => setScorecard(prev => ({ ...prev, verified: e.target.checked }))}
                     className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
                   />
@@ -1013,6 +1045,7 @@ export default function ManualScorecardEntry() {
                   <input
                     type="checkbox"
                     checked={scorecard.archived}
+                    disabled={tournamentClosed}
                     onChange={(e) => setScorecard(prev => ({ ...prev, archived: e.target.checked }))}
                     className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
                   />
@@ -1029,9 +1062,10 @@ export default function ManualScorecardEntry() {
                 </label>
                 <textarea
                   value={scorecard.notes}
+                  disabled={tournamentClosed}
                   onChange={(e) => setScorecard(prev => ({ ...prev, notes: e.target.value }))}
                   rows={3}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
                   placeholder="Notas sobre el ingreso de la tarjeta..."
                 />
               </div>
@@ -1056,7 +1090,7 @@ export default function ManualScorecardEntry() {
                 </button>
                 <button
                   onClick={handleSaveScorecard}
-                  disabled={!validateScorecard() || saveScorecard.isPending}
+                  disabled={tournamentClosed || !validateScorecard() || saveScorecard.isPending}
                   className="flex-1 flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Save className="h-4 w-4" />
