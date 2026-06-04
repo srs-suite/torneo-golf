@@ -367,14 +367,14 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                       Flyer del torneo
                     </label>
                     <p className="text-xs text-gray-600 mb-2">
-                      Si la inscripción es por web, podés agregar una imagen del flyer (cartel). Se mostrará en la página de inscripción. Pegá una URL o subí un archivo desde tu computadora (PNG, JPG, GIF o WebP, máx. 5 MB).
+                      Si la inscripción es por web, podés agregar una imagen del flyer (cartel). Se mostrará en la página de inscripción. Pegá una URL (https://…) o una ruta /uploads/…, o subí un archivo (PNG, JPG, GIF o WebP, máx. 5 MB).
                     </p>
                     <div className="flex flex-wrap gap-2 items-center mb-2">
                       <input
-                        type="url"
+                        type="text"
                         value={flyerUrl}
                         onChange={(e) => setFlyerUrl(e.target.value)}
-                        placeholder="https://ejemplo.com/flyer.jpg"
+                        placeholder="https://ejemplo.com/flyer.jpg o /uploads/tournaments/..."
                         className="flex-1 min-w-[200px] border border-gray-300 rounded-lg px-3 py-2 text-sm"
                       />
                       <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm font-medium text-gray-700 cursor-pointer hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
