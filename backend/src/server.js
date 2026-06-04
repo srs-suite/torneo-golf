@@ -72,7 +72,7 @@ import {
     isValidPhoneNumber
 } from './services/whatsapp.js';
 
-const PORT = 8000;
+const PORT = parseInt(process.env.PORT || '8000', 10);
 
 // Tokens temporales para cobros móvil (sin login admin en teléfono)
 const MOBILE_ACCESS_TOKEN_TTL_MS = 5 * 60 * 1000; // 5 minutos para abrir (compat. link viejo)

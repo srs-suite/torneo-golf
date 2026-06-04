@@ -8,8 +8,9 @@
 
 1. **Ruta equivocada:** En este VPS el código está en `/home/retailso/torneogolf-source/` (usuario `retailso`), no en `/root/` ni en `/var/www/torneogolf/`.
 2. **Frontend no actualizado:** Nginx sirve los archivos desde **otra carpeta**: `/home/retailso/torneogolf.retailsolutionstimetracker.com/`. Solo subir archivos a `torneogolf-source` no basta: hay que hacer **build** y **copiar** el contenido de `dist/` a esa carpeta.
-3. **No reiniciar el backend:** Después de cambiar archivos del backend hay que hacer `pm2 restart teetracker-backend`.
-4. **Reiniciar todo:** No usar `pm2 restart all` si tenés otros sistemas en el mismo VPS; solo reiniciar el proceso de torneogolf.
+3. **No reiniciar el backend:** Después de cambiar archivos del backend hay que hacer `pm2 restart torneogolf-backend`.
+4. **Puerto del backend:** En producción `.env.prod` tiene `PORT=8001` y Nginx hace proxy a `127.0.0.1:8001`. El backend **debe** leer `process.env.PORT` (no un puerto fijo en código).
+5. **Reiniciar todo:** No usar `pm2 restart all` si tenés otros sistemas en el mismo VPS; solo reiniciar el proceso de torneogolf.
 
 ---
 
@@ -25,6 +26,13 @@ git push origin main
 ```
 
 Repositorio: `https://github.com/srs-suite/torneo-golf.git` (rama `main`).
+
+**Datos del VPS (InMotion):**
+- SSH: `ssh root@173.231.241.135` (puerto **22**; el usuario `retailso` no tiene shell)
+- Código: `/home/retailso/torneogolf-source/`
+- Web (Nginx): `/home/retailso/torneogolf.retailsolutionstimetracker.com/`
+- PM2: proceso **`torneogolf-backend`** (no `teetracker-backend`)
+- Backend: **`PORT=8001`** en `backend/.env.prod` — Nginx proxy a `127.0.0.1:8001`
 
 ---
 
@@ -43,20 +51,66 @@ Subí **solo los archivos que cambiaron**, manteniendo la misma estructura:
 
 ---
 
-### 3. En el VPS (por SSH)
+### 3. En el VPS (por SSH como root)
 
-Conectate al VPS y ejecutá **en este orden**. **Con el build + copiar dist se ven los cambios** en el frontend:
+**Opción A — Descargar ZIP de GitHub** (funciona con repo público; si es privado, hacerlo público un rato o usar token):
+
+```bash
+cd /home/retailso
+cp torneogolf-source/backend/.env.prod /root/env.prod.backup
+mv torneogolf-source torneogolf-source.backup-$(date +%Y%m%d)
+wget https://github.com/srs-suite/torneo-golf/archive/refs/heads/main.zip -O torneo-main.zip
+unzip -o torneo-main.zip && mv torneo-golf-main torneogolf-source
+cp /root/env.prod.backup torneogolf-source/backend/.env.prod
+chown -R retailso:retailso torneogolf-source
+rm -f torneo-main.zip
+```
+
+**Opción B — Solo archivos cambiados con FileZilla** (si el ZIP no es viable).
+
+Backend:
+
+```bash
+cd /home/retailso/torneogolf-source/backend
+npm install
+pm2 restart torneogolf-backend --update-env
+```
+
+Frontend (usar `/bin/cp` para que no pregunte overwrite):
+
+```bash
+cd /home/retailso/torneogolf-source/frontend
+npm install
+npm run build
+/bin/cp -rf dist/index.html /home/retailso/torneogolf.retailsolutionstimetracker.com/
+/bin/cp -rf dist/assets/* /home/retailso/torneogolf.retailsolutionstimetracker.com/assets/
+```
+
+**Verificar API (debe responder, no 502):**
+
+```bash
+ss -tlnp | grep 8001
+curl -s -o /dev/null -w "API: %{http_code}\n" http://127.0.0.1:8001/api/system/clubs
+pm2 logs torneogolf-backend --lines 15 --nostream
+```
+
+Si la web queda “pensando” y la API da **502**: el backend no escucha en **8001**. Revisar `grep PORT backend/.env.prod` y que `server.js` use `process.env.PORT`.
+
+---
+
+### 3b. Solo frontend cambió (sin tocar backend)
 
 ```bash
 cd /home/retailso/torneogolf-source/frontend
 npm run build
-cp -r dist/* /home/retailso/torneogolf.retailsolutionstimetracker.com/
+/bin/cp -rf dist/index.html /home/retailso/torneogolf.retailsolutionstimetracker.com/
+/bin/cp -rf dist/assets/* /home/retailso/torneogolf.retailsolutionstimetracker.com/assets/
 ```
 
-Si cambiaste algo del backend, reiniciá solo el proceso de torneogolf (no `pm2 restart all`):
+Si cambiaste backend:
 
 ```bash
-pm2 restart teetracker-backend
+pm2 restart torneogolf-backend
 ```
 
 ---
@@ -64,7 +118,7 @@ pm2 restart teetracker-backend
 ### 4. Verificar
 
 - Probar la web en el navegador (si podés, en ventana incógnito o con caché limpiada).
-- Si algo falla: `pm2 logs teetracker-backend --lines 30`
+- Si algo falla: `pm2 logs torneogolf-backend --lines 30`
 
 ---
 
@@ -123,7 +177,7 @@ grep -l "postInsertBaseParams" /home/retailso/torneogolf-source/backend/src/serv
 **4c. ¿PM2 está ejecutando el código de `torneogolf-source`?**
 
 ```bash
-pm2 show teetracker-backend | egrep "script path|exec cwd"
+pm2 show torneogolf-backend | egrep "script path|exec cwd"
 ```
 
 El `script path` debería apuntar a algo como `/home/retailso/torneogolf-source/backend/src/server.js` y el cwd al proyecto `torneogolf-source`, no a otra copia del repo.
@@ -143,7 +197,7 @@ Si el código HTTP no es `200`, el front **no puede** mostrar tablas aunque suba
 Si salió "FALTA", subí los archivos del backend por FileZilla y luego:
 
 ```bash
-pm2 restart teetracker-backend
+pm2 restart torneogolf-backend
 ```
 
 **5. Navegador**
@@ -177,7 +231,7 @@ grep -r "torneogolf\|retailsolution" /etc/nginx/ 2>/dev/null | head -20
 - Si el código está en **`/var/www/torneogolf/`** y Nginx apunta a algo como `/var/www/torneogolf/...`, entonces:
   - Subí archivos con FileZilla a `/var/www/torneogolf/` (misma estructura).
   - En el VPS: `cd /var/www/torneogolf/frontend && npm run build` (no hace falta copiar si Nginx ya apunta a `frontend/dist/`).
-  - `pm2 restart teetracker-backend`.
+  - `pm2 restart torneogolf-backend`.
 
 Anotá la ruta que te salga en el punto 4 y usala como “carpeta que sirve Nginx” para el `cp` o para confirmar que el build queda ahí.
 
@@ -208,7 +262,7 @@ Si en producción seguís viendo la versión vieja (por ejemplo en **Editar torn
 
 4. **Reiniciar solo el backend** (por si cambiaste algo de API):
    ```bash
-   pm2 restart teetracker-backend
+   pm2 restart torneogolf-backend
    ```
 
 ---
@@ -224,13 +278,13 @@ Si desplegás esta funcionalidad:
    - `AAG_WEEKLY_SYNC_ENABLED=true` para activar (solo con `NODE_ENV=production`).
    - Opcional: `AAG_WEEKLY_SYNC_CRON=0 6 * * 4` (jueves 06:00, hora del servidor).
    - Opcional: `AAG_WEEKLY_SYNC_CLUB_ID=1` (club a sincronizar).
-5. `pm2 restart teetracker-backend` y revisá logs: debe aparecer `[AAG weekly sync] Scheduler activo` o el mensaje de deshabilitado.
+5. `pm2 restart torneogolf-backend` y revisá logs: debe aparecer `[AAG weekly sync] Scheduler activo` o el mensaje de deshabilitado.
 
 ---
 
 ## Resumen en una frase
 
-**Subir archivos a `/home/retailso/torneogolf-source/` con FileZilla → en el VPS: `cd /home/retailso/torneogolf-source/frontend` → `npm run build` → `cp -r dist/* /home/retailso/torneogolf.retailsolutionstimetracker.com/` (con eso se ven los cambios). Si tocaste backend: `pm2 restart teetracker-backend`.**
+**Subir archivos a `/home/retailso/torneogolf-source/` con FileZilla → en el VPS: `cd /home/retailso/torneogolf-source/frontend` → `npm run build` → `cp -r dist/* /home/retailso/torneogolf.retailsolutionstimetracker.com/` (con eso se ven los cambios). Si tocaste backend: `pm2 restart torneogolf-backend`.**
 
 ---
 

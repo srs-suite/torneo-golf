@@ -1,44 +1,43 @@
-Torneo de Golf
+Torneo de Golf — deploy producción (VPS InMotion)
 
-pc   
+GitHub: https://github.com/srs-suite/torneo-golf (rama main, repo privado OK)
+SSH:    ssh root@173.231.241.135   (puerto 22)
 
-cd C:\Documents\proyectos\Torneogolf
-   git add backend/src/server.js backend/src/services/database.js
-   git commit -m "Fix producción y editar gasto"
-   git push origin main
+PM2:    torneogolf-backend  (NO teetracker-backend)
+Puerto: PORT=8001 en backend/.env.prod  (Nginx proxy → 127.0.0.1:8001)
 
-Subir los archivos que se cambiaron con FileZilla
-y luego hacer
+Rutas:
+  Código:  /home/retailso/torneogolf-source/
+  Web:     /home/retailso/torneogolf.retailsolutionstimetracker.com/
 
+────────── Actualizar (resumen) ──────────
 
-en ssh
-cd /home/retailso/torneogolf-source
-   pm2 restart teetracker-backend
+1) En PC: git push origin main
 
+2) En VPS — bajar código (repo público un rato o ZIP):
+   cd /home/retailso
+   cp torneogolf-source/backend/.env.prod /root/env.prod.backup
+   mv torneogolf-source torneogolf-source.backup-$(date +%Y%m%d)
+   wget https://github.com/srs-suite/torneo-golf/archive/refs/heads/main.zip -O torneo-main.zip
+   unzip -o torneo-main.zip && mv torneo-golf-main torneogolf-source
+   cp /root/env.prod.backup torneogolf-source/backend/.env.prod
+   chown -R retailso:retailso torneogolf-source
 
---------------------------
-esto es importante para decirle a cursor si el Sistema no se actualiza
+3) Backend:
+   cd /home/retailso/torneogolf-source/backend
+   npm install
+   pm2 restart torneogolf-backend --update-env
 
-# 1. Build (en la carpeta donde tenés el código)
-cd /home/retailso/torneogolf-source/frontend
-npm run build
+4) Frontend:
+   cd /home/retailso/torneogolf-source/frontend
+   npm install
+   npm run build
+   /bin/cp -rf dist/index.html /home/retailso/torneogolf.retailsolutionstimetracker.com/
+   /bin/cp -rf dist/assets/* /home/retailso/torneogolf.retailsolutionstimetracker.com/assets/
 
-# 2. Copiar el contenido de dist a la carpeta que sirve Nginx
-cp -r /home/retailso/torneogolf-source/frontend/dist/* /home/retailso/torneogolf.retailsolutionstimetracker.com/
+5) Verificar:
+   ss -tlnp | grep 8001
+   curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8001/api/system/clubs
+   Navegador: Ctrl+F5
 
-# 3. Opcional: reiniciar solo si Nginx cachea (normalmente no hace falta)
-# systemctl reload nginx
-
-
-
-__________________________________
-
-Ver los cambios: Nginx sirve el frontend desde /home/retailso/torneogolf.retailsolutionstimetracker.com, no desde torneogolf-source. Por eso había que copiar ahí el dist después del build. De ahora en adelante, cada vez que hagas npm run build en torneogolf-source/frontend, hay que volver a copiar el contenido de dist a esa carpeta.
-
-ESTO ES LO IMPORTANTE <------
-Para la próxima vez que actualices el frontend en el VPS:
-
-cd /home/retailso/torneogolf-source/frontend
-npm run build
-cp -rf dist/* /home/retailso/torneogolf.retailsolutionstimetracker.com/
-pm2 restart teetracker-backend
+Detalle completo: ACTUALIZAR_PRODUCCION.md
