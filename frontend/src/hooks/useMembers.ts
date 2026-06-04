@@ -49,6 +49,7 @@ export function useUpdateMember(clubId: number) {
       memberService.updateMember(clubId, data.memberId, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: MEMBER_QUERY_KEYS.members(clubId) });
+      queryClient.invalidateQueries({ queryKey: ['participants', clubId] });
       toast.success('Miembro actualizado exitosamente');
     },
     onError: (error: Error) => {

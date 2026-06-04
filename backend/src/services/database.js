@@ -3626,25 +3626,10 @@ async function updateMember(memberId, memberData) {
     
     await executeQuery(query, params);
 
-    // Si se actualizó index o HCP del socio, propagar solo a torneos que aún no se cerraron/jugaron
-    // No tocar torneos completed/closed/cancelled para mantener el histórico
+    // Socio → torneos abiertos: alinear HCP de juego con la ficha maestra
     const didUpdateHandicap = memberData.handicap_local !== undefined || memberData.handicap_index !== undefined;
     if (didUpdateHandicap) {
-        const newHcpUsed = memberData.handicap_local !== undefined && memberData.handicap_local !== null
-            ? Number(memberData.handicap_local)
-            : (memberData.handicap_index !== undefined && memberData.handicap_index !== null
-                ? Math.round(Number(memberData.handicap_index))
-                : null);
-        if (newHcpUsed !== null && !Number.isNaN(newHcpUsed)) {
-            await executeQuery(
-                `UPDATE tournament_participants tp
-                 INNER JOIN tournaments t ON t.tournament_id = tp.tournament_id
-                 SET tp.handicap_used = ?
-                 WHERE tp.member_id = ? AND t.status IN ('draft', 'open', 'in_progress')
-                   AND (t.handicaps_sealed_at IS NULL)`,
-                [newHcpUsed, memberId]
-            );
-        }
+        await syncPlayerOpenTournamentHandicapsFromMaster({ memberId });
     }
 
     return { member_id: memberId, ...memberData };
@@ -3787,7 +3772,7 @@ async function createTournament(courseId, tournamentData) {
     const sim = (tournamentData.enable_simultaneous_starts === true || tournamentData.enable_simultaneous_starts === 1) ? 1 : 0;
     const two = (tournamentData.enable_two_sessions === true || tournamentData.enable_two_sessions === 1) ? 1 : 0;
     const allowGroups = (tournamentData.public_inscription_allow_groups !== false && tournamentData.public_inscription_allow_groups !== 0) ? 1 : 0;
-    const flyerUrl = (tournamentData.flyer_url && String(tournamentData.flyer_url).trim()) || null;
+    const flyerUrl = normalizeFlyerUrlStored(tournamentData.flyer_url);
     const resultsMode = (tournamentData.results_mode === 'scratch_bands') ? 'scratch_bands' : 'standard';
     const separateLadies = (tournamentData.separate_ladies === true || tournamentData.separate_ladies === 1) ? 1 : 0;
     const ladiesByHcp = (tournamentData.ladies_by_hcp === true || tournamentData.ladies_by_hcp === 1) ? 1 : 0;
@@ -3868,6 +3853,21 @@ async function createTournament(courseId, tournamentData) {
 
 const TOURNAMENT_CLOSED_STATUSES = new Set(['closed', 'completed', 'cancelled']);
 
+/** Guardar solo la ruta /uploads/... (portable entre entornos). */
+function normalizeFlyerUrlStored(url) {
+    if (url == null || url === '') return null;
+    const s = String(url).trim();
+    if (!s) return null;
+    if (s.startsWith('/uploads/')) return s;
+    try {
+        if (s.startsWith('http://') || s.startsWith('https://')) {
+            const u = new URL(s);
+            if (u.pathname.startsWith('/uploads/')) return u.pathname;
+        }
+    } catch (_) { /* ignore */ }
+    return s;
+}
+
 function isTournamentStatusClosed(status) {
     if (status == null || status === '') return false;
     return TOURNAMENT_CLOSED_STATUSES.has(String(status).toLowerCase());
@@ -3879,6 +3879,118 @@ async function getTournamentFreezeRow(courseId, tournamentId) {
         [courseId, tournamentId]
     );
     return rows && rows[0] ? rows[0] : null;
+}
+
+/**
+ * Torneo abierto con handicaps editables (no cerrado ni sellado).
+ * Mientras cumpla esto, index/HCP del torneo siguen la ficha maestra del socio o jugador externo.
+ */
+async function isOpenTournamentForHandicapSync(courseId, tournamentId) {
+    const row = await getTournamentFreezeRow(courseId, tournamentId);
+    if (!row) return false;
+    if (String(row.status).toLowerCase() !== 'open') return false;
+    if (row.handicaps_sealed_at != null && row.handicaps_sealed_at !== '') return false;
+    return true;
+}
+
+function resolveHandicapUsedForTournament(handicapLocal, handicapIndex) {
+    if (handicapLocal !== undefined && handicapLocal !== null && !Number.isNaN(Number(handicapLocal))) {
+        return Number(handicapLocal);
+    }
+    if (handicapIndex !== undefined && handicapIndex !== null && !Number.isNaN(Number(handicapIndex))) {
+        return Math.round(Number(handicapIndex));
+    }
+    return null;
+}
+
+/**
+ * Alinea handicap_used de todos los inscriptos con members / external_players.
+ * Solo torneos abiertos y sin handicaps sellados.
+ */
+async function syncOpenTournamentParticipantsFromMaster(courseId, tournamentId) {
+    if (!(await isOpenTournamentForHandicapSync(courseId, tournamentId))) return;
+
+    await executeQuery(
+        `UPDATE tournament_participants tp
+         INNER JOIN members m ON tp.member_id = m.member_id AND tp.player_type IN ('member', 'visitor')
+         SET tp.handicap_used = COALESCE(m.handicap_local, ROUND(m.handicap_index))
+         WHERE tp.tournament_id = ?
+           AND COALESCE(m.handicap_local, ROUND(m.handicap_index)) IS NOT NULL
+           AND (tp.handicap_used IS NULL
+                OR tp.handicap_used <> COALESCE(m.handicap_local, ROUND(m.handicap_index)))`,
+        [tournamentId]
+    );
+
+    await executeQuery(
+        `UPDATE tournament_participants tp
+         INNER JOIN external_players ep ON tp.external_player_id = ep.external_id
+            AND tp.player_type IN ('external', 'visitor')
+         SET tp.handicap_used = COALESCE(ep.handicap_local, ROUND(ep.handicap_index))
+         WHERE tp.tournament_id = ?
+           AND COALESCE(ep.handicap_local, ROUND(ep.handicap_index)) IS NOT NULL
+           AND (tp.handicap_used IS NULL
+                OR tp.handicap_used <> COALESCE(ep.handicap_local, ROUND(ep.handicap_index)))`,
+        [tournamentId]
+    );
+}
+
+/** Propaga HCP de juego de un socio o externo a sus inscripciones en torneos abiertos. */
+async function syncPlayerOpenTournamentHandicapsFromMaster({ memberId, externalPlayerId }) {
+    if (memberId) {
+        const { rows: mRows } = await executeQuery(
+            'SELECT handicap_index, handicap_local FROM members WHERE member_id = ? LIMIT 1',
+            [memberId]
+        );
+        const m = mRows && mRows[0];
+        if (!m) return;
+        const hcpUsed = resolveHandicapUsedForTournament(m.handicap_local, m.handicap_index);
+        if (hcpUsed == null) return;
+
+        const { rows: tournaments } = await executeQuery(
+            `SELECT DISTINCT t.tournament_id, t.course_id
+             FROM tournaments t
+             INNER JOIN tournament_participants tp ON tp.tournament_id = t.tournament_id AND tp.member_id = ?
+             WHERE t.status = 'open' AND t.handicaps_sealed_at IS NULL`,
+            [memberId]
+        );
+
+        for (const t of tournaments || []) {
+            if (!(await isOpenTournamentForHandicapSync(t.course_id, t.tournament_id))) continue;
+            await executeQuery(
+                `UPDATE tournament_participants SET handicap_used = ?
+                 WHERE tournament_id = ? AND member_id = ?`,
+                [hcpUsed, t.tournament_id, memberId]
+            );
+        }
+    }
+
+    if (externalPlayerId) {
+        const { rows: epRows } = await executeQuery(
+            'SELECT handicap_index, handicap_local FROM external_players WHERE external_id = ? LIMIT 1',
+            [externalPlayerId]
+        );
+        const ep = epRows && epRows[0];
+        if (!ep) return;
+        const hcpUsed = resolveHandicapUsedForTournament(ep.handicap_local, ep.handicap_index);
+        if (hcpUsed == null) return;
+
+        const { rows: tournaments } = await executeQuery(
+            `SELECT DISTINCT t.tournament_id, t.course_id
+             FROM tournaments t
+             INNER JOIN tournament_participants tp ON tp.tournament_id = t.tournament_id AND tp.external_player_id = ?
+             WHERE t.status = 'open' AND t.handicaps_sealed_at IS NULL`,
+            [externalPlayerId]
+        );
+
+        for (const t of tournaments || []) {
+            if (!(await isOpenTournamentForHandicapSync(t.course_id, t.tournament_id))) continue;
+            await executeQuery(
+                `UPDATE tournament_participants SET handicap_used = ?
+                 WHERE tournament_id = ? AND external_player_id = ?`,
+                [hcpUsed, t.tournament_id, externalPlayerId]
+            );
+        }
+    }
 }
 
 async function tournamentHandicapsImmutable(courseId, tournamentId) {
@@ -4036,7 +4148,7 @@ async function updateTournament(courseId, tournamentId, tournamentData) {
     const teeSimultaneous = (tournamentData.enable_simultaneous_starts === true || tournamentData.enable_simultaneous_starts === 1) ? 1 : 0;
     const teeTwoSessions = (tournamentData.enable_two_sessions === true || tournamentData.enable_two_sessions === 1) ? 1 : 0;
     const allowGroups = (tournamentData.public_inscription_allow_groups !== false && tournamentData.public_inscription_allow_groups !== 0) ? 1 : 0;
-    const flyerUrl = (tournamentData.flyer_url && String(tournamentData.flyer_url).trim()) || null;
+    const flyerUrl = normalizeFlyerUrlStored(tournamentData.flyer_url);
     const fullParams = [
         ...minimalParams.slice(0, 8),
         tournamentData.custodian || null,
@@ -4348,6 +4460,8 @@ async function syncHandicapIndexUsedForNewParticipantIfSealed(courseId, tourname
 }
 
 async function getTournamentParticipants(courseId, tournamentId) {
+    await syncOpenTournamentParticipantsFromMaster(courseId, tournamentId);
+
     const query = `
         SELECT tp.*, 
                CASE 
@@ -4369,11 +4483,15 @@ async function getTournamentParticipants(courseId, tournamentId) {
                        m.phone
                END as player_phone,
                CASE 
+                   WHEN tp.player_type = 'external' THEN ep.handicap_index
+                   ELSE m.handicap_index
+               END as handicap_index,
+               CASE 
                    WHEN tp.player_type = 'external' THEN 
                        COALESCE(tp.handicap_used, ep.handicap_local, ep.handicap_index)
                    ELSE 
                        COALESCE(tp.handicap_used, m.handicap_local, m.handicap_index)
-               END as handicap_index,
+               END as handicap_play,
                CASE 
                    WHEN tp.player_type = 'external' THEN ep.handicap_local
                    ELSE m.handicap_local
@@ -4410,6 +4528,14 @@ async function getTournamentParticipants(courseId, tournamentId) {
 
 // Simple version that only needs tournament ID
 async function getTournamentParticipantsById(tournamentId) {
+    const { rows: tRows } = await executeQuery(
+        'SELECT course_id FROM tournaments WHERE tournament_id = ? LIMIT 1',
+        [tournamentId]
+    );
+    if (tRows && tRows[0] && tRows[0].course_id != null) {
+        await syncOpenTournamentParticipantsFromMaster(tRows[0].course_id, tournamentId);
+    }
+
     const query = `
         SELECT tp.*, 
                CASE 
@@ -4431,11 +4557,15 @@ async function getTournamentParticipantsById(tournamentId) {
                        m.phone
                END as player_phone,
                CASE 
+                   WHEN tp.player_type = 'external' THEN ep.handicap_index
+                   ELSE m.handicap_index
+               END as handicap_index,
+               CASE 
                    WHEN tp.player_type = 'external' THEN 
                        COALESCE(tp.handicap_used, ep.handicap_local, ep.handicap_index)
                    ELSE 
                        COALESCE(tp.handicap_used, m.handicap_local, m.handicap_index)
-               END as handicap_index,
+               END as handicap_play,
                CASE 
                    WHEN tp.player_type = 'external' THEN 
                        ep.handicap_local
@@ -5067,6 +5197,7 @@ async function updateParticipantHandicap(courseId, tournamentId, participationId
         throw new Error('Participante no encontrado');
     }
     const row = getRow.rows[0];
+    // Torneo → socio/jugador: siempre actualiza la ficha maestra (members o external_players)
     if (row.player_type === 'external' && row.external_player_id) {
         await executeQuery(
             'UPDATE external_players SET handicap_index = ?, handicap_local = ?, updated_at = CURRENT_TIMESTAMP WHERE external_id = ?',
@@ -5074,8 +5205,8 @@ async function updateParticipantHandicap(courseId, tournamentId, participationId
         );
     } else if ((row.player_type === 'member' || row.player_type === 'visitor') && row.member_id) {
         await executeQuery(
-            'UPDATE members SET handicap_index = ?, handicap_local = ?, updated_at = CURRENT_TIMESTAMP WHERE member_id = ? AND course_id = ?',
-            [hcpIndex, hcpLocal, row.member_id, courseId]
+            'UPDATE members SET handicap_index = ?, handicap_local = ?, updated_at = CURRENT_TIMESTAMP WHERE member_id = ?',
+            [hcpIndex, hcpLocal, row.member_id]
         );
     }
     await executeQuery(
@@ -5630,6 +5761,12 @@ async function updateExternalPlayer(playerId, playerData) {
     ];
     
     const { rows } = await executeQuery(query, params);
+
+    const didUpdateHandicap = playerData.handicap_local !== undefined || playerData.handicap_index !== undefined;
+    if (didUpdateHandicap) {
+        await syncPlayerOpenTournamentHandicapsFromMaster({ externalPlayerId: playerId });
+    }
+
     return { external_id: playerId, ...playerData, success: true };
 }
 
@@ -5640,6 +5777,8 @@ async function deleteExternalPlayer(playerId) {
 }
 
 async function getTournamentGroups(courseId, tournamentId) {
+    await syncOpenTournamentParticipantsFromMaster(courseId, tournamentId);
+
     const query = `
         SELECT tp.group_number,
                (SELECT tp3.tee_time
@@ -5689,6 +5828,10 @@ async function getTournamentGroups(courseId, tournamentId) {
                                CONCAT(m.first_name, ' ', m.last_name)
                        END,
                        'handicap_index', CASE 
+                           WHEN tp.player_type = 'external' THEN ep.handicap_index
+                           ELSE m.handicap_index
+                       END,
+                       'handicap_play', CASE 
                            WHEN tp.player_type = 'external' THEN 
                                COALESCE(tp.handicap_used, ep.handicap_local, ep.handicap_index)
                            ELSE 

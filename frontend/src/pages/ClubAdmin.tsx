@@ -46,12 +46,13 @@ import { ExcelImportModal } from '@/components/ExcelImportModal'
 import { LoadingSpinner } from '@/components/LoadingSpinner'
 import { UserManagement } from '@/components/UserManagement'
 import { FinancialReportQR } from '@/components/FinancialReportQR'
+import { MemberActivityQrModal } from '@/components/MemberActivityQrModal'
 import { AagMassSyncPanel } from '@/components/AagMassSyncPanel'
 import { Member } from '@/types/member'
 import { Tournament, isTournamentStatusClosed, tournamentStatusDisplayLabel } from '@/types/tournament'
 import { toast } from 'react-hot-toast'
 import { formatHcpForDisplay } from '@/utils/scoreUtils'
-import { computeHcpFromIndexSanJeronimo, formatHcpDisplayForClubPlayer } from '@/utils/clubHandicap'
+import { computeHcpFromIndexForClub, formatHcpDisplayForClubPlayer } from '@/utils/clubHandicap'
 
 interface ClubData {
   course_id: number
@@ -84,6 +85,7 @@ export function ClubAdmin() {
   })
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showCreateTournamentModal, setShowCreateTournamentModal] = useState(false)
+  const [showMemberActivityQrModal, setShowMemberActivityQrModal] = useState(false)
   const [showParticipantsModal, setShowParticipantsModal] = useState(false)
   const [showExcelImportModal, setShowExcelImportModal] = useState(false)
 
@@ -205,10 +207,7 @@ export function ClubAdmin() {
       const finalIndex = isNaN(indexValue) ? 0 : indexValue
       // Usar la misma fórmula del club (slope/course por género). Si el club no tiene la bandera, aplicamos fórmula por defecto (ej. San Jerónimo del Ray).
       const member = members.find(m => m.member_id === memberId)
-      const useClubFormula = currentClub?.enable_field_characteristics !== false
-      const hcpFromIndex = useClubFormula && member
-        ? computeHcpFromIndexSanJeronimo(finalIndex, member.gender)
-        : Math.round(finalIndex)
+      const hcpFromIndex = computeHcpFromIndexForClub(finalIndex, member?.gender, currentClub) ?? 0
       
       await updateMemberMutation.mutateAsync({
         memberId,
@@ -879,8 +878,17 @@ export function ClubAdmin() {
                 <h2 className="text-2xl font-bold text-gray-900">Gestión de Torneos</h2>
                 <p className="text-gray-600">Administra los torneos de tu club</p>
               </div>
-              <div className="flex items-center space-x-3">
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                 <button
+                  type="button"
+                  onClick={() => setShowMemberActivityQrModal(true)}
+                  className="flex items-center space-x-2 px-4 py-2 border border-gray-300 bg-white text-gray-800 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  <QrCode className="w-4 h-4" />
+                  <span className="whitespace-nowrap">Ver o descargar QR</span>
+                </button>
+                <button
+                  type="button"
                   onClick={() => setShowCreateTournamentModal(true)}
                   className="flex items-center space-x-2 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors"
                 >
@@ -1189,6 +1197,12 @@ export function ClubAdmin() {
           clubId={clubId ? parseInt(clubId) : 0}
         />
       )}
+
+      <MemberActivityQrModal
+        isOpen={showMemberActivityQrModal}
+        onClose={() => setShowMemberActivityQrModal(false)}
+        clubId={clubId}
+      />
 
       {showCreateTournamentModal && (
         <CreateTournamentModal

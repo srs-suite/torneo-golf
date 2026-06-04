@@ -4,7 +4,8 @@ import { ArrowLeft, Save, CheckCircle2, AlertCircle, Eye, Camera, Upload } from 
 import { useTournaments, useTournamentParticipants } from '@/hooks/useTournaments'
 import { useSaveScorecard, useTournamentScorecards } from '@/hooks/useScorecards'
 import { useQuery } from '@tanstack/react-query'
-import { getScoreStyle } from '@/utils/scoreUtils'
+import { getScoreStyle, formatHcpForDisplay } from '@/utils/scoreUtils'
+import { participantPlayingHcp, participantWhIndex } from '@/utils/clubHandicap'
 import { isTournamentStatusClosed } from '@/types/tournament'
 import { TournamentClosedNotice, TORNEO_CERRADO_ALERT } from '@/components/TournamentClosedNotice'
 // Score styling moved to shared utility
@@ -321,7 +322,7 @@ export default function ManualScorecardEntry() {
 
   const getNetScore = () => {
     const totalGross = getTotalScore()
-    const playerHcp = Math.round(selectedPlayer?.handicap_local) || Math.round(selectedPlayer?.handicap_index) || 0
+    const playerHcp = Math.round(participantPlayingHcp(selectedPlayer) ?? participantWhIndex(selectedPlayer) ?? 0)
     return totalGross > 0 ? totalGross - Math.round(playerHcp) : 0
   }
 
@@ -717,7 +718,7 @@ export default function ManualScorecardEntry() {
                             <div className="flex-grow">
                               <h3 className="font-semibold text-gray-900">{participant.player_name}</h3>
                               <div className="flex items-center gap-3 text-sm text-gray-600">
-                                <span>HCP: {participant.handicap_index}</span>
+                                <span>HCP: {formatHcpForDisplay(participantPlayingHcp(participant), participantWhIndex(participant))}</span>
                                 <span>•</span>
                                 <span>{participant.is_member ? 'Socio' : 'Invitado'}</span>
                                 {participant.member_number && (
@@ -764,7 +765,7 @@ export default function ManualScorecardEntry() {
                     <h2 className="text-xl font-semibold text-gray-900">{selectedPlayer.player_name}</h2>
                     <div className="flex items-center gap-4 mt-1">
                       <p className="text-gray-600">
-                        HCP: {Math.round(selectedPlayer?.handicap_local) || Math.round(selectedPlayer?.handicap_index) || 0}
+                        HCP: {Math.round(participantPlayingHcp(selectedPlayer) ?? participantWhIndex(selectedPlayer) ?? 0)}
                       </p>
                       <p className="text-sm text-gray-500">
                         {getCompletedHoles()}/18 hoyos completados

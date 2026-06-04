@@ -6,6 +6,7 @@ import { useTournaments, useTournamentGroups, useTournamentParticipants, useGene
 import { useUserPermissions } from '@/hooks/useUserPermissions'
 import { toast } from 'react-hot-toast'
 import { formatHcpForDisplay } from '@/utils/scoreUtils'
+import { participantPlayingHcp, participantWhIndex } from '@/utils/clubHandicap'
 
 function toPositiveDbId(v: unknown): number | undefined {
   if (v === null || v === undefined || v === '') return undefined
@@ -61,17 +62,13 @@ function resolveFullTournamentParticipantRow(
 function displayTeeTimeHcpLabel(p: {
   handicap_local?: number | null | string
   handicap_index?: number | null | string
-  /** Índice mundial real (m.handicap_index / ep.handicap_index); el API también envía handicap_index como COALESCE para el torneo */
   handicap_index_wh?: number | null | string
+  handicap_play?: number | null | string
+  handicap_used?: number | null | string
 }): string {
-  const loc = parseHandicapNumeric(p.handicap_local)
-  const effectiveHcp = parseHandicapNumeric(p.handicap_index)
-  const whIndex = parseHandicapNumeric(p.handicap_index_wh)
-  const valueForHcp = loc !== undefined ? loc : effectiveHcp
-  /** Si el HCP de juego es negativo (plus) pero el índice “efectivo” del torneo es otro, el signo + debe salir del local o del WH, no del COALESCE del torneo. */
-  const indexForSign =
-    whIndex !== undefined ? whIndex : loc !== undefined && loc < 0 ? loc : effectiveHcp
-  const s = formatHcpForDisplay(valueForHcp, indexForSign)
+  const whIndex = participantWhIndex(p)
+  const valueForHcp = participantPlayingHcp(p)
+  const s = formatHcpForDisplay(valueForHcp, whIndex ?? undefined)
   return s === '-' ? 'N/A' : s
 }
 
@@ -94,6 +91,8 @@ function mergeHcpFieldsForDisplay(
     handicap_local?: unknown
     handicap_index?: unknown
     handicap_index_wh?: unknown
+    handicap_play?: unknown
+    handicap_used?: unknown
   } | null | undefined,
   lookup: ParticipantLookup
 ): TeeTimeHcpFields {
@@ -103,14 +102,19 @@ function mergeHcpFieldsForDisplay(
     handicap_index: pickFirstNumericHandicap(
       groupP?.handicap_index,
       full?.handicap_index,
-      full?.handicap_used,
-      full?.course_handicap
+      full?.handicap_index_wh
     ),
     handicap_index_wh: pickFirstNumericHandicap(
       groupP?.handicap_index_wh,
       full?.handicap_index_wh,
-      full?.handicap_index_used
+      full?.handicap_index
     ),
+    handicap_play: pickFirstNumericHandicap(
+      groupP?.handicap_play,
+      full?.handicap_play,
+      full?.handicap_used
+    ),
+    handicap_used: pickFirstNumericHandicap(groupP?.handicap_used, full?.handicap_used),
   }
 }
 
@@ -131,10 +135,9 @@ function resolveTeeTimeHcpDisplayLabel(
 ): string {
   const full = resolveFullTournamentParticipantRow(groupP, lookup)
   if (full) {
-    const localRaw = full.handicap_local
-    const aliasRaw = full.handicap_index
-    const valueRaw = pickFirstNumericHandicap(localRaw, aliasRaw)
-    const s = formatHcpForDisplay(parseHandicapNumeric(valueRaw), parseHandicapNumeric(aliasRaw))
+    const wh = participantWhIndex(full as Parameters<typeof participantWhIndex>[0])
+    const play = participantPlayingHcp(full as Parameters<typeof participantPlayingHcp>[0])
+    const s = formatHcpForDisplay(play, wh ?? undefined)
     return s === '-' ? 'N/A' : s
   }
   const merged = mergeHcpFieldsForDisplay(groupP, lookup)

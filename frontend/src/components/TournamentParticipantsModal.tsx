@@ -24,8 +24,14 @@ import { Tournament } from '@/types/tournament'
 import { Participant, PlayerSearchResult } from '@/types/participant'
 import { LoadingSpinner } from '@/components/LoadingSpinner'
 import { useParticipants, useAddParticipant, useRemoveParticipant, useUpdateParticipantHandicap, useUpdateParticipantTeePreference, useSearchPlayers, useExternalPlayers, useDeleteExternalPlayer } from '@/hooks/useParticipants'
-import { calculateHCPFromIndexDefault } from '@/utils/teeSelection'
-import { formatHcpForDisplay } from '@/utils/scoreUtils'
+import { useClubs } from '@/hooks/useClubs'
+import {
+  computeHcpFromIndexForClub,
+  formatHcpDisplayForClubPlayer,
+  participantPlayingHcp,
+  participantWhIndex,
+} from '@/utils/clubHandicap'
+import { formatHandicapIndexForDisplay, formatHcpForDisplay } from '@/utils/scoreUtils'
 import { useTournamentGroups } from '@/hooks/useTournaments'
 import { generateMobilePaymentsPin, getParticipantWhatsAppInscriptionUrl, getPublicAppOrigin } from '@/services/participantService'
 import { CreateExternalPlayerModal } from '@/components/CreateExternalPlayerModal'
@@ -155,6 +161,8 @@ export function TournamentParticipantsModal({
 
   // React Query hooks
   const { data: participants = [], refetch } = useParticipants(clubId, tournament.tournament_id)
+  const { data: clubs = [] } = useClubs()
+  const currentClub = clubs.find((c) => c.course_id === clubId)
   const { data: externalPlayersData = [] } = useExternalPlayers(clubId, showExternalPlayersList)
   const addParticipant = useAddParticipant(clubId, tournament.tournament_id)
   const removeParticipant = useRemoveParticipant(clubId, tournament.tournament_id)
@@ -337,12 +345,18 @@ export function TournamentParticipantsModal({
     }
 
     // Preparar los datos para el Excel
-    const excelData = participants.map((participant, index) => ({
+    const excelData = participants.map((participant, index) => {
+      const whIndex = participantWhIndex(participant)
+      return {
       'N°': index + 1,
       'Nombre y Apellido': participant.player_name,
       'Matrícula': participant.member_number || '',
-      'Index': participant.handicap_index != null ? participant.handicap_index : '',
-      'HCP': formatHcpForDisplay(participant.handicap_local ?? (participant as any).handicap_index, (participant as any).handicap_index),
+      'Index': whIndex != null ? formatHandicapIndexForDisplay(whIndex) : '',
+      'HCP': formatHcpDisplayForClubPlayer(currentClub, {
+        handicap_index: whIndex,
+        handicap_local: participantPlayingHcp(participant),
+        gender: participant.gender,
+      }),
       'Club': participant.player_club || '',
       'Tipo': participant.player_type === 'member' ? 'Socio' : 'Externo',
       'Estado': participant.status === 'registered' ? 'Registrado' : 
@@ -350,7 +364,7 @@ export function TournamentParticipantsModal({
                participant.status,
       'Email': participant.player_email || '',
       'Teléfono': participant.player_phone || ''
-    }))
+    }})
 
     // Crear workbook y worksheet
     const workbook = XLSX.utils.book_new()
@@ -414,8 +428,12 @@ export function TournamentParticipantsModal({
     message += ` - ${timeStr}`
     message += '\n\n'
     list.forEach((p, i) => {
-      const hcpVal = p.handicap_local != null ? Math.round(Number(p.handicap_local)) : (p.handicap_index != null ? Math.round(Number(p.handicap_index)) : null)
-      const hcp = formatHcpForDisplay(hcpVal, (p as any).handicap_index)
+      const whIndex = participantWhIndex(p)
+      const hcp = formatHcpDisplayForClubPlayer(currentClub, {
+        handicap_index: whIndex,
+        handicap_local: participantPlayingHcp(p),
+        gender: p.gender,
+      })
       const turnoRaw = (p as any).tee_time_preference ?? (p as any).teeTimePreference ?? (p as any).preferred_session
       const turno = turnoRaw === 'afternoon' || turnoRaw === 'tarde' ? 'Tarde' : turnoRaw === 'morning' || turnoRaw === 'mañana' ? 'Mañana' : '-'
       message += `${i + 1}. ${formatName(p.player_name || '')} - HCP ${hcp} - ${turno}\n`
@@ -1709,9 +1727,9 @@ export function TournamentParticipantsModal({
                                       { onSettled: () => { refetch(); setSavingIndexParticipantId(null) } }
                                     )
                                   } else {
-                                    const num = Number(v)
+                                    const num = Number(v.replace(',', '.'))
                                     if (!Number.isFinite(num)) return
-                                    const local = calculateHCPFromIndexDefault(num, (participant as any).gender)
+                                    const local = computeHcpFromIndexForClub(num, participant.gender, currentClub)
                                     setSavingIndexParticipantId(participant.participant_id)
                                     updateParticipantHandicap.mutate(
                                       { participantId: participant.participant_id, handicap_index: num, handicap_local: local ?? undefined },
@@ -1729,17 +1747,25 @@ export function TournamentParticipantsModal({
                                 type="button"
                                 onClick={() => {
                                   setEditingIndexParticipantId(participant.participant_id)
-                                  setEditingIndexValue(participant.handicap_index != null && participant.handicap_index !== undefined ? String(participant.handicap_index) : '')
+                                  const wh = participantWhIndex(participant)
+                                  setEditingIndexValue(wh != null ? String(wh) : '')
                                 }}
                                 className="text-left underline decoration-dotted hover:bg-gray-100 rounded px-1 py-0.5 min-w-[2rem]"
                                 title="Clic para editar index"
                               >
-                                {participant.handicap_index !== null && participant.handicap_index !== undefined ? participant.handicap_index : '—'}
+                                {(() => {
+                                  const wh = participantWhIndex(participant)
+                                  return wh != null ? formatHandicapIndexForDisplay(wh) : '—'
+                                })()}
                               </button>
                             )}
                           </td>
                           <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">
-                            {formatHcpForDisplay(participant.handicap_local ?? (participant as any).handicap_index, (participant as any).handicap_index)}
+                            {formatHcpDisplayForClubPlayer(currentClub, {
+                              handicap_index: participantWhIndex(participant),
+                              handicap_local: participantPlayingHcp(participant),
+                              gender: participant.gender,
+                            })}
                           </td>
                           <td className="px-3 py-4 whitespace-nowrap">
                             <div className="flex items-center space-x-2">

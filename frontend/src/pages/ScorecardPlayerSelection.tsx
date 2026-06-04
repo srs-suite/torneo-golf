@@ -5,6 +5,7 @@ import { useTournamentParticipants, useTournaments } from '../hooks/useTournamen
 import { isTournamentStatusClosed } from '../types/tournament';
 import { useTournamentScorecards } from '../hooks/useScorecards';
 import { getScoreStyle, formatHcpForDisplay, computeNetScore } from '../utils/scoreUtils';
+import { participantPlayingHcp, participantWhIndex } from '../utils/clubHandicap';
 import { TournamentClosedNotice, TORNEO_CERRADO_ALERT } from '../components/TournamentClosedNotice';
 
 // Score styling moved to shared utility
@@ -451,9 +452,9 @@ export default function ScorecardPlayerSelection() {
           player_type: participantData?.player_type || 'member',
           player_club: participantData?.player_club || 'Sin club',
           handicap_local:
-            (scRow.handicap_local as number | undefined) ?? participantData?.handicap_local,
+            (scRow.handicap_local as number | undefined) ?? participantPlayingHcp(participantData as any) ?? undefined,
           handicap_index:
-            (scRow.handicap_index as number | undefined) ?? (participantData as any)?.handicap_index,
+            (scRow.handicap_index as number | undefined) ?? participantWhIndex(participantData as any) ?? undefined,
           scores: [] as any[],
         }
 
@@ -887,9 +888,14 @@ export default function ScorecardPlayerSelection() {
                             <span>
                               {participant.player_type === 'external' ? 'Externo' : 'Socio'}
                             </span>
-                            {(participant.handicap_local != null || (participant as any).handicap_index != null) && (
-                              <span>HCP: {formatHcpForDisplay(participant.handicap_local ?? (participant as any).handicap_index, (participant as any).handicap_index)}</span>
-                            )}
+                            {(() => {
+                              const wh = participantWhIndex(participant)
+                              const play = participantPlayingHcp(participant)
+                              if (play == null && wh == null) return null
+                              return (
+                                <span>HCP: {formatHcpForDisplay(play, wh)}</span>
+                              )
+                            })()}
                             {participant.member_number && (
                               <span>#{participant.member_number}</span>
                             )}
@@ -908,8 +914,9 @@ export default function ScorecardPlayerSelection() {
                             {/* Score Summary for players with loaded scorecards - inline */}
                             {hasScorecard && participantScorecard && (() => {
                               const totalGolpes = (participantScorecard as any).total_gross || 0;
-                              const hcp = Math.round(participant.handicap_local ?? (participant as any).handicap_index) || 0;
-                              const neto = computeNetScore(totalGolpes, hcp, (participant as any).handicap_index);
+                              const wh = participantWhIndex(participant)
+                              const hcp = Math.round(participantPlayingHcp(participant) ?? wh ?? 0)
+                              const neto = computeNetScore(totalGolpes, hcp, wh)
                               
                               return (
                                 <div className="flex items-center gap-3 ml-4 px-3 py-1 bg-green-50 rounded-lg text-xs">
@@ -922,7 +929,7 @@ export default function ScorecardPlayerSelection() {
                                   <div className="text-center">
                                     <span className="text-gray-500">HCP:</span>
                                     <span className="font-bold text-gray-900 ml-1">
-                                      {formatHcpForDisplay(participant.handicap_local ?? (participant as any).handicap_index, (participant as any).handicap_index)}
+                                      {formatHcpForDisplay(participantPlayingHcp(participant), wh)}
                                     </span>
                                   </div>
                                   <div className="text-center">

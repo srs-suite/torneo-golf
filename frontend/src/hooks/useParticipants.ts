@@ -17,6 +17,7 @@ import {
 } from '@/services/participantService';
 import { Participant, PlayerSearchResult } from '@/types/participant';
 import type { ExternalPlayerRegistry } from '@/types/externalPlayer';
+import { MEMBER_QUERY_KEYS } from '@/hooks/useMembers';
 
 const QUERY_KEYS = {
   participants: (clubId: number, tournamentId: number) => ['participants', clubId, tournamentId],
@@ -110,6 +111,7 @@ export const useUpdateParticipantHandicap = (clubId: number, tournamentId: numbe
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.participants(clubId, tournamentId) });
       queryClient.invalidateQueries({ queryKey: ['tournament-groups', clubId, tournamentId] });
+      queryClient.invalidateQueries({ queryKey: MEMBER_QUERY_KEYS.members(clubId) });
       toast.success('Index/HCP actualizado');
     },
     onError: (error: any) => {

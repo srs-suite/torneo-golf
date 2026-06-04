@@ -4,6 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { X, Trophy, Calendar, DollarSign, Link2, Upload } from 'lucide-react'
 import { tournamentService } from '@/services/tournamentService'
+import { resolveFlyerDisplayUrl } from '@/utils/flyerUrl'
 import { useCreateTournament, useUpdateTournament } from '@/hooks/useTournaments'
 import { Tournament, CreateTournamentData } from '@/types/tournament'
 import { toast } from 'react-hot-toast'
@@ -404,7 +405,8 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                               try {
                                 const { url } = await tournamentService.uploadFlyer(clubId, tournament.tournament_id, dataUrl)
                                 setFlyerUrl(url)
-                                toast.success('Flyer subido correctamente')
+                                await tournamentService.updateTournament(clubId, tournament.tournament_id, { flyer_url: url })
+                                toast.success('Flyer subido y guardado')
                               } catch (err: any) {
                                 toast.error(err?.response?.data?.error || err?.message || 'Error al subir la imagen')
                               } finally {
@@ -425,7 +427,7 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                       <div className="mt-3">
                         <p className="text-xs text-gray-500 mb-1">Vista previa:</p>
                         <img
-                          src={flyerUrl.trim() || pendingFlyerDataUrl || ''}
+                          src={pendingFlyerDataUrl || resolveFlyerDisplayUrl(flyerUrl) || ''}
                           alt="Flyer del torneo"
                           className="max-w-full max-h-40 object-contain rounded border border-gray-200 bg-white"
                           onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}

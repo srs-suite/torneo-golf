@@ -13,7 +13,7 @@ const __dirname = path.dirname(__filename);
 const DB_CONFIG = {
     host: process.env.DB_HOST || 'localhost',
     user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || 'juanmacv',
+    password: process.env.DB_PASSWORD ?? 'juanmacv',
     database: process.env.DB_NAME || 'teetracker_pro',
     port: process.env.DB_PORT || 3306,
     charset: 'utf8mb4',

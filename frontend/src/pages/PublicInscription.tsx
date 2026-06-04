@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { Smartphone, Trophy, Sun, Moon, CheckCircle } from 'lucide-react';
 import axios from 'axios';
+import { resolveFlyerDisplayUrl } from '@/utils/flyerUrl';
 
 interface TournamentInfo {
   tournament_id: number;
@@ -307,24 +308,7 @@ export default function PublicInscription() {
     );
   }
 
-  // Aceptar flyer_url o flyerUrl. En dev (mismo origin) usar path para que /uploads pase por el proxy.
-  const rawFlyer = (tournament?.flyer_url ?? '')?.trim?.() || '';
-  const flyerUrl = (() => {
-    if (!rawFlyer) return '';
-    try {
-      if (rawFlyer.startsWith('/')) return rawFlyer;
-      if (rawFlyer.startsWith('http://') || rawFlyer.startsWith('https://')) {
-        const u = new URL(rawFlyer);
-        if (u.pathname.startsWith('/uploads/')) {
-          return `${window.location.origin}${u.pathname}`;
-        }
-        return rawFlyer;
-      }
-      return rawFlyer;
-    } catch {
-      return rawFlyer;
-    }
-  })();
+  const flyerUrl = resolveFlyerDisplayUrl(tournament?.flyer_url);
 
   return (
     <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4 pb-12 overflow-y-auto">

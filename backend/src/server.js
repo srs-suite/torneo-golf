@@ -612,8 +612,7 @@ async function handleClubAPI(req, res, pathParts) {
                         return;
                     }
                     fs.writeFileSync(filePath, buf);
-                    const baseUrl = process.env.API_BASE_URL || `http://${req.headers.host}`;
-                    const url = `${baseUrl.replace(/\/$/, '')}/uploads/tournaments/${fileName}`;
+                    const url = `/uploads/tournaments/${fileName}`;
                     sendJSON(res, { success: true, url });
                     return;
                 } catch (err) {
@@ -2193,6 +2192,12 @@ const server = http.createServer(async (req, res) => {
                 }[ext] || 'application/octet-stream';
                 res.writeHead(200, { 'Content-Type': contentType, ...corsHeaders, 'Cache-Control': 'public, max-age=86400' });
                 fs.createReadStream(filePath).pipe(res);
+                return;
+            }
+            const uploadsFallback = (process.env.UPLOADS_FALLBACK_ORIGIN || '').trim().replace(/\/$/, '');
+            if (uploadsFallback && process.env.NODE_ENV !== 'production') {
+                res.writeHead(302, { Location: `${uploadsFallback}${pathname}`, ...corsHeaders });
+                res.end();
                 return;
             }
         }

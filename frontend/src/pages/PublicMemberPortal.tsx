@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { Trophy, LogOut, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import axios from 'axios';
 import { buildCategoryDefinitions, computeResultsByCategory } from '@/utils/tournamentResultsByCategory';
+import { formatHandicapIndexForDisplay } from '@/utils/scoreUtils';
 
 interface PortalTournament {
   tournament_id: number;
@@ -497,24 +498,32 @@ export default function PublicMemberPortal() {
                                     <span className="text-center">Neto</span>
                                     <span className="text-center">Gross</span>
                                   </div>
-                                  {rows.map((row, idx) => (
-                                    <div
-                                      key={`${cat.id}-${idx}`}
-                                      className="px-3 py-2 grid grid-cols-[1.75rem_minmax(0,1fr)_3rem_3rem] gap-x-2 items-center text-xs sm:text-sm"
-                                    >
-                                      <span className="font-bold text-gray-800 text-center">{row.position}</span>
-                                      <span className="min-w-0">
-                                        <span className="font-medium text-gray-900 block truncate">{row.player_name}</span>
-                                        {row.member_number ? (
-                                          <span className="text-gray-500">#{row.member_number}</span>
-                                        ) : null}
-                                      </span>
-                                      <span className="text-center font-semibold text-blue-700 tabular-nums">
-                                        {row.total_net}
-                                      </span>
-                                      <span className="text-center text-gray-800 tabular-nums">{row.total_gross}</span>
-                                    </div>
-                                  ))}
+                                  {rows.map((row, idx) => {
+                                    const indexLabel = formatHandicapIndexForDisplay(row.handicap_index)
+                                    return (
+                                      <div
+                                        key={`${cat.id}-${idx}`}
+                                        className="px-3 py-2 grid grid-cols-[1.75rem_minmax(0,1fr)_3rem_3rem] gap-x-2 items-center text-xs sm:text-sm"
+                                      >
+                                        <span className="font-bold text-gray-800 text-center">{row.position}</span>
+                                        <span className="min-w-0">
+                                          <span className="font-medium text-gray-900 block truncate">
+                                            {row.player_name}
+                                            {indexLabel ? (
+                                              <span className="text-gray-600 font-normal"> ({indexLabel})</span>
+                                            ) : null}
+                                          </span>
+                                          {row.member_number ? (
+                                            <span className="text-gray-500">#{row.member_number}</span>
+                                          ) : null}
+                                        </span>
+                                        <span className="text-center font-semibold text-blue-700 tabular-nums">
+                                          {row.total_net}
+                                        </span>
+                                        <span className="text-center text-gray-800 tabular-nums">{row.total_gross}</span>
+                                      </div>
+                                    )
+                                  })}
                                 </div>
                               )}
                             </div>

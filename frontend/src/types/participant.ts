@@ -8,7 +8,13 @@ export interface Participant {
   player_email?: string
   player_phone?: string
   handicap_index: number
+  /** Índice WH real (alias legacy; igual que handicap_index tras corrección API). */
+  handicap_index_wh?: number | null
+  /** HCP de juego efectivo del torneo (COALESCE usado/local). */
+  handicap_play?: number | null
+  handicap_used?: number | null
   handicap_local?: number
+  gender?: string | null
   member_number?: string
   player_club: string
   player_type: 'member' | 'visitor' | 'external'

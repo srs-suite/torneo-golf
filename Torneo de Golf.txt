@@ -40,5 +40,5 @@ Para la próxima vez que actualices el frontend en el VPS:
 
 cd /home/retailso/torneogolf-source/frontend
 npm run build
-cp -r dist/* /home/retailso/torneogolf.retailsolutionstimetracker.com/
+cp -rf dist/* /home/retailso/torneogolf.retailsolutionstimetracker.com/
 pm2 restart teetracker-backend
