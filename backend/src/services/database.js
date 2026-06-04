@@ -4117,19 +4117,27 @@ async function updateTournament(courseId, tournamentId, tournamentData) {
         }
     }
 
+    // Partial PUT (ej. solo flyer_url): completar con valores actuales para no pasar undefined a MySQL
+    const src = { ...existing };
+    for (const [k, v] of Object.entries(tournamentData)) {
+        if (v !== undefined) src[k] = v;
+    }
+    delete src.course_name;
+    delete src.current_participants;
+
     // Parámetros que suelen existir en todas las instalaciones
     const minimalParams = [
-        tournamentData.tournament_name,
-        tournamentData.tournament_date,
-        tournamentData.start_time || null,
-        tournamentData.end_time || null,
-        tournamentData.tournament_type,
-        tournamentData.max_participants || null,
-        tournamentData.registration_deadline || null,
-        tournamentData.entry_fee || 0,
-        tournamentData.prize_pool || 0,
-        tournamentData.description || null,
-        tournamentData.rules || null
+        src.tournament_name,
+        src.tournament_date,
+        src.start_time || null,
+        src.end_time || null,
+        src.tournament_type,
+        src.max_participants || null,
+        src.registration_deadline || null,
+        src.entry_fee ?? 0,
+        src.prize_pool ?? 0,
+        src.description || null,
+        src.rules || null
     ];
 
     const runUpdate = async (sql, params) => {
@@ -4144,27 +4152,27 @@ async function updateTournament(courseId, tournamentId, tournamentData) {
     };
 
     // Intentar UPDATE completo (+ results_mode, tee config: enable_simultaneous_starts, afternoon_start_time, preferred_session, tee_interval_minutes, enable_two_sessions)
-    const resultsMode = (tournamentData.results_mode === 'scratch_bands') ? 'scratch_bands' : 'standard';
-    const teeSimultaneous = (tournamentData.enable_simultaneous_starts === true || tournamentData.enable_simultaneous_starts === 1) ? 1 : 0;
-    const teeTwoSessions = (tournamentData.enable_two_sessions === true || tournamentData.enable_two_sessions === 1) ? 1 : 0;
-    const allowGroups = (tournamentData.public_inscription_allow_groups !== false && tournamentData.public_inscription_allow_groups !== 0) ? 1 : 0;
-    const flyerUrl = normalizeFlyerUrlStored(tournamentData.flyer_url);
+    const resultsMode = (src.results_mode === 'scratch_bands') ? 'scratch_bands' : 'standard';
+    const teeSimultaneous = (src.enable_simultaneous_starts === true || src.enable_simultaneous_starts === 1) ? 1 : 0;
+    const teeTwoSessions = (src.enable_two_sessions === true || src.enable_two_sessions === 1) ? 1 : 0;
+    const allowGroups = (src.public_inscription_allow_groups !== false && src.public_inscription_allow_groups !== 0) ? 1 : 0;
+    const flyerUrl = normalizeFlyerUrlStored(src.flyer_url);
     const fullParams = [
         ...minimalParams.slice(0, 8),
-        tournamentData.custodian || null,
-        tournamentData.account_id || null,
+        src.custodian || null,
+        src.account_id || null,
         ...minimalParams.slice(8),
-        (tournamentData.public_inscription === true || tournamentData.public_inscription === 1) ? 1 : 0,
+        (src.public_inscription === true || src.public_inscription === 1) ? 1 : 0,
         allowGroups,
         flyerUrl,
         resultsMode,
-        (tournamentData.separate_ladies === true || tournamentData.separate_ladies === 1) ? 1 : 0,
-        (tournamentData.ladies_by_hcp === true || tournamentData.ladies_by_hcp === 1) ? 1 : 0,
-        (tournamentData.is_ranking_event === true || tournamentData.is_ranking_event === 1) ? 1 : 0,
+        (src.separate_ladies === true || src.separate_ladies === 1) ? 1 : 0,
+        (src.ladies_by_hcp === true || src.ladies_by_hcp === 1) ? 1 : 0,
+        (src.is_ranking_event === true || src.is_ranking_event === 1) ? 1 : 0,
         teeSimultaneous,
-        tournamentData.afternoon_start_time || '14:00',
-        (tournamentData.preferred_session === 'afternoon') ? 'afternoon' : 'morning',
-        tournamentData.tee_interval_minutes != null ? Number(tournamentData.tee_interval_minutes) : 10,
+        src.afternoon_start_time || '14:00',
+        (src.preferred_session === 'afternoon') ? 'afternoon' : 'morning',
+        src.tee_interval_minutes != null ? Number(src.tee_interval_minutes) : 10,
         teeTwoSessions,
         nextStatus,
         ...whereParams
@@ -4190,17 +4198,17 @@ async function updateTournament(courseId, tournamentId, tournamentData) {
         try {
             const withResultsModeParams = [
                 ...minimalParams,
-                (tournamentData.public_inscription === true || tournamentData.public_inscription === 1) ? 1 : 0,
+                (src.public_inscription === true || src.public_inscription === 1) ? 1 : 0,
                 allowGroups,
                 flyerUrl,
                 resultsMode,
-                (tournamentData.separate_ladies === true || tournamentData.separate_ladies === 1) ? 1 : 0,
-                (tournamentData.ladies_by_hcp === true || tournamentData.ladies_by_hcp === 1) ? 1 : 0,
-                (tournamentData.is_ranking_event === true || tournamentData.is_ranking_event === 1) ? 1 : 0,
+                (src.separate_ladies === true || src.separate_ladies === 1) ? 1 : 0,
+                (src.ladies_by_hcp === true || src.ladies_by_hcp === 1) ? 1 : 0,
+                (src.is_ranking_event === true || src.is_ranking_event === 1) ? 1 : 0,
                 teeSimultaneous,
-                tournamentData.afternoon_start_time || '14:00',
-                (tournamentData.preferred_session === 'afternoon') ? 'afternoon' : 'morning',
-                tournamentData.tee_interval_minutes != null ? Number(tournamentData.tee_interval_minutes) : 10,
+                src.afternoon_start_time || '14:00',
+                (src.preferred_session === 'afternoon') ? 'afternoon' : 'morning',
+                src.tee_interval_minutes != null ? Number(src.tee_interval_minutes) : 10,
                 teeTwoSessions,
                 nextStatus,
                 ...whereParams
@@ -4225,7 +4233,7 @@ async function updateTournament(courseId, tournamentId, tournamentData) {
         try {
             const fallbackParams = [
                 ...minimalParams,
-                (tournamentData.public_inscription === true || tournamentData.public_inscription === 1) ? 1 : 0,
+                (src.public_inscription === true || src.public_inscription === 1) ? 1 : 0,
                 nextStatus,
                 ...whereParams
             ];
