@@ -122,6 +122,50 @@ pm2 restart torneogolf-backend
 
 ---
 
+## Flyer del torneo no sube (error al subir imagen)
+
+Tras un deploy nuevo la carpeta `uploads/` **no viene en Git**. Hay que crearla y permitir que Nginx pase `/uploads/` al backend.
+
+**1. Carpeta y permisos (SSH):**
+
+```bash
+mkdir -p /home/retailso/torneogolf-source/backend/src/uploads/tournaments
+chown -R retailso:retailso /home/retailso/torneogolf-source/backend/src/uploads
+chmod -R 775 /home/retailso/torneogolf-source/backend/src/uploads
+# Restaurar flyers viejos del backup si existían:
+cp -a /home/retailso/torneogolf-source.backup-*/backend/src/uploads/tournaments/* \
+  /home/retailso/torneogolf-source/backend/src/uploads/tournaments/ 2>/dev/null || true
+```
+
+**2. Nginx — límite de subida y proxy de `/uploads/`** (en el vhost de torneogolf):
+
+Dentro del bloque `server { ... }` debe existir:
+
+```nginx
+client_max_body_size 10M;
+
+location /uploads/ {
+    proxy_pass http://127.0.0.1:8001;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+}
+```
+
+(`8001` = mismo puerto que `/api/`)
+
+Luego: `nginx -t && systemctl reload nginx`
+
+**3. Probar subida y lectura:**
+
+```bash
+pm2 logs torneogolf-backend --lines 20 --nostream
+ls -la /home/retailso/torneogolf-source/backend/src/uploads/tournaments/
+```
+
+Si el error es **413**, falta `client_max_body_size 10M;`. Si es **500 EACCES**, revisar permisos del paso 1.
+
+---
+
 ## Verificar que todo subió bien (si no ves los cambios)
 
 Ejecutá estos comandos **por SSH en el VPS** para ver en qué paso falló.

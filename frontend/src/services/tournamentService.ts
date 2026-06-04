@@ -57,7 +57,9 @@ export const tournamentService = {
 
   /** Sube una imagen del flyer (data URL en base64) y devuelve la URL pública. */
   async uploadFlyer(clubId: number, tournamentId: number, imageDataUrl: string): Promise<{ url: string }> {
-    const response = await api.post(`/club/${clubId}/tournaments/${tournamentId}/flyer-upload`, { image: imageDataUrl })
+    const response = await api.post(`/club/${clubId}/tournaments/${tournamentId}/flyer-upload`, { image: imageDataUrl }, {
+      timeout: 120000,
+    })
     return response.data
   },
 

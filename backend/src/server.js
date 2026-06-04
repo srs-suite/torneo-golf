@@ -264,10 +264,17 @@ function sendError(res, message, statusCode = 500) {
     res.end(JSON.stringify({ error: message }));
 }
 
-async function parseBody(req) {
+async function parseBody(req, maxBytes = 0) {
     return new Promise((resolve, reject) => {
         let body = '';
+        let size = 0;
         req.on('data', chunk => {
+            size += chunk.length;
+            if (maxBytes > 0 && size > maxBytes) {
+                reject(new Error(`El cuerpo de la solicitud supera ${Math.round(maxBytes / (1024 * 1024))} MB`));
+                req.destroy();
+                return;
+            }
             body += chunk.toString();
         });
         req.on('end', () => {
@@ -282,6 +289,7 @@ async function parseBody(req) {
                 reject(new Error('Invalid JSON'));
             }
         });
+        req.on('error', reject);
     });
 }
 
@@ -583,7 +591,7 @@ async function handleClubAPI(req, res, pathParts) {
             } else if (subResource === 'flyer-upload' && method === 'POST') {
                 // Subir flyer (imagen) del torneo; manejado primero para que no sea capturado por otras rutas
                 try {
-                    const body = await parseBody(req);
+                    const body = await parseBody(req, 8 * 1024 * 1024);
                     const dataUrl = body?.image;
                     if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
                         sendError(res, 'Se requiere una imagen en formato data URL (data:image/...)', 400);
@@ -601,9 +609,7 @@ async function handleClubAPI(req, res, pathParts) {
                     }
                     const base64Data = match[2];
                     const uploadsDir = path.join(__dirname, 'uploads', 'tournaments');
-                    if (!fs.existsSync(uploadsDir)) {
-                        fs.mkdirSync(uploadsDir, { recursive: true });
-                    }
+                    fs.mkdirSync(uploadsDir, { recursive: true, mode: 0o775 });
                     const fileName = `${resourceId}_flyer.${ext}`;
                     const filePath = path.join(uploadsDir, fileName);
                     const buf = Buffer.from(base64Data, 'base64');
@@ -611,12 +617,16 @@ async function handleClubAPI(req, res, pathParts) {
                         sendError(res, 'La imagen no debe superar 5 MB', 400);
                         return;
                     }
-                    fs.writeFileSync(filePath, buf);
+                    fs.writeFileSync(filePath, buf, { mode: 0o664 });
                     const url = `/uploads/tournaments/${fileName}`;
                     sendJSON(res, { success: true, url });
                     return;
                 } catch (err) {
                     console.error('Flyer upload error:', err);
+                    if (err && (err.code === 'EACCES' || err.code === 'EPERM')) {
+                        sendError(res, 'No hay permiso para escribir en uploads/tournaments. Revisá permisos en el servidor.', 500);
+                        return;
+                    }
                     sendError(res, err.message || 'Error al subir la imagen', 500);
                     return;
                 }
