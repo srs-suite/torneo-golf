@@ -30,7 +30,8 @@ export function Login() {
       const data = await response.json()
 
       if (response.ok) {
-        // Guardar token y datos del admin
+        // Evitar permisos cacheados de otra sesión
+        localStorage.removeItem('userPermissions')
         localStorage.setItem('clubToken', data.token)
         localStorage.setItem('adminId', data.admin.id.toString())
         localStorage.setItem('adminName', data.admin.name)

@@ -9,10 +9,12 @@ export const api = axios.create({
   },
 })
 
-// Request interceptor for auth tokens (future)
 api.interceptors.request.use(
   (config) => {
-    // Add auth token here when implemented
+    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('clubToken') : null
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    }
     return config
   },
   (error) => {

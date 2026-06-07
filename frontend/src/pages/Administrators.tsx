@@ -3,12 +3,15 @@ import { Plus, Search, RefreshCw, Users, Building2, Shield } from 'lucide-react'
 import { useAdministrators } from '@/hooks/useAdministrators'
 import { LoadingSpinner } from '@/components/LoadingSpinner'
 import { AdministratorCard } from '@/components/AdministratorCard'
+import { AdministratorFormModal } from '@/components/AdministratorFormModal'
+import { Administrator } from '@/types/administrator'
 
 export function Administrators() {
   const [searchTerm, setSearchTerm] = useState('')
   const [roleFilter, setRoleFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
-  const [, setEditingAdmin] = useState<any>(null)
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [editingAdmin, setEditingAdmin] = useState<Administrator | null>(null)
   
   const { data: administrators = [], isLoading, error, refetch } = useAdministrators()
 
@@ -64,7 +67,7 @@ export function Administrators() {
             <span>Actualizar</span>
           </button>
           <button
-            onClick={() => {/* TODO: Implementar modal de creación */}}
+            onClick={() => setShowCreateModal(true)}
             className="btn btn-primary flex items-center space-x-2"
           >
             <Plus className="w-4 h-4" />
@@ -176,7 +179,7 @@ export function Administrators() {
           </p>
           {!searchTerm && roleFilter === 'all' && statusFilter === 'all' && (
             <button
-              onClick={() => {/* TODO: Implementar modal de creación */}}
+              onClick={() => setShowCreateModal(true)}
               className="btn btn-primary"
             >
               Crear Primer Administrador
@@ -225,7 +228,16 @@ export function Administrators() {
         </div>
       )}
 
-      {/* TODO: Add CreateAdministratorModal and EditAdministratorModal */}
+      <AdministratorFormModal
+        isOpen={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+      />
+
+      <AdministratorFormModal
+        isOpen={!!editingAdmin}
+        onClose={() => setEditingAdmin(null)}
+        administrator={editingAdmin}
+      />
     </div>
   )
 }

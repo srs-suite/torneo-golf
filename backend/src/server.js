@@ -16,7 +16,8 @@ import {
     getAllClubs, getClubById, createClub, updateClub, deleteClub,
     
     // Administrator functions  
-    getAllAdministrators, authenticateAdmin,
+    getAllAdministrators, authenticateAdmin, getAdministratorById,
+    createAdministrator, updateAdministrator, deleteAdministrator, resetAdministratorPassword,
     getClubUsers, createClubUser, updateUserInfo, updateUserPermissions, deleteClubUser,
     
     // Member functions
@@ -415,16 +416,49 @@ async function handleSystemAPI(req, res, pathParts) {
                 }
                 break;
             }
-            case 'administrators':
-                if (method === 'GET') {
+            case 'administrators': {
+                const subAction = pathParts[4];
+                if (resourceId) {
+                    const adminId = parseInt(resourceId, 10);
+                    if (!Number.isFinite(adminId)) {
+                        sendError(res, 'ID de administrador inválido', 400);
+                        return;
+                    }
+                    if (subAction === 'reset-password' && method === 'POST') {
+                        const body = await parseBody(req);
+                        await resetAdministratorPassword(adminId, body.password);
+                        sendJSON(res, { success: true, message: 'Contraseña restablecida exitosamente' });
+                    } else if (method === 'GET') {
+                        const admin = await getAdministratorById(adminId);
+                        if (!admin) {
+                            sendError(res, 'Administrador no encontrado', 404);
+                            return;
+                        }
+                        sendJSON(res, { success: true, data: admin });
+                    } else if (method === 'PUT') {
+                        const adminData = await parseBody(req);
+                        const updated = await updateAdministrator(adminId, adminData);
+                        sendJSON(res, { success: true, data: updated, message: 'Administrador actualizado exitosamente' });
+                    } else if (method === 'DELETE') {
+                        await deleteAdministrator(adminId);
+                        sendJSON(res, { success: true, message: 'Administrador eliminado exitosamente' });
+                    } else {
+                        sendError(res, 'Método no permitido', 405);
+                    }
+                } else if (method === 'GET') {
                     const clubIdParam = url.searchParams.get('clubId');
                     const clubId = clubIdParam ? parseInt(clubIdParam, 10) : null;
                     const admins = await getAllAdministrators(Number.isFinite(clubId) ? clubId : null);
                     sendJSON(res, { data: admins });
+                } else if (method === 'POST') {
+                    const adminData = await parseBody(req);
+                    const created = await createAdministrator(adminData);
+                    sendJSON(res, { success: true, data: created, message: 'Administrador creado exitosamente' });
                 } else {
                     sendError(res, 'Método no permitido', 405);
                 }
                 break;
+            }
             case 'stats':
                 if (method === 'GET') {
                     const stats = await getSystemStats();
@@ -458,6 +492,7 @@ async function handleClubAPI(req, res, pathParts) {
     const resource = pathParts[3];
     const resourceId = pathParts[4];
     const subResource = pathParts[5];
+    const pathname = new URL(req.url, `http://${req.headers.host}`).pathname;
 
     if (method === 'OPTIONS') {
         res.writeHead(200, corsHeaders);
@@ -1562,22 +1597,35 @@ async function handleClubAPI(req, res, pathParts) {
         
         // User management
         else if (resource === 'users') {
-            if (method === 'GET') {
-                // Get all users for the club
+            if (method === 'GET' && resourceId === 'me') {
+                const auth = validateAdminBearer(req, clubId);
+                if (!auth.ok) {
+                    sendError(res, auth.message || 'No autorizado', 401);
+                    return;
+                }
+                const meId = auth.session.adminId;
+                const user = await getClubUserById(parseInt(clubId), meId);
+                if (!user) {
+                    sendError(res, 'Usuario no encontrado', 404);
+                    return;
+                }
+                sendJSON(res, { success: true, data: user });
+            } else if (method === 'GET' && !resourceId) {
                 const users = await getClubUsers(parseInt(clubId));
                 sendJSON(res, { success: true, data: users });
-            } else if (method === 'POST') {
-                // Create new user
+            } else if (method === 'POST' && !resourceId) {
                 const userData = await parseBody(req);
                 const newUserId = await createClubUser(parseInt(clubId), userData);
                 sendJSON(res, { success: true, data: { userId: newUserId }, message: 'Usuario creado exitosamente' });
+            } else if (method === 'PUT' && resourceId && (subResource === 'info' || pathname.endsWith('/info'))) {
+                const userData = await parseBody(req);
+                const updated = await updateUserInfo(parseInt(resourceId, 10), userData);
+                sendJSON(res, { success: true, data: updated, message: 'Usuario actualizado exitosamente' });
             } else if (method === 'PUT' && resourceId) {
-                // Update user permissions
                 const permissions = await parseBody(req);
                 await updateUserPermissions(parseInt(resourceId), permissions);
                 sendJSON(res, { success: true, message: 'Permisos actualizados exitosamente' });
             } else if (method === 'DELETE' && resourceId) {
-                // Delete user
                 await deleteClubUser(parseInt(resourceId));
                 sendJSON(res, { success: true, message: 'Usuario eliminado exitosamente' });
             } else {

@@ -1,14 +1,20 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { api } from '@/lib/api'
+import { permFlag } from '@/lib/permissionFlags'
 
 export interface UserPermissions {
   canViewMembers: boolean
   canEditMembers: boolean
   canDeleteMembers: boolean
+  canViewExternalPlayers: boolean
+  canCreateExternalPlayers: boolean
+  canEditExternalPlayers: boolean
+  canDeleteExternalPlayers: boolean
   canViewTournaments: boolean
   canEditTournaments: boolean
   canDeleteTournaments: boolean
   canViewSettings: boolean
+  canManageUsers: boolean
   canViewAccounting: boolean
   canManagePayments: boolean
   canViewRankings: boolean
@@ -41,10 +47,15 @@ const DEFAULT_PERMISSIONS: UserPermissions = {
   canViewMembers: false,
   canEditMembers: false,
   canDeleteMembers: false,
+  canViewExternalPlayers: false,
+  canCreateExternalPlayers: false,
+  canEditExternalPlayers: false,
+  canDeleteExternalPlayers: false,
   canViewTournaments: false,
   canEditTournaments: false,
   canDeleteTournaments: false,
   canViewSettings: false,
+  canManageUsers: false,
   canViewAccounting: false,
   canManagePayments: false,
   canViewRankings: false,
@@ -66,10 +77,15 @@ const FULL_PERMISSIONS: UserPermissions = {
   canViewMembers: true,
   canEditMembers: true,
   canDeleteMembers: true,
+  canViewExternalPlayers: true,
+  canCreateExternalPlayers: true,
+  canEditExternalPlayers: true,
+  canDeleteExternalPlayers: true,
   canViewTournaments: true,
   canEditTournaments: true,
   canDeleteTournaments: true,
   canViewSettings: true,
+  canManageUsers: true,
   canViewAccounting: true,
   canManagePayments: true,
   canViewRankings: true,
@@ -108,140 +124,162 @@ function readInitialPermissionsFromBrowser(): UserPermissions {
   return DEFAULT_PERMISSIONS
 }
 
+function mapApiUserToPermissions(currentUser: Record<string, unknown>): UserPermissions {
+  const pay = permFlag(currentUser.can_manage_payments)
+  const next: UserPermissions = {
+    canViewMembers: permFlag(currentUser.can_view_members),
+    canEditMembers: permFlag(currentUser.can_edit_members) || permFlag(currentUser.can_create_members),
+    canDeleteMembers: permFlag(currentUser.can_delete_members),
+    canViewExternalPlayers: permFlag(currentUser.can_view_external_players),
+    canCreateExternalPlayers: permFlag(currentUser.can_create_external_players),
+    canEditExternalPlayers: permFlag(currentUser.can_edit_external_players),
+    canDeleteExternalPlayers: permFlag(currentUser.can_delete_external_players),
+    canViewTournaments: permFlag(currentUser.can_view_tournaments),
+    canEditTournaments: permFlag(currentUser.can_edit_tournaments) || permFlag(currentUser.can_create_tournaments),
+    canDeleteTournaments: permFlag(currentUser.can_delete_tournaments),
+    canViewSettings: permFlag(currentUser.can_view_settings),
+    canManageUsers: permFlag(currentUser.can_manage_users),
+    canViewAccounting: permFlag(currentUser.can_view_accounting) || pay,
+    canManagePayments: pay,
+    canViewRankings: permFlag(currentUser.can_view_rankings),
+    canViewPhotos: permFlag(currentUser.can_view_photos),
+    canManagePhotos: permFlag(currentUser.can_manage_photos),
+    canViewFinancialTotals: permFlag(currentUser.can_view_financial_totals),
+    canViewBalance: permFlag(currentUser.can_view_balance),
+    canViewTournamentIncomes: permFlag(currentUser.can_view_tournament_incomes),
+    canManageTournamentIncomes: permFlag(currentUser.can_manage_tournament_incomes),
+    canViewOtherIncomes: permFlag(currentUser.can_view_other_incomes),
+    canManageOtherIncomes: permFlag(currentUser.can_manage_other_incomes),
+    canViewExpenses: permFlag(currentUser.can_view_expenses),
+    canManageExpenses: permFlag(currentUser.can_manage_expenses),
+    canViewCurrencyExchanges: permFlag(currentUser.can_view_currency_exchanges),
+    canManageCurrencyExchanges: permFlag(currentUser.can_manage_currency_exchanges),
+  }
+  const hasGranularAcct =
+    next.canViewBalance ||
+    next.canViewFinancialTotals ||
+    next.canViewTournamentIncomes ||
+    next.canViewOtherIncomes ||
+    next.canViewExpenses ||
+    next.canViewCurrencyExchanges
+  if (pay && !hasGranularAcct) {
+    next.canViewBalance = true
+    next.canViewFinancialTotals = true
+    next.canViewTournamentIncomes = true
+    next.canViewOtherIncomes = true
+    next.canViewExpenses = true
+    next.canViewCurrencyExchanges = true
+  }
+  return next
+}
+
 export function useUserPermissions(clubId: string | undefined) {
   const [permissions, setPermissions] = useState<UserPermissions>(() => readInitialPermissionsFromBrowser())
   const [isLoading, setIsLoading] = useState(true)
-  const [isAdmin, setIsAdmin] = useState(false) // Se actualiza después de cargar permisos
+  const [isAdmin, setIsAdmin] = useState(false)
 
-  // Helper para guardar permisos en localStorage y state
-  const updatePermissions = (newPermissions: UserPermissions) => {
+  const updatePermissions = useCallback((newPermissions: UserPermissions) => {
     setPermissions(newPermissions)
     localStorage.setItem('userPermissions', JSON.stringify(newPermissions))
-  }
+  }, [])
+
+  const applyUserRecord = useCallback(
+    (currentUser: Record<string, unknown>) => {
+      const isPrimary = permFlag(currentUser.is_primary_admin)
+      const hasPermissionRow =
+        currentUser.permission_id !== null && currentUser.permission_id !== undefined
+
+      if (isPrimary) {
+        updatePermissions({ ...FULL_PERMISSIONS })
+        setIsAdmin(true)
+        return
+      }
+
+      if (!hasPermissionRow) {
+        updatePermissions({ ...DEFAULT_PERMISSIONS })
+        setIsAdmin(false)
+        return
+      }
+
+      updatePermissions(mapApiUserToPermissions(currentUser))
+      setIsAdmin(false)
+    },
+    [updatePermissions]
+  )
 
   useEffect(() => {
     const fetchPermissions = async () => {
       try {
-        // Verificar si es administrador del sistema
         const adminRole = localStorage.getItem('adminRole')
         const adminId = localStorage.getItem('adminId')
-        
+
         if (adminRole === 'system_admin') {
-          // Admin del sistema tiene todos los permisos
           updatePermissions({ ...FULL_PERMISSIONS })
           setIsAdmin(true)
           setIsLoading(false)
           return
         }
 
-        if (!clubId) {
+        if (!clubId || !adminId) {
+          updatePermissions({ ...DEFAULT_PERMISSIONS })
           setIsLoading(false)
           return
         }
 
-        // Obtener el ID del usuario actual
-        if (!adminId) {
-          setIsLoading(false)
-          return
+        // Preferir endpoint del usuario logueado (Bearer token)
+        try {
+          const meRes = await api.get(`/club/${clubId}/users/me`)
+          const me = meRes.data?.data ?? meRes.data
+          if (me && typeof me === 'object') {
+            applyUserRecord(me as Record<string, unknown>)
+            setIsLoading(false)
+            return
+          }
+        } catch {
+          /* fallback a listado completo */
         }
 
-        // Obtener los usuarios del club
         const response = await api.get(`/club/${clubId}/users`)
         const rawList = response.data?.data ?? response.data
         const users = Array.isArray(rawList) ? rawList : []
 
-        // Buscar el usuario actual (puede estar en admin_id o user_id).
         let currentUser = users.find(
-          (u: any) => sameAdminId(u.admin_id, adminId) || sameAdminId(u.user_id, adminId)
+          (u: Record<string, unknown>) =>
+            sameAdminId(u.admin_id, adminId) || sameAdminId(u.user_id, adminId)
         )
-        // Respaldo: si el ID no matchea (drivers / columnas duplicadas en SQL), matchear por usuario logueado
         const adminUsername = localStorage.getItem('adminUsername')
         if (!currentUser && adminUsername && users.length > 0) {
           const un = adminUsername.trim().toLowerCase()
-          currentUser = users.find((u: any) => String(u.username || '').trim().toLowerCase() === un)
+          currentUser = users.find(
+            (u: Record<string, unknown>) => String(u.username || '').trim().toLowerCase() === un
+          )
         }
-        
+
         if (currentUser) {
-          // Si no tiene permission_id (permisos en null), dar permisos completos por defecto
-          const hasNoPermissions = currentUser.permission_id === null || currentUser.permission_id === undefined
-          
-          // Verificar si es administrador principal del club o si no tiene permisos configurados
-          if (currentUser.is_primary_admin || hasNoPermissions) {
-            updatePermissions({ ...FULL_PERMISSIONS })
-            setIsAdmin(true)
-          } else {
-            // Usuario con permisos limitados
-            setIsAdmin(false)
-            const pay = !!(currentUser.can_manage_payments || false)
-            const next: UserPermissions = {
-              canViewMembers: currentUser.can_view_members || false,
-              canEditMembers: currentUser.can_edit_members || false,
-              canDeleteMembers: currentUser.can_delete_members || false,
-              canViewTournaments: currentUser.can_view_tournaments || false,
-              canEditTournaments: currentUser.can_edit_tournaments || false,
-              canDeleteTournaments: currentUser.can_delete_tournaments || false,
-              canViewSettings: currentUser.can_view_settings || false,
-              // Legacy: muchos usuarios tienen solo can_manage_payments sin flags granulares ni can_view_accounting
-              canViewAccounting: !!(currentUser.can_view_accounting || currentUser.can_manage_payments),
-              canManagePayments: pay,
-              canViewRankings: currentUser.can_view_rankings || false,
-              canViewPhotos: currentUser.can_view_photos || false,
-              canManagePhotos: currentUser.can_manage_photos || false,
-              canViewFinancialTotals: currentUser.can_view_financial_totals || false,
-              canViewBalance: currentUser.can_view_balance || false,
-              canViewTournamentIncomes: currentUser.can_view_tournament_incomes || false,
-              canManageTournamentIncomes: currentUser.can_manage_tournament_incomes || false,
-              canViewOtherIncomes: currentUser.can_view_other_incomes || false,
-              canManageOtherIncomes: currentUser.can_manage_other_incomes || false,
-              canViewExpenses: currentUser.can_view_expenses || false,
-              canManageExpenses: currentUser.can_manage_expenses || false,
-              canViewCurrencyExchanges: currentUser.can_view_currency_exchanges || false,
-              canManageCurrencyExchanges: currentUser.can_manage_currency_exchanges || false,
-            }
-            const hasGranularAcct =
-              next.canViewBalance ||
-              next.canViewFinancialTotals ||
-              next.canViewTournamentIncomes ||
-              next.canViewOtherIncomes ||
-              next.canViewExpenses ||
-              next.canViewCurrencyExchanges
-            // Quien gestiona cobros debe ver contabilidad aunque la BD no tenga columnas nuevas en true
-            if (pay && !hasGranularAcct) {
-              next.canViewBalance = true
-              next.canViewFinancialTotals = true
-              next.canViewTournamentIncomes = true
-              next.canViewOtherIncomes = true
-              next.canViewExpenses = true
-              next.canViewCurrencyExchanges = true
-            }
-            updatePermissions(next)
-          }
+          applyUserRecord(currentUser as Record<string, unknown>)
+        } else {
+          updatePermissions({ ...DEFAULT_PERMISSIONS })
+          setIsAdmin(false)
         }
 
         setIsLoading(false)
       } catch (error) {
         console.error('Error fetching permissions:', error)
+        updatePermissions({ ...DEFAULT_PERMISSIONS })
         setIsLoading(false)
       }
     }
 
     fetchPermissions()
-  }, [clubId])
+  }, [clubId, updatePermissions, applyUserRecord])
 
-  /**
-   * Enlace "Jugadores externos" en la barra del club: sesión válida + contexto club.
-   * No depender solo de canViewMembers (API/caché a veces lo deja en false).
-   * La página /external-players usa la misma bandera para listar; edición sigue con canEditMembers / canManagePayments.
-   */
   const showExternalPlayersNav = useMemo(() => {
     if (typeof window === 'undefined') return false
     if (!clubId) return false
     const role = localStorage.getItem('adminRole')
-    const adminId = localStorage.getItem('adminId')
     if (role === 'system_admin') return true
-    return role === 'club_admin' && !!adminId
-  }, [clubId])
+    return permissions.canViewExternalPlayers
+  }, [clubId, permissions.canViewExternalPlayers])
 
   return { permissions, isLoading, isAdmin, showExternalPlayersNav }
 }
-

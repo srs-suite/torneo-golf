@@ -53,6 +53,30 @@ const CLUB_STATS_SUBSELECT = `
 `;
 
 /**
+ * Asegura columnas de user_permissions (migración suave).
+ */
+async function ensureUserPermissionsColumns() {
+    const columns = [
+        ['can_manage_users', 'TINYINT(1) NULL DEFAULT 0'],
+        ['can_view_external_players', 'TINYINT(1) NULL DEFAULT 0'],
+        ['can_create_external_players', 'TINYINT(1) NULL DEFAULT 0'],
+        ['can_edit_external_players', 'TINYINT(1) NULL DEFAULT 0'],
+        ['can_delete_external_players', 'TINYINT(1) NULL DEFAULT 0'],
+    ];
+    for (const [name, definition] of columns) {
+        const { rows } = await executeQuery(
+            `SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_permissions' AND COLUMN_NAME = ?`,
+            [name]
+        );
+        if (Number(rows[0]?.c) === 0) {
+            await executeQuery(`ALTER TABLE user_permissions ADD COLUMN ${name} ${definition}`);
+            console.log(`✅ user_permissions.${name} agregada`);
+        }
+    }
+}
+
+/**
  * Asegura columnas usadas por el formulario de clubes (migración suave).
  */
 async function ensureClubsFormColumns() {
@@ -326,10 +350,11 @@ async function getAllAdministrators(clubId = null) {
     let query = `
         SELECT 
             ca.*,
-            gc.club_name as club_name
+            gc.club_name as club_name,
+            gc.club_code as club_code
         FROM club_administrators ca
         LEFT JOIN clubs gc ON ca.course_id = gc.club_id
-        WHERE ca.is_active = true
+        WHERE 1=1
     `;
     
     const params = [];
@@ -352,10 +377,11 @@ async function getAdministratorById(adminId) {
     const query = `
         SELECT 
             ca.*,
-            gc.club_name as club_name
+            gc.club_name as club_name,
+            gc.club_code as club_code
         FROM club_administrators ca
         LEFT JOIN clubs gc ON ca.course_id = gc.club_id
-        WHERE ca.admin_id = ? AND ca.is_active = true
+        WHERE ca.admin_id = ?
     `;
     
     const { rows } = await executeQuery(query, [adminId]);
@@ -377,6 +403,178 @@ async function getAdministratorByUsername(username) {
     
     const { rows } = await executeQuery(query, [username]);
     return rows[0] || null;
+}
+
+/**
+ * Get administrator by username (including inactive)
+ */
+async function getAdministratorByUsernameAny(username) {
+    const query = `
+        SELECT admin_id, username, email, is_active
+        FROM club_administrators
+        WHERE username = ?
+        LIMIT 1
+    `;
+    const { rows } = await executeQuery(query, [username]);
+    return rows[0] || null;
+}
+
+/**
+ * Create administrator (system or club)
+ */
+async function createAdministrator(data) {
+    const role = data.role === 'system_admin' ? 'system_admin' : 'club_admin';
+    const courseId = role === 'system_admin' ? null : (data.courseId ?? null);
+
+    if (!data.username || !data.email || !data.fullName || !data.password) {
+        throw new Error('Faltan campos obligatorios');
+    }
+    if (role === 'club_admin' && !courseId) {
+        throw new Error('Debe seleccionar un club para el administrador de club');
+    }
+    if (String(data.password).length < 6) {
+        throw new Error('La contraseña debe tener al menos 6 caracteres');
+    }
+
+    const existingUsername = await getAdministratorByUsernameAny(data.username);
+    if (existingUsername) {
+        throw new Error('El nombre de usuario ya está en uso');
+    }
+
+    const emailCheck = await executeQuery(
+        'SELECT admin_id FROM club_administrators WHERE email = ? LIMIT 1',
+        [data.email]
+    );
+    if (emailCheck.rows[0]) {
+        throw new Error('El email ya está registrado');
+    }
+
+    const hashedPassword = crypto.createHash('sha256').update(data.password).digest('hex');
+    const isPrimary = role === 'club_admin' && data.isPrimaryAdmin === true;
+
+    const { rows: insertResult } = await executeQuery(
+        `INSERT INTO club_administrators (
+            course_id, username, email, password_hash, full_name,
+            role, is_primary_admin, is_active, created_by
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, TRUE, ?)`,
+        [
+            courseId,
+            data.username,
+            data.email,
+            hashedPassword,
+            data.fullName,
+            role,
+            isPrimary,
+            data.createdBy || null,
+        ]
+    );
+
+    return getAdministratorById(insertResult.insertId);
+}
+
+/**
+ * Update administrator
+ */
+async function updateAdministrator(adminId, data) {
+    const admin = await getAdministratorById(adminId);
+    if (!admin) {
+        throw new Error('Administrador no encontrado');
+    }
+
+    if (data.username && data.username !== admin.username) {
+        const existingUsername = await getAdministratorByUsernameAny(data.username);
+        if (existingUsername && existingUsername.admin_id !== adminId) {
+            throw new Error('El nombre de usuario ya está en uso');
+        }
+    }
+
+    if (data.email && data.email !== admin.email) {
+        const emailCheck = await executeQuery(
+            'SELECT admin_id FROM club_administrators WHERE email = ? AND admin_id != ? LIMIT 1',
+            [data.email, adminId]
+        );
+        if (emailCheck.rows[0]) {
+            throw new Error('El email ya está registrado');
+        }
+    }
+
+    const updates = [];
+    const params = [];
+
+    if (data.fullName) {
+        updates.push('full_name = ?');
+        params.push(data.fullName);
+    }
+    if (data.email) {
+        updates.push('email = ?');
+        params.push(data.email);
+    }
+    if (data.username) {
+        updates.push('username = ?');
+        params.push(data.username);
+    }
+    if (data.password) {
+        if (String(data.password).length < 6) {
+            throw new Error('La contraseña debe tener al menos 6 caracteres');
+        }
+        updates.push('password_hash = ?');
+        params.push(crypto.createHash('sha256').update(data.password).digest('hex'));
+    }
+    if (data.isActive !== undefined) {
+        updates.push('is_active = ?');
+        params.push(data.isActive ? 1 : 0);
+    }
+    if (data.isPrimaryAdmin !== undefined && admin.role === 'club_admin') {
+        updates.push('is_primary_admin = ?');
+        params.push(data.isPrimaryAdmin ? 1 : 0);
+    }
+
+    if (updates.length > 0) {
+        params.push(adminId);
+        await executeQuery(
+            `UPDATE club_administrators SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE admin_id = ?`,
+            params
+        );
+    }
+
+    return getAdministratorById(adminId);
+}
+
+/**
+ * Delete administrator (soft delete)
+ */
+async function deleteAdministrator(adminId) {
+    const admin = await getAdministratorById(adminId);
+    if (!admin) {
+        throw new Error('Administrador no encontrado');
+    }
+    if (admin.is_primary_admin) {
+        throw new Error('No se puede eliminar el administrador principal del club');
+    }
+    if (admin.role === 'system_admin') {
+        throw new Error('No se puede eliminar un administrador del sistema');
+    }
+
+    await executeQuery(
+        'UPDATE club_administrators SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP WHERE admin_id = ?',
+        [adminId]
+    );
+    return true;
+}
+
+/**
+ * Reset administrator password
+ */
+async function resetAdministratorPassword(adminId, password) {
+    if (!password || String(password).length < 6) {
+        throw new Error('La contraseña debe tener al menos 6 caracteres');
+    }
+    const admin = await getAdministratorById(adminId);
+    if (!admin) {
+        throw new Error('Administrador no encontrado');
+    }
+    await updateUserInfo(adminId, { password });
+    return true;
 }
 
 /**
@@ -413,16 +611,74 @@ async function authenticateAdmin(username, password) {
 }
 
 /**
+ * Columnas de permisos (evitar SELECT up.*, ca.* que pisa campos como email/admin_id en algunos drivers).
+ */
+const USER_PERMISSION_COLUMNS = [
+    'can_view_members', 'can_view_tournaments', 'can_view_groups',
+    'can_view_scorecards', 'can_view_photos', 'can_view_settings',
+    'can_view_rankings', 'can_view_accounting', 'can_view_financial_totals',
+    'can_view_balance', 'can_view_tournament_incomes', 'can_manage_tournament_incomes',
+    'can_view_other_incomes', 'can_manage_other_incomes',
+    'can_view_expenses', 'can_manage_expenses',
+    'can_view_currency_exchanges', 'can_manage_currency_exchanges',
+    'can_manage_photos',
+    'can_create_members', 'can_edit_members', 'can_delete_members',
+    'can_view_external_players', 'can_create_external_players', 'can_edit_external_players', 'can_delete_external_players',
+    'can_create_tournaments', 'can_edit_tournaments', 'can_delete_tournaments',
+    'can_manage_participants', 'can_manage_groups', 'can_manage_scorecards',
+    'can_manage_payments', 'can_manage_users',
+];
+
+function permFlagDb(value) {
+    if (value === true || value === 1 || value === '1') return true;
+    return false;
+}
+
+function mapClubUserRow(row) {
+    if (!row) return null;
+    const adminId = row.admin_id ?? row.user_id;
+    const mapped = {
+        admin_id: adminId,
+        user_id: adminId,
+        course_id: row.course_id,
+        username: row.username,
+        email: row.email,
+        full_name: row.full_name,
+        role: row.role,
+        is_primary_admin: permFlagDb(row.is_primary_admin),
+        is_active: row.is_active !== 0 && row.is_active !== false,
+        last_login: row.last_login,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        permission_id: row.permission_id ?? null,
+    };
+    for (const col of USER_PERMISSION_COLUMNS) {
+        mapped[col] = permFlagDb(row[col]);
+    }
+    return mapped;
+}
+
+/**
  * Get all users with their permissions for a club
  */
 async function getClubUsers(clubId) {
-    // up.* primero y ca.* después: si no hay fila en user_permissions, up.admin_id es NULL
-    // y en drivers JS el último campo homónimo gana — así ca.admin_id no queda pisado por NULL.
+    await ensureUserPermissionsColumns();
+    const permSelect = USER_PERMISSION_COLUMNS.map((c) => `up.${c}`).join(',\n            ');
     const query = `
         SELECT 
-            up.*,
-            ca.*,
-            ca.admin_id AS user_id
+            ca.admin_id,
+            ca.course_id,
+            ca.username,
+            ca.email,
+            ca.full_name,
+            ca.role,
+            ca.is_primary_admin,
+            ca.is_active,
+            ca.last_login,
+            ca.created_at,
+            ca.updated_at,
+            up.permission_id,
+            ${permSelect}
         FROM club_administrators ca
         LEFT JOIN user_permissions up ON ca.admin_id = up.admin_id 
             AND up.permission_id = (
@@ -434,13 +690,22 @@ async function getClubUsers(clubId) {
         ORDER BY ca.is_primary_admin DESC, ca.created_at DESC
     `;
     const { rows } = await executeQuery(query, [clubId]);
-    return rows;
+    return rows.map(mapClubUserRow);
+}
+
+/**
+ * Get one club user by admin id
+ */
+async function getClubUserById(clubId, userId) {
+    const users = await getClubUsers(clubId);
+    return users.find((u) => Number(u.admin_id) === Number(userId)) || null;
 }
 
 /**
  * Create a new user with permissions
  */
 async function createClubUser(clubId, userData) {
+    await ensureUserPermissionsColumns();
     // Insert user
     const userQuery = `
         INSERT INTO club_administrators (
@@ -475,10 +740,11 @@ async function createClubUser(clubId, userData) {
             can_view_currency_exchanges, can_manage_currency_exchanges,
             can_manage_photos,
             can_create_members, can_edit_members, can_delete_members,
+            can_view_external_players, can_create_external_players, can_edit_external_players, can_delete_external_players,
             can_create_tournaments, can_edit_tournaments, can_delete_tournaments,
             can_manage_participants, can_manage_groups, can_manage_scorecards,
-            can_manage_payments
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            can_manage_payments, can_manage_users
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
     
     const perms = userData.permissions || {};
@@ -506,13 +772,18 @@ async function createClubUser(clubId, userData) {
         perms.can_create_members || false,
         perms.can_edit_members || false,
         perms.can_delete_members || false,
+        perms.can_view_external_players || false,
+        perms.can_create_external_players || false,
+        perms.can_edit_external_players || false,
+        perms.can_delete_external_players || false,
         perms.can_create_tournaments || false,
         perms.can_edit_tournaments || false,
         perms.can_delete_tournaments || false,
         perms.can_manage_participants || false,
         perms.can_manage_groups || false,
         perms.can_manage_scorecards || false,
-        perms.can_manage_payments || false
+        perms.can_manage_payments || false,
+        perms.can_manage_users || false
     ]);
     
     return newUserId;
@@ -525,17 +796,33 @@ async function updateUserInfo(userId, userData) {
     const updates = [];
     const params = [];
     
-    if (userData.fullName) {
+    if (userData.fullName != null && String(userData.fullName).trim() !== '') {
         updates.push('full_name = ?');
-        params.push(userData.fullName);
+        params.push(String(userData.fullName).trim());
     }
-    if (userData.email) {
+    if (userData.email != null && String(userData.email).trim() !== '') {
+        const email = String(userData.email).trim();
+        const emailCheck = await executeQuery(
+            'SELECT admin_id FROM club_administrators WHERE email = ? AND admin_id != ? LIMIT 1',
+            [email, userId]
+        );
+        if (emailCheck.rows[0]) {
+            throw new Error('El email ya está registrado por otro usuario');
+        }
         updates.push('email = ?');
-        params.push(userData.email);
+        params.push(email);
     }
-    if (userData.username) {
+    if (userData.username != null && String(userData.username).trim() !== '') {
+        const username = String(userData.username).trim();
+        const usernameCheck = await executeQuery(
+            'SELECT admin_id FROM club_administrators WHERE username = ? AND admin_id != ? LIMIT 1',
+            [username, userId]
+        );
+        if (usernameCheck.rows[0]) {
+            throw new Error('El nombre de usuario ya está en uso');
+        }
         updates.push('username = ?');
-        params.push(userData.username);
+        params.push(username);
     }
     if (userData.password) {
         const hashedPassword = crypto.createHash('sha256').update(userData.password).digest('hex');
@@ -544,7 +831,7 @@ async function updateUserInfo(userId, userData) {
     }
     
     if (updates.length === 0) {
-        return true;
+        throw new Error('No hay datos para actualizar');
     }
     
     params.push(userId);
@@ -555,15 +842,69 @@ async function updateUserInfo(userId, userData) {
         WHERE admin_id = ?
     `;
     
-    await executeQuery(query, params);
-    return true;
+    const { rows: result } = await executeQuery(query, params);
+    const affected = result?.affectedRows ?? 0;
+    if (affected === 0) {
+        throw new Error('Usuario no encontrado o sin cambios');
+    }
+
+    const { rows: refreshed } = await executeQuery(
+        `SELECT admin_id, course_id, username, email, full_name, role, is_primary_admin, is_active, last_login, created_at, updated_at
+         FROM club_administrators WHERE admin_id = ? LIMIT 1`,
+        [userId]
+    );
+    return refreshed[0] || null;
 }
 
 /**
  * Update user permissions
  */
 async function updateUserPermissions(userId, permissions) {
-    const query = `
+    await ensureUserPermissionsColumns();
+    const permValues = [
+        permissions.can_view_members || false,
+        permissions.can_view_tournaments || false,
+        permissions.can_view_groups || false,
+        permissions.can_view_scorecards || false,
+        permissions.can_view_photos || false,
+        permissions.can_view_settings || false,
+        permissions.can_view_rankings || false,
+        permissions.can_view_accounting || false,
+        permissions.can_view_financial_totals || false,
+        permissions.can_view_balance || false,
+        permissions.can_view_tournament_incomes || false,
+        permissions.can_manage_tournament_incomes || false,
+        permissions.can_view_other_incomes || false,
+        permissions.can_manage_other_incomes || false,
+        permissions.can_view_expenses || false,
+        permissions.can_manage_expenses || false,
+        permissions.can_view_currency_exchanges || false,
+        permissions.can_manage_currency_exchanges || false,
+        permissions.can_manage_photos || false,
+        permissions.can_create_members || false,
+        permissions.can_edit_members || false,
+        permissions.can_delete_members || false,
+        permissions.can_view_external_players || false,
+        permissions.can_create_external_players || false,
+        permissions.can_edit_external_players || false,
+        permissions.can_delete_external_players || false,
+        permissions.can_create_tournaments || false,
+        permissions.can_edit_tournaments || false,
+        permissions.can_delete_tournaments || false,
+        permissions.can_manage_participants || false,
+        permissions.can_manage_groups || false,
+        permissions.can_manage_scorecards || false,
+        permissions.can_manage_payments || false,
+        permissions.can_manage_users || false,
+    ];
+
+    const { rows: existing } = await executeQuery(
+        'SELECT permission_id FROM user_permissions WHERE admin_id = ? ORDER BY permission_id DESC LIMIT 1',
+        [userId]
+    );
+
+    if (existing[0]) {
+        const query = `
         UPDATE user_permissions SET
             can_view_members = ?,
             can_view_tournaments = ?,
@@ -587,6 +928,10 @@ async function updateUserPermissions(userId, permissions) {
             can_create_members = ?,
             can_edit_members = ?,
             can_delete_members = ?,
+            can_view_external_players = ?,
+            can_create_external_players = ?,
+            can_edit_external_players = ?,
+            can_delete_external_players = ?,
             can_create_tournaments = ?,
             can_edit_tournaments = ?,
             can_delete_tournaments = ?,
@@ -594,42 +939,32 @@ async function updateUserPermissions(userId, permissions) {
             can_manage_groups = ?,
             can_manage_scorecards = ?,
             can_manage_payments = ?,
+            can_manage_users = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE admin_id = ?
     `;
-    
-    await executeQuery(query, [
-        permissions.can_view_members || false,
-        permissions.can_view_tournaments || false,
-        permissions.can_view_groups || false,
-        permissions.can_view_scorecards || false,
-        permissions.can_view_photos || false,
-        permissions.can_view_settings || false,
-        permissions.can_view_rankings || false,
-        permissions.can_view_accounting || false,
-        permissions.can_view_financial_totals || false,
-        permissions.can_view_balance || false,
-        permissions.can_view_tournament_incomes || false,
-        permissions.can_manage_tournament_incomes || false,
-        permissions.can_view_other_incomes || false,
-        permissions.can_manage_other_incomes || false,
-        permissions.can_view_expenses || false,
-        permissions.can_manage_expenses || false,
-        permissions.can_view_currency_exchanges || false,
-        permissions.can_manage_currency_exchanges || false,
-        permissions.can_manage_photos || false,
-        permissions.can_create_members || false,
-        permissions.can_edit_members || false,
-        permissions.can_delete_members || false,
-        permissions.can_create_tournaments || false,
-        permissions.can_edit_tournaments || false,
-        permissions.can_delete_tournaments || false,
-        permissions.can_manage_participants || false,
-        permissions.can_manage_groups || false,
-        permissions.can_manage_scorecards || false,
-        permissions.can_manage_payments || false,
-        userId
-    ]);
+        await executeQuery(query, [...permValues, userId]);
+    } else {
+        const insertQuery = `
+        INSERT INTO user_permissions (
+            admin_id,
+            can_view_members, can_view_tournaments, can_view_groups,
+            can_view_scorecards, can_view_photos, can_view_settings,
+            can_view_rankings, can_view_accounting, can_view_financial_totals,
+            can_view_balance, can_view_tournament_incomes, can_manage_tournament_incomes,
+            can_view_other_incomes, can_manage_other_incomes,
+            can_view_expenses, can_manage_expenses,
+            can_view_currency_exchanges, can_manage_currency_exchanges,
+            can_manage_photos,
+            can_create_members, can_edit_members, can_delete_members,
+            can_view_external_players, can_create_external_players, can_edit_external_players, can_delete_external_players,
+            can_create_tournaments, can_edit_tournaments, can_delete_tournaments,
+            can_manage_participants, can_manage_groups, can_manage_scorecards,
+            can_manage_payments, can_manage_users
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+        await executeQuery(insertQuery, [userId, ...permValues]);
+    }
     
     return true;
 }
@@ -8933,8 +9268,9 @@ export {
     getAllClubs, getClubById, createClub, updateClub, deleteClub, ensureClubsFormColumns,
     
     // Administrator functions  
-    getAllAdministrators, authenticateAdmin,
-    getClubUsers, createClubUser, updateUserInfo, updateUserPermissions, deleteClubUser,
+    getAllAdministrators, authenticateAdmin, getAdministratorById,
+    createAdministrator, updateAdministrator, deleteAdministrator, resetAdministratorPassword,
+    getClubUsers, createClubUser, updateUserInfo, updateUserPermissions, deleteClubUser, getClubUserById,
     
     // Member functions
     getAllMembers, getMemberById, createMember, updateMember, deleteMember, updateMemberStatus,

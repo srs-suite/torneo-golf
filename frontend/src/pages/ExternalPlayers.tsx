@@ -55,7 +55,9 @@ export default function ExternalPlayers() {
   const { data: clubs = [] } = useClubs()
   const club = clubs.find((c) => c.course_id === clubId)
 
-  const canEditExternalPlayers = permissions.canEditMembers || permissions.canManagePayments
+  const canEditExternalPlayers = permissions.canEditExternalPlayers
+  const canCreateExternalPlayers = permissions.canCreateExternalPlayers
+  const canDeleteExternalPlayers = permissions.canDeleteExternalPlayers
 
   const { data: players = [], isLoading, refetch, isRefetching } = useExternalPlayersRegistry(
     clubId,
@@ -240,7 +242,7 @@ export default function ExternalPlayers() {
               </div>
             </div>
           </div>
-          {canEditExternalPlayers && (
+          {(canCreateExternalPlayers || canEditExternalPlayers) && (
             <button
               type="button"
               onClick={openCreate}
@@ -418,7 +420,7 @@ export default function ExternalPlayers() {
                                   <RefreshCw className="w-4 h-4" />
                                 )}
                               </button>
-                              {permissions.canDeleteMembers && (
+                              {canDeleteExternalPlayers && (
                                 <button
                                   type="button"
                                   onClick={() => handleDelete(row)}

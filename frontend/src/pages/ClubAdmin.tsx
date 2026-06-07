@@ -29,7 +29,8 @@ import {
   DollarSign,
   Link2,
   UserCircle2,
-  Printer
+  Printer,
+  UserCog
 
 } from 'lucide-react'
 import { useMembers, useClearClubMembers, useUpdateMember, useDeleteMember, useUpdateMemberStatus } from '@/hooks/useMembers'
@@ -68,7 +69,11 @@ export function ClubAdmin() {
   const { clubId } = useParams<{ clubId: string }>()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const { permissions, isLoading: permissionsLoading, showExternalPlayersNav } = useUserPermissions(clubId)
+  const { permissions, isLoading: permissionsLoading, showExternalPlayersNav, isAdmin } = useUserPermissions(clubId)
+  /** Solo el administrador principal del club (o admin del sistema) gestiona usuarios internos */
+  const canManageClubUsers = isAdmin
+  
+  const CLUB_TABS = ['members', 'tournaments', 'photos', 'users', 'settings'] as const
   
   const [activeTab, setActiveTab] = useState(() => {
     // Check if there's a tab parameter in the URL
@@ -77,9 +82,11 @@ export function ClubAdmin() {
     // Determinar la pestaña por defecto según permisos
     const defaultTab = permissions.canViewMembers ? 'members' : 
                       permissions.canViewTournaments ? 'tournaments' : 
-                      permissions.canViewSettings ? 'settings' : 'tournaments'
+                      canManageClubUsers ? 'users' :
+                      permissions.canViewPhotos ? 'photos' :
+                      permissions.canViewSettings ? 'settings' : 'members'
     
-    return tabParam && ['members', 'tournaments', 'settings'].includes(tabParam) 
+    return tabParam && CLUB_TABS.includes(tabParam as typeof CLUB_TABS[number])
       ? tabParam 
       : defaultTab
   })
@@ -147,7 +154,7 @@ export function ClubAdmin() {
   // Handle tab changes from URL parameters
   useEffect(() => {
     const tabParam = searchParams.get('tab')
-    if (tabParam && ['members', 'tournaments', 'settings'].includes(tabParam) && tabParam !== activeTab) {
+    if (tabParam && CLUB_TABS.includes(tabParam as typeof CLUB_TABS[number]) && tabParam !== activeTab) {
       setActiveTab(tabParam)
     }
   }, [searchParams, activeTab])
@@ -345,6 +352,7 @@ export function ClubAdmin() {
     { id: 'members', label: 'Socios', icon: Users, count: members.length, permission: permissions.canViewMembers },
     { id: 'tournaments', label: 'Torneos', icon: Trophy, count: tournaments.length, permission: permissions.canViewTournaments },
     { id: 'photos', label: 'Fotos', icon: Camera, count: 0, permission: permissions.canViewPhotos },
+    { id: 'users', label: 'Usuarios', icon: UserCog, count: 0, permission: canManageClubUsers },
     { id: 'settings', label: 'Configuración', icon: Settings, count: 0, permission: permissions.canViewSettings }
   ]
   
@@ -354,7 +362,22 @@ export function ClubAdmin() {
     const filtered = allTabs.filter(tab => tab.permission === true)
     return filtered
   }, [permissions.canViewMembers, permissions.canViewTournaments, permissions.canViewAccounting, 
-      permissions.canViewPhotos, permissions.canViewSettings, permissionsLoading])
+      permissions.canViewPhotos, permissions.canViewSettings, isAdmin, permissionsLoading, members.length, tournaments.length])
+
+  // Si los permisos no incluyen la pestaña activa, ir a la primera permitida
+  useEffect(() => {
+    if (permissionsLoading) return
+    const allowedIds = tabs.map((t) => t.id)
+    if (allowedIds.length === 0) return
+    const tabParam = searchParams.get('tab')
+    if (tabParam && allowedIds.includes(tabParam as typeof CLUB_TABS[number])) {
+      if (activeTab !== tabParam) setActiveTab(tabParam)
+      return
+    }
+    if (!allowedIds.includes(activeTab)) {
+      setActiveTab(allowedIds[0])
+    }
+  }, [permissionsLoading, tabs, activeTab, searchParams])
 
   const getStatusColor = (status: Tournament['status']) =>
     isTournamentStatusClosed(status) ? 'bg-amber-100 text-amber-900' : 'bg-green-100 text-green-900'
@@ -512,7 +535,7 @@ export function ClubAdmin() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {activeTab === 'members' && (
+        {activeTab === 'members' && permissions.canViewMembers && (
           <div className="space-y-6">
             {/* Members Header */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-4 sm:space-y-0">
@@ -870,7 +893,7 @@ export function ClubAdmin() {
           </div>
         )}
 
-        {activeTab === 'tournaments' && (
+        {activeTab === 'tournaments' && permissions.canViewTournaments && (
           <div className="space-y-6">
             {/* Tournaments Header */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-4 sm:space-y-0">
@@ -1151,7 +1174,7 @@ export function ClubAdmin() {
 
 
 
-        {activeTab === 'photos' && (
+        {activeTab === 'photos' && permissions.canViewPhotos && (
           <PhotoManagementSection clubId={clubId} />
         )}
 
@@ -1164,9 +1187,12 @@ export function ClubAdmin() {
           </div>
         )}
 
-        {activeTab === 'settings' && (
+        {activeTab === 'users' && canManageClubUsers && (
+          <UserManagement clubId={parseInt(clubId || '0')} canManage={canManageClubUsers} />
+        )}
+
+        {activeTab === 'settings' && permissions.canViewSettings && (
           <div className="space-y-6">
-            <UserManagement clubId={parseInt(clubId || '0')} />
             <FinancialReportQR />
           </div>
         )}

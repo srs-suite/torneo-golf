@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Users, Plus, Edit, Trash2, Shield, X, Eye, EyeOff } from 'lucide-react'
 import { toast } from 'react-hot-toast'
 import { api } from '@/lib/api'
+import { permFlag } from '@/lib/permissionFlags'
 
 interface User {
   admin_id: number
@@ -19,12 +20,18 @@ interface User {
   can_view_groups?: boolean
   can_view_scorecards?: boolean
   can_view_photos?: boolean
+  can_manage_photos?: boolean
   can_view_settings?: boolean
+  can_manage_users?: boolean
   can_view_rankings?: boolean
   can_view_accounting?: boolean
   can_create_members?: boolean
   can_edit_members?: boolean
   can_delete_members?: boolean
+  can_view_external_players?: boolean
+  can_create_external_players?: boolean
+  can_edit_external_players?: boolean
+  can_delete_external_players?: boolean
   can_create_tournaments?: boolean
   can_edit_tournaments?: boolean
   can_delete_tournaments?: boolean
@@ -36,9 +43,14 @@ interface User {
 
 interface UserManagementProps {
   clubId: number
+  canManage?: boolean
 }
 
-export function UserManagement({ clubId }: UserManagementProps) {
+function resolveUserId(user: User): number {
+  return Number(user.user_id ?? user.admin_id)
+}
+
+export function UserManagement({ clubId, canManage = true }: UserManagementProps) {
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -57,12 +69,18 @@ export function UserManagement({ clubId }: UserManagementProps) {
     can_view_groups: true,
     can_view_scorecards: true,
     can_view_photos: true,
+    can_manage_photos: false,
     can_view_settings: false,
     can_view_rankings: true,
     can_view_accounting: false,
+    can_manage_users: false,
     can_create_members: true,
     can_edit_members: true,
     can_delete_members: false,
+    can_view_external_players: false,
+    can_create_external_players: false,
+    can_edit_external_players: false,
+    can_delete_external_players: false,
     can_create_tournaments: true,
     can_edit_tournaments: true,
     can_delete_tournaments: false,
@@ -117,25 +135,42 @@ export function UserManagement({ clubId }: UserManagementProps) {
   const handleEditUser = async () => {
     if (!selectedUser) return
 
+    const userId = resolveUserId(selectedUser)
+    if (!Number.isFinite(userId) || userId <= 0) {
+      toast.error('No se pudo identificar el usuario a editar')
+      return
+    }
+
     try {
       const updateData: any = {
-        fullName: formData.fullName,
-        email: formData.email,
-        username: formData.username
+        fullName: formData.fullName.trim(),
+        email: formData.email.trim(),
+        username: formData.username.trim()
       }
       
       if (formData.password) {
         updateData.password = formData.password
       }
 
-      await api.put(`/club/${clubId}/users/${selectedUser.admin_id}/info`, updateData)
+      const response = await api.put(`/club/${clubId}/users/${userId}/info`, updateData)
+      const updated = response.data?.data
+      if (updated) {
+        setUsers((prev) =>
+          prev.map((u) =>
+            resolveUserId(u) === userId
+              ? { ...u, ...updated, full_name: updated.full_name ?? updateData.fullName, email: updated.email ?? updateData.email, username: updated.username ?? updateData.username }
+              : u
+          )
+        )
+      } else {
+        await loadUsers()
+      }
       toast.success('Usuario actualizado exitosamente')
       setShowEditUserModal(false)
       setSelectedUser(null)
       resetForm()
-      loadUsers()
     } catch (error: any) {
-      toast.error('Error al actualizar usuario')
+      toast.error(error.response?.data?.message || 'Error al actualizar usuario')
       console.error(error)
     }
   }
@@ -144,7 +179,7 @@ export function UserManagement({ clubId }: UserManagementProps) {
     if (!selectedUser) return
 
     try {
-      await api.put(`/club/${clubId}/users/${selectedUser.admin_id}`, permissions)
+      await api.put(`/club/${clubId}/users/${resolveUserId(selectedUser)}`, permissions)
       toast.success('Permisos actualizados exitosamente')
       setShowEditModal(false)
       setSelectedUser(null)
@@ -184,24 +219,30 @@ export function UserManagement({ clubId }: UserManagementProps) {
   const openEditModal = (user: User) => {
     setSelectedUser(user)
     setPermissions({
-      can_view_members: user.can_view_members !== false,
-      can_view_tournaments: user.can_view_tournaments !== false,
-      can_view_groups: user.can_view_groups !== false,
-      can_view_scorecards: user.can_view_scorecards !== false,
-      can_view_photos: user.can_view_photos !== false,
-      can_view_settings: user.can_view_settings || false,
-      can_view_rankings: user.can_view_rankings !== false,
-      can_view_accounting: user.can_view_accounting || false,
-      can_create_members: user.can_create_members !== false,
-      can_edit_members: user.can_edit_members !== false,
-      can_delete_members: user.can_delete_members || false,
-      can_create_tournaments: user.can_create_tournaments !== false,
-      can_edit_tournaments: user.can_edit_tournaments !== false,
-      can_delete_tournaments: user.can_delete_tournaments || false,
-      can_manage_participants: user.can_manage_participants !== false,
-      can_manage_groups: user.can_manage_groups !== false,
-      can_manage_scorecards: user.can_manage_scorecards !== false,
-      can_manage_payments: user.can_manage_payments || false
+      can_view_members: permFlag(user.can_view_members),
+      can_view_tournaments: permFlag(user.can_view_tournaments),
+      can_view_groups: permFlag(user.can_view_groups),
+      can_view_scorecards: permFlag(user.can_view_scorecards),
+      can_view_photos: permFlag(user.can_view_photos),
+      can_manage_photos: permFlag(user.can_manage_photos),
+      can_view_settings: permFlag(user.can_view_settings),
+      can_manage_users: permFlag(user.can_manage_users),
+      can_view_rankings: permFlag(user.can_view_rankings),
+      can_view_accounting: permFlag(user.can_view_accounting),
+      can_create_members: permFlag(user.can_create_members),
+      can_edit_members: permFlag(user.can_edit_members),
+      can_delete_members: permFlag(user.can_delete_members),
+      can_view_external_players: permFlag(user.can_view_external_players),
+      can_create_external_players: permFlag(user.can_create_external_players),
+      can_edit_external_players: permFlag(user.can_edit_external_players),
+      can_delete_external_players: permFlag(user.can_delete_external_players),
+      can_create_tournaments: permFlag(user.can_create_tournaments),
+      can_edit_tournaments: permFlag(user.can_edit_tournaments),
+      can_delete_tournaments: permFlag(user.can_delete_tournaments),
+      can_manage_participants: permFlag(user.can_manage_participants),
+      can_manage_groups: permFlag(user.can_manage_groups),
+      can_manage_scorecards: permFlag(user.can_manage_scorecards),
+      can_manage_payments: permFlag(user.can_manage_payments)
     })
     setShowEditModal(true)
   }
@@ -214,7 +255,9 @@ export function UserManagement({ clubId }: UserManagementProps) {
       can_view_groups: true,
       can_view_scorecards: true,
       can_view_photos: true,
+      can_manage_photos: false,
       can_view_settings: false,
+      can_manage_users: false,
       can_view_rankings: true,
       can_view_accounting: false,
       can_create_members: true,
@@ -236,11 +279,12 @@ export function UserManagement({ clubId }: UserManagementProps) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">Gestión de Usuarios</h2>
+          <h2 className="text-2xl font-bold text-gray-900">Usuarios del club</h2>
           <p className="mt-1 text-sm text-gray-600">
-            Administra los usuarios y sus permisos de acceso al sistema
+            Solo el administrador principal del club puede crear cuentas internas y definir permisos
           </p>
         </div>
+        {canManage && (
         <button
           onClick={() => {
             resetForm()
@@ -251,6 +295,7 @@ export function UserManagement({ clubId }: UserManagementProps) {
           <Plus className="w-4 h-4" />
           Nuevo Usuario
         </button>
+        )}
       </div>
 
       {/* Users Table */}
@@ -276,7 +321,7 @@ export function UserManagement({ clubId }: UserManagementProps) {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {users.map((user) => (
-                <tr key={user.admin_id} className="hover:bg-gray-50">
+                <tr key={resolveUserId(user)} className="hover:bg-gray-50">
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center">
                       <div className="flex-shrink-0 h-10 w-10 bg-blue-100 rounded-full flex items-center justify-center">
@@ -310,6 +355,8 @@ export function UserManagement({ clubId }: UserManagementProps) {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <div className="flex items-center justify-end gap-2">
+                      {canManage && (
+                      <>
                       <button
                         onClick={() => openEditUserModal(user)}
                         className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-lg transition-colors"
@@ -326,12 +373,14 @@ export function UserManagement({ clubId }: UserManagementProps) {
                       </button>
                       {!user.is_primary_admin && (
                         <button
-                          onClick={() => handleDelete(user.admin_id)}
+                          onClick={() => handleDelete(resolveUserId(user))}
                           className="p-2 text-red-600 hover:text-red-900 hover:bg-red-50 rounded-lg transition-colors"
                           title="Eliminar usuario"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
+                      )}
+                      </>
                       )}
                     </div>
                   </td>
@@ -568,65 +617,93 @@ export function UserManagement({ clubId }: UserManagementProps) {
   )
 }
 
-// Permissions Grid Component
+// Permissions Grid Component — por módulo: ver / crear / editar / eliminar
 function PermissionsGrid({ permissions, setPermissions }: any) {
-  const permissionGroups = [
-    {
-      title: 'Menú y Vistas',
-      permissions: [
-        { key: 'can_view_members', label: 'Ver Socios' },
-        { key: 'can_view_tournaments', label: 'Ver Torneos' },
-        { key: 'can_view_groups', label: 'Ver Grupos' },
-        { key: 'can_view_scorecards', label: 'Ver Tarjetas' },
-        { key: 'can_view_photos', label: 'Ver Fotos' },
-        { key: 'can_view_rankings', label: 'Ver Rankings' },
-        { key: 'can_view_accounting', label: 'Ver Contabilidad' },
-        { key: 'can_view_settings', label: 'Ver Configuración' },
-      ]
-    },
+  const permissionModules = [
     {
       title: 'Socios',
-      permissions: [
-        { key: 'can_create_members', label: 'Crear Socios' },
-        { key: 'can_edit_members', label: 'Editar Socios' },
-        { key: 'can_delete_members', label: 'Eliminar Socios' },
-      ]
+      items: [
+        { key: 'can_view_members', label: 'Ver' },
+        { key: 'can_create_members', label: 'Crear' },
+        { key: 'can_edit_members', label: 'Editar' },
+        { key: 'can_delete_members', label: 'Eliminar' },
+      ],
+    },
+    {
+      title: 'Jugadores externos',
+      items: [
+        { key: 'can_view_external_players', label: 'Ver' },
+        { key: 'can_create_external_players', label: 'Crear' },
+        { key: 'can_edit_external_players', label: 'Editar' },
+        { key: 'can_delete_external_players', label: 'Eliminar' },
+      ],
     },
     {
       title: 'Torneos',
-      permissions: [
-        { key: 'can_create_tournaments', label: 'Crear Torneos' },
-        { key: 'can_edit_tournaments', label: 'Editar Torneos' },
-        { key: 'can_delete_tournaments', label: 'Eliminar Torneos' },
-      ]
+      items: [
+        { key: 'can_view_tournaments', label: 'Ver' },
+        { key: 'can_create_tournaments', label: 'Crear' },
+        { key: 'can_edit_tournaments', label: 'Editar' },
+        { key: 'can_delete_tournaments', label: 'Eliminar' },
+      ],
     },
     {
-      title: 'Gestión',
-      permissions: [
-        { key: 'can_manage_participants', label: 'Gestionar Participantes' },
-        { key: 'can_manage_groups', label: 'Gestionar Grupos' },
-        { key: 'can_manage_scorecards', label: 'Gestionar Tarjetas' },
-        { key: 'can_manage_payments', label: 'Gestionar Pagos' },
-      ]
-    }
+      title: 'Participantes y grupos',
+      items: [
+        { key: 'can_view_groups', label: 'Ver grupos / salidas' },
+        { key: 'can_manage_participants', label: 'Gestionar inscriptos' },
+        { key: 'can_manage_groups', label: 'Gestionar grupos' },
+      ],
+    },
+    {
+      title: 'Tarjetas',
+      items: [
+        { key: 'can_view_scorecards', label: 'Ver' },
+        { key: 'can_manage_scorecards', label: 'Cargar / editar' },
+      ],
+    },
+    {
+      title: 'Fotos',
+      items: [
+        { key: 'can_view_photos', label: 'Ver' },
+        { key: 'can_manage_photos', label: 'Subir / editar' },
+      ],
+    },
+    {
+      title: 'Rankings',
+      items: [{ key: 'can_view_rankings', label: 'Ver' }],
+    },
+    {
+      title: 'Contabilidad y pagos',
+      items: [
+        { key: 'can_view_accounting', label: 'Ver contabilidad' },
+        { key: 'can_manage_payments', label: 'Gestionar cobros' },
+      ],
+    },
+    {
+      title: 'Configuración del club',
+      items: [{ key: 'can_view_settings', label: 'Ver configuración' }],
+    },
   ]
 
   return (
-    <div className="grid grid-cols-2 gap-6">
-      {permissionGroups.map((group) => (
-        <div key={group.title} className="space-y-2">
-          <h5 className="text-xs font-semibold text-gray-700 uppercase">{group.title}</h5>
-          {group.permissions.map((perm) => (
-            <label key={perm.key} className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={permissions[perm.key] !== false}
-                onChange={(e) => setPermissions({ ...permissions, [perm.key]: e.target.checked })}
-                className="w-4 h-4 text-blue-600 border-gray-300 rounded"
-              />
-              <span className="text-sm text-gray-700">{perm.label}</span>
-            </label>
-          ))}
+    <div className="space-y-4">
+      {permissionModules.map((module) => (
+        <div key={module.title} className="border border-gray-200 rounded-lg p-3">
+          <h5 className="text-sm font-semibold text-gray-900 mb-2">{module.title}</h5>
+          <div className="flex flex-wrap gap-x-4 gap-y-2">
+            {module.items.map((perm) => (
+              <label key={perm.key} className="flex items-center gap-2 cursor-pointer min-w-[7rem]">
+                <input
+                  type="checkbox"
+                  checked={permFlag(permissions[perm.key])}
+                  onChange={(e) => setPermissions({ ...permissions, [perm.key]: e.target.checked })}
+                  className="w-4 h-4 text-blue-600 border-gray-300 rounded"
+                />
+                <span className="text-sm text-gray-700">{perm.label}</span>
+              </label>
+            ))}
+          </div>
         </div>
       ))}
     </div>
