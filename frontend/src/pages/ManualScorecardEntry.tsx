@@ -10,6 +10,8 @@ import { isTournamentStatusClosed } from '@/types/tournament'
 import { TournamentClosedNotice, TORNEO_CERRADO_ALERT } from '@/components/TournamentClosedNotice'
 // Score styling moved to shared utility
 
+const MAX_STROKES_PER_HOLE = 20
+
 interface ManualScorecardData {
   scores: { [hole: number]: number }
   verified: boolean
@@ -868,12 +870,12 @@ export default function ManualScorecardEntry() {
                                   <input
                                     type="number"
                                     min="1"
-                                    max="12"
+                                    max={MAX_STROKES_PER_HOLE}
                                     disabled={tournamentClosed}
                                     value={scorecard.scores[hole] || ''}
                                     onChange={(e) => {
                                       const value = parseInt(e.target.value)
-                                      if (value >= 1 && value <= 12) {
+                                      if (value >= 1 && value <= MAX_STROKES_PER_HOLE) {
                                         updateScore(hole, value)
                                       } else if (e.target.value === '') {
                                         clearScore(hole)
@@ -956,12 +958,12 @@ export default function ManualScorecardEntry() {
                                   <input
                                     type="number"
                                     min="1"
-                                    max="12"
+                                    max={MAX_STROKES_PER_HOLE}
                                     disabled={tournamentClosed}
                                     value={scorecard.scores[hole] || ''}
                                     onChange={(e) => {
                                       const value = parseInt(e.target.value)
-                                      if (value >= 1 && value <= 12) {
+                                      if (value >= 1 && value <= MAX_STROKES_PER_HOLE) {
                                         updateScore(hole, value)
                                       } else if (e.target.value === '') {
                                         clearScore(hole)
