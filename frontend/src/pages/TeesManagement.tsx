@@ -63,7 +63,7 @@ export default function TeesManagement() {
   const [holeChanges, setHoleChanges] = useState<{[key: number]: {par?: number, handicap?: number}}>({});
 
   // Get holes with their tees
-  const { data: holesWithTees, isLoading } = useQuery({
+  const { data: holesWithTees, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['course-tees-grouped', clubId],
     queryFn: async () => {
       const response = await fetch(`/api/club/${clubId}/tees/grouped`);
@@ -230,6 +230,42 @@ export default function TeesManagement() {
         <div className="text-center">
           <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-green-600 mx-auto"></div>
           <p className="mt-4 text-gray-600">Cargando salidas del campo...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
+          <p className="text-red-700 font-medium mb-2">No se pudieron cargar los hoyos del club</p>
+          <p className="text-sm text-red-600 mb-4">{(error as Error)?.message || 'Error de conexión con el servidor'}</p>
+          <button
+            onClick={() => refetch()}
+            className="bg-red-600 text-white px-4 py-2 rounded text-sm hover:bg-red-700"
+          >
+            Reintentar
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const hasHoles = (holesWithTees?.length ?? 0) > 0;
+
+  if (!hasHoles) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-6 text-center">
+          <p className="text-amber-800 font-medium mb-2">Este club aún no tiene hoyos configurados</p>
+          <p className="text-sm text-amber-700 mb-4">Recargá la página; el sistema debería crear 18 hoyos por defecto automáticamente.</p>
+          <button
+            onClick={() => refetch()}
+            className="bg-amber-600 text-white px-4 py-2 rounded text-sm hover:bg-amber-700"
+          >
+            Recargar hoyos
+          </button>
         </div>
       </div>
     );

@@ -12,27 +12,97 @@ const __dirname = path.dirname(__filename);
 // CLUBS (GOLF COURSES) FUNCTIONS
 // ================================
 
+/** Normaliza fila de clubs para el frontend (soporta club_name/course_name, logo_url/logo_path). */
+function mapClubRow(row) {
+    if (!row) return null;
+    const courseId = row.course_id ?? row.club_id;
+    return {
+        course_id: courseId,
+        club_code: row.club_code ?? '',
+        course_name: row.course_name ?? row.club_name ?? '',
+        address: row.address ?? '',
+        city: row.city ?? '',
+        country: row.country ?? '',
+        timezone: row.timezone ?? 'America/Argentina/Buenos_Aires',
+        currency: row.currency ?? 'ARS',
+        phone: row.phone ?? '',
+        email: row.email ?? '',
+        website: row.website ?? '',
+        logo_path: row.logo_path ?? row.logo_url ?? '',
+        enable_field_characteristics: row.enable_field_characteristics !== 0 && row.enable_field_characteristics !== false,
+        par: row.par != null ? Number(row.par) : 72,
+        physical_holes: row.physical_holes != null ? Number(row.physical_holes) : 18,
+        slope_rating: row.slope_rating != null ? Number(row.slope_rating) : undefined,
+        course_rating: row.course_rating != null ? Number(row.course_rating) : undefined,
+        subscription_status: row.subscription_status ?? 'active',
+        is_active: row.is_active !== 0 && row.is_active !== false,
+        total_members: row.total_members != null ? Number(row.total_members) : 0,
+        total_tournaments: row.total_tournaments != null ? Number(row.total_tournaments) : 0,
+        administrators: row.administrators != null ? Number(row.administrators) : 0,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    };
+}
+
+const CLUB_STATS_SUBSELECT = `
+    (SELECT COUNT(*) FROM members m
+     WHERE m.course_id = c.club_id
+       AND (m.membership_status = 'active' OR m.membership_status IS NULL)) AS total_members,
+    (SELECT COUNT(*) FROM tournaments t WHERE t.course_id = c.club_id) AS total_tournaments,
+    (SELECT COUNT(*) FROM club_administrators ca WHERE ca.course_id = c.club_id AND ca.is_active = TRUE) AS administrators
+`;
+
+/**
+ * Asegura columnas usadas por el formulario de clubes (migración suave).
+ */
+async function ensureClubsFormColumns() {
+    const columns = [
+        ['club_code', 'VARCHAR(20) NULL'],
+        ['city', 'VARCHAR(100) NULL'],
+        ['country', 'VARCHAR(100) NULL'],
+        ['timezone', 'VARCHAR(50) NULL DEFAULT \'America/Argentina/Buenos_Aires\''],
+        ['currency', 'VARCHAR(10) NULL DEFAULT \'ARS\''],
+        ['logo_path', 'VARCHAR(500) NULL'],
+        ['par', 'INT NULL DEFAULT 72'],
+        ['physical_holes', 'INT NULL DEFAULT 18'],
+        ['slope_rating', 'INT NULL DEFAULT 113'],
+        ['course_rating', 'DECIMAL(4,1) NULL DEFAULT 72.0'],
+        ['enable_field_characteristics', 'TINYINT(1) NULL DEFAULT 1'],
+        ['subscription_status', "VARCHAR(20) NULL DEFAULT 'active'"],
+        ['is_active', 'TINYINT(1) NULL DEFAULT 1'],
+        ['course_name', 'VARCHAR(255) NULL'],
+        ['current_members', 'INT NULL DEFAULT 0'],
+        ['subscription_start', 'DATE NULL'],
+        ['created_by', 'INT NULL'],
+    ];
+    for (const [name, definition] of columns) {
+        const { rows } = await executeQuery(
+            `SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'clubs' AND COLUMN_NAME = ?`,
+            [name]
+        );
+        if (Number(rows[0]?.c) === 0) {
+            await executeQuery(`ALTER TABLE clubs ADD COLUMN ${name} ${definition}`);
+            console.log(`✅ clubs.${name} agregada`);
+        }
+    }
+}
+
 /**
  * Get all clubs
  */
 async function getAllClubs() {
     const query = `
         SELECT 
-            c.club_id AS course_id,
-            c.club_name AS course_name,
-            COUNT(DISTINCT m.member_id) as total_members,
-            COUNT(DISTINCT t.tournament_id) as total_tournaments,
-            COUNT(DISTINCT ca.admin_id) as administrators
+            c.*,
+            ${CLUB_STATS_SUBSELECT}
         FROM clubs c
-        LEFT JOIN members m ON m.course_id = c.club_id AND (m.membership_status = 'active' OR m.membership_status IS NULL)
-        LEFT JOIN tournaments t ON t.course_id = c.club_id
-        LEFT JOIN club_administrators ca ON ca.course_id = c.club_id
-        GROUP BY c.club_id, c.club_name
-        ORDER BY c.club_name
+        WHERE COALESCE(c.is_active, 1) = 1
+        ORDER BY COALESCE(c.course_name, c.club_name)
     `;
     
     const { rows } = await executeQuery(query);
-    return rows;
+    return rows.map(mapClubRow);
 }
 
 /**
@@ -41,19 +111,15 @@ async function getAllClubs() {
 async function getClubById(clubId) {
     const query = `
         SELECT 
-            c.club_id AS course_id,
-            c.club_name AS course_name,
-            COUNT(DISTINCT m.member_id) as total_members,
-            COUNT(t.tournament_id) as total_tournaments
+            c.*,
+            ${CLUB_STATS_SUBSELECT}
         FROM clubs c
-        LEFT JOIN members m ON m.course_id = c.club_id AND (m.membership_status = 'active' OR m.membership_status IS NULL)
-        LEFT JOIN tournaments t ON t.course_id = c.club_id
         WHERE c.club_id = ?
-        GROUP BY c.club_id, c.club_name
+        LIMIT 1
     `;
     
     const { rows } = await executeQuery(query, [clubId]);
-    return rows[0] || null;
+    return mapClubRow(rows[0]) || null;
 }
 
 /**
@@ -73,18 +139,21 @@ async function getClubByCode(clubCode) {
  * Create new club
  */
 async function createClub(clubData) {
+    await ensureClubsFormColumns();
     const queries = [
         {
             query: `
                 INSERT INTO clubs (
-                    club_code, course_name, address, city, country,
-                    timezone, currency, phone, email, website, logo_path,
-                    par, physical_holes, current_members, subscription_status, subscription_start,
+                    club_code, club_name, course_name, address, city, country,
+                    timezone, currency, phone, email, website, logo_path, logo_url,
+                    par, physical_holes, slope_rating, course_rating, enable_field_characteristics,
+                    current_members, subscription_status, subscription_start,
                     is_active, created_by
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `,
             params: [
-                clubData.clubCode,
+                clubData.clubCode || null,
+                clubData.clubName,
                 clubData.clubName,
                 clubData.address,
                 clubData.city,
@@ -95,13 +164,17 @@ async function createClub(clubData) {
                 clubData.email || null,
                 clubData.website || null,
                 clubData.logoPath || null,
+                clubData.logoPath || null,
                 clubData.par || 72,
                 clubData.physicalHoles || 18,
-                0, // current_members
+                clubData.slopeRating ?? 113,
+                clubData.courseRating ?? 72.0,
+                clubData.enableFieldCharacteristics !== false ? 1 : 0,
+                0,
                 'active',
                 new Date().toISOString().split('T')[0],
                 true,
-                1 // created_by (system admin)
+                1
             ]
         }
     ];
@@ -132,6 +205,12 @@ async function createClub(clubData) {
     
     // Get the created club
     const clubId = results[0].insertId;
+    try {
+        await createCourseHolesTable();
+        await ensureCourseHolesForClub(clubId);
+    } catch (holeErr) {
+        console.error('⚠️ No se pudieron crear hoyos por defecto para el club nuevo:', holeErr);
+    }
     return await getClubById(clubId);
 }
 
@@ -139,17 +218,35 @@ async function createClub(clubData) {
  * Update club
  */
 async function updateClub(clubId, clubData) {
+    await ensureClubsFormColumns();
     const queries = [
         {
             query: `
                 UPDATE clubs SET
-                    club_code = ?, course_name = ?, address = ?, city = ?, country = ?,
-                    timezone = ?, currency = ?, phone = ?, email = ?, website = ?,
-                    logo_path = ?, par = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE course_id = ?
+                    club_code = ?,
+                    club_name = ?,
+                    course_name = ?,
+                    address = ?,
+                    city = ?,
+                    country = ?,
+                    timezone = ?,
+                    currency = ?,
+                    phone = ?,
+                    email = ?,
+                    website = ?,
+                    logo_path = ?,
+                    logo_url = ?,
+                    par = ?,
+                    physical_holes = ?,
+                    slope_rating = ?,
+                    course_rating = ?,
+                    enable_field_characteristics = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE club_id = ?
             `,
             params: [
-                clubData.clubCode,
+                clubData.clubCode || null,
+                clubData.clubName,
                 clubData.clubName,
                 clubData.address,
                 clubData.city,
@@ -160,7 +257,12 @@ async function updateClub(clubId, clubData) {
                 clubData.email || null,
                 clubData.website || null,
                 clubData.logoPath || null,
-                clubData.par || 72,
+                clubData.logoPath || null,
+                clubData.par ?? 72,
+                clubData.physicalHoles ?? 18,
+                clubData.slopeRating ?? null,
+                clubData.courseRating ?? null,
+                clubData.enableFieldCharacteristics !== false ? 1 : 0,
                 clubId
             ]
         }
@@ -813,68 +915,61 @@ async function createDefaultTeesForExistingHoles() {
 }
 
 /**
+ * Crea 18 hoyos por defecto para un club si aún no tiene ninguno.
+ */
+async function ensureCourseHolesForClub(courseId, holeCount = 18) {
+    const checkHoles = `SELECT COUNT(*) as count FROM course_holes WHERE course_id = ?`;
+    const { rows: holeCountRows } = await executeQuery(checkHoles, [courseId]);
+    if (holeCountRows[0].count > 0) return false;
+
+    console.log(`🏌️ Creando ${holeCount} hoyos por defecto para club ${courseId}...`);
+
+    for (let i = 1; i <= holeCount; i++) {
+        let defaultPar = 4;
+        if ([3, 6, 8, 12, 15, 17].includes(i)) defaultPar = 3;
+        if ([5, 9, 14, 18].includes(i)) defaultPar = 5;
+
+        const defaultHandicap = i;
+        let defaultMeters = null;
+        let defaultYards = null;
+        if (defaultPar === 3) {
+            defaultMeters = 150;
+            defaultYards = 164;
+        } else if (defaultPar === 4) {
+            defaultMeters = 350;
+            defaultYards = 383;
+        } else if (defaultPar === 5) {
+            defaultMeters = 500;
+            defaultYards = 547;
+        }
+
+        await executeQuery(
+            `INSERT INTO course_holes (course_id, hole_number, par, handicap, distance_meters, distance_yards, description)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [courseId, i, defaultPar, defaultHandicap, defaultMeters, defaultYards, `Hoyo ${i} - Par ${defaultPar}`]
+        );
+    }
+
+    console.log(`✅ ${holeCount} hoyos creados para club ${courseId}`);
+    return true;
+}
+
+/**
  * Create default holes for existing clubs
  */
 async function createDefaultHolesForExistingClubs() {
     try {
         console.log('🔧 Creando hoyos por defecto para clubes existentes...');
-        
-        // Obtener todos los clubes existentes
-        const getClubs = `SELECT club_id as course_id, club_name as course_name FROM clubs WHERE is_active = true`;
+
+        const getClubs = `SELECT club_id AS course_id, COALESCE(course_name, club_name) AS course_name FROM clubs WHERE is_active = true`;
         const { rows: clubs } = await executeQuery(getClubs, []);
-        
+
         for (const club of clubs) {
-            // Verificar si ya tiene hoyos
-            const checkHoles = `SELECT COUNT(*) as count FROM course_holes WHERE course_id = ?`;
-            const { rows: holeCount } = await executeQuery(checkHoles, [club.course_id]);
-            
-            if (holeCount[0].count === 0) {
-                console.log(`🏌️ Creando 18 hoyos para ${club.course_name}...`);
-                
-                // Crear 18 hoyos con valores por defecto
-                for (let i = 1; i <= 18; i++) {
-                    // Par por defecto: distribución realista
-                    let defaultPar = 4;
-                    if ([3, 6, 8, 12, 15, 17].includes(i)) defaultPar = 3; // Par 3
-                    if ([5, 9, 14, 18].includes(i)) defaultPar = 5; // Par 5
-                    
-                    // Handicap por defecto (1-18, donde 1 es el más difícil)
-                    const defaultHandicap = i;
-                    
-                    // Distancias por defecto según el par
-                    let defaultMeters = null;
-                    let defaultYards = null;
-                    if (defaultPar === 3) {
-                        defaultMeters = 150;
-                        defaultYards = 164;
-                    } else if (defaultPar === 4) {
-                        defaultMeters = 350;
-                        defaultYards = 383;
-                    } else if (defaultPar === 5) {
-                        defaultMeters = 500;
-                        defaultYards = 547;
-                    }
-                    
-                    const insertHole = `
-                        INSERT INTO course_holes (course_id, hole_number, par, handicap, distance_meters, distance_yards, description)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    `;
-                    
-                    await executeQuery(insertHole, [
-                        club.course_id, 
-                        i, 
-                        defaultPar, 
-                        defaultHandicap, 
-                        defaultMeters, 
-                        defaultYards, 
-                        `Hoyo ${i} - Par ${defaultPar}`
-                    ]);
-                }
-                
+            const created = await ensureCourseHolesForClub(club.course_id);
+            if (created) {
                 console.log(`✅ 18 hoyos creados para ${club.course_name}`);
             }
         }
-        
     } catch (error) {
         console.error('❌ Error creando hoyos por defecto:', error);
         throw error;
@@ -8835,7 +8930,7 @@ async function getAccountBalanceBreakdown(clubId, accountName) {
 // Export all functions
 export {
     // Club functions
-    getAllClubs, getClubById, createClub, updateClub, deleteClub,
+    getAllClubs, getClubById, createClub, updateClub, deleteClub, ensureClubsFormColumns,
     
     // Administrator functions  
     getAllAdministrators, authenticateAdmin,
@@ -8877,7 +8972,7 @@ export {
     getAccounts, createAccount, updateAccount, deleteAccount, getTransactions, createTransaction, syncMissingTournamentPaymentTransactions, getAccountBalanceBreakdown,
     
     // Course holes functions
-    createCourseHolesTable, getCourseHoles, updateCourseHole, updateMultipleCourseHoles, getCourseStatistics,
+    createCourseHolesTable, ensureCourseHolesForClub, getCourseHoles, updateCourseHole, updateMultipleCourseHoles, getCourseStatistics,
     
     // Course tees functions
     getCourseTees, getHoleTees, createTee, updateTee, deleteTee, getCourseTeesGroupedByHole,

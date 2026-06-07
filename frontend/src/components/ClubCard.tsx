@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { ExternalLink, Edit, Pause, Play, Building2, Trash2, Flag } from 'lucide-react'
 import { Club } from '@/types/club'
 import { useUpdateClub, useDeleteClub } from '@/hooks/useClubs'
@@ -9,6 +10,7 @@ interface ClubCardProps {
 }
 
 export function ClubCard({ club }: ClubCardProps) {
+  const navigate = useNavigate()
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const updateClub = useUpdateClub()
@@ -177,7 +179,7 @@ export function ClubCard({ club }: ClubCardProps) {
           <div className="mb-2">
             <button
               className="btn bg-green-600 hover:bg-green-700 text-white w-full flex items-center justify-center space-x-2"
-              onClick={() => window.open(`/system/tees/${club.course_id}`, '_blank')}
+              onClick={() => navigate(`/system/tees/${club.course_id}`)}
             >
               <Flag className="w-4 h-4" />
               <span>Gestión de Hoyos</span>

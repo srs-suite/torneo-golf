@@ -67,6 +67,9 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
   const [uploadingFlyer, setUploadingFlyer] = useState(false)
   /** Al crear torneo, si el usuario eligió un archivo, se guarda aquí y se sube después de crear. */
   const [pendingFlyerDataUrl, setPendingFlyerDataUrl] = useState<string | null>(null)
+  const [pendingFlyerFileName, setPendingFlyerFileName] = useState<string | null>(null)
+  /** Campo URL externa opcional; no hace falta para archivos subidos desde la PC. */
+  const [showFlyerUrlInput, setShowFlyerUrlInput] = useState(false)
   const [teeSimultaneousStarts, setTeeSimultaneousStarts] = useState<boolean>((tournament as any)?.enable_simultaneous_starts === 1 || (tournament as any)?.enable_simultaneous_starts === true)
   const [teeIntervalMinutes, setTeeIntervalMinutes] = useState<number>(typeof (tournament as any)?.tee_interval_minutes === 'number' ? (tournament as any).tee_interval_minutes : 10)
   const [teePreferredSession, setTeePreferredSession] = useState<'morning' | 'afternoon'>(((tournament as any)?.preferred_session === 'afternoon') ? 'afternoon' : 'morning')
@@ -79,8 +82,11 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
         const t = tournament as any
         setPublicInscription(t?.public_inscription === 1 || t?.public_inscription === true)
         setPublicInscriptionAllowGroups(t?.public_inscription_allow_groups !== 0 && t?.public_inscription_allow_groups !== false)
-        setFlyerUrl(t?.flyer_url || '')
+        const existingFlyer = t?.flyer_url || ''
+        setFlyerUrl(existingFlyer)
+        setShowFlyerUrlInput(/^https?:\/\//i.test(existingFlyer))
         setPendingFlyerDataUrl(null)
+        setPendingFlyerFileName(null)
         setResultsMode(readResultsMode(t))
       setSeparateLadies(t?.separate_ladies === 1 || t?.separate_ladies === true)
       setLadiesByHcp(t?.ladies_by_hcp === 1 || t?.ladies_by_hcp === true)
@@ -91,7 +97,10 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
       setTeeAfternoonStartTime(t?.afternoon_start_time || '14:00')
       setTeeTwoSessions(t?.enable_two_sessions === 1 || t?.enable_two_sessions === true)
       } else {
+        setFlyerUrl('')
+        setShowFlyerUrlInput(false)
         setPendingFlyerDataUrl(null)
+        setPendingFlyerFileName(null)
       }
     }
   }, [isOpen, tournament])
@@ -367,16 +376,9 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                       Flyer del torneo
                     </label>
                     <p className="text-xs text-gray-600 mb-2">
-                      Si la inscripción es por web, podés agregar una imagen del flyer (cartel). Se mostrará en la página de inscripción. Pegá una URL (https://…) o una ruta /uploads/…, o subí un archivo (PNG, JPG, GIF o WebP, máx. 5 MB).
+                      Si la inscripción es por web, podés agregar una imagen del flyer (cartel). Se mostrará en la página de inscripción. Usá <strong>Subir archivo</strong> para elegir una imagen de tu computadora (PNG, JPG, GIF o WebP, máx. 5 MB). No hace falta pegar ninguna URL.
                     </p>
                     <div className="flex flex-wrap gap-2 items-center mb-2">
-                      <input
-                        type="text"
-                        value={flyerUrl}
-                        onChange={(e) => setFlyerUrl(e.target.value)}
-                        placeholder="https://ejemplo.com/flyer.jpg o /uploads/tournaments/..."
-                        className="flex-1 min-w-[200px] border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                      />
                       <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm font-medium text-gray-700 cursor-pointer hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
                         <Upload className="w-4 h-4" />
                         {isEditMode ? 'Subir archivo' : 'Elegir archivo'}
@@ -400,6 +402,9 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                               r.onerror = () => reject(new Error('Error al leer el archivo'))
                               r.readAsDataURL(file)
                             })
+                            setShowFlyerUrlInput(false)
+                            setPendingFlyerFileName(file.name)
+                            setPendingFlyerDataUrl(dataUrl)
                             if (isEditMode && tournament?.tournament_id) {
                               setUploadingFlyer(true)
                               try {
@@ -408,21 +413,60 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                                 await tournamentService.updateTournament(clubId, tournament.tournament_id, { flyer_url: url })
                                 toast.success('Flyer subido y guardado')
                               } catch (err: any) {
+                                setPendingFlyerDataUrl(null)
+                                setPendingFlyerFileName(null)
                                 toast.error(err?.response?.data?.error || err?.message || 'Error al subir la imagen')
                               } finally {
                                 setUploadingFlyer(false)
                                 e.target.value = ''
                               }
                             } else {
-                              setPendingFlyerDataUrl(dataUrl)
+                              setFlyerUrl('')
                               toast.success('Imagen lista. Guardá el torneo para subirla.')
                             }
                             e.target.value = ''
                           }}
                         />
                       </label>
+                      {!showFlyerUrlInput && (
+                        <button
+                          type="button"
+                          onClick={() => setShowFlyerUrlInput(true)}
+                          className="text-xs text-gray-600 underline hover:text-gray-800"
+                        >
+                          O pegar URL externa (opcional)
+                        </button>
+                      )}
                     </div>
+                    {showFlyerUrlInput && (
+                      <div className="mb-2">
+                        <input
+                          type="text"
+                          value={flyerUrl}
+                          onChange={(e) => setFlyerUrl(e.target.value)}
+                          placeholder="https://ejemplo.com/flyer.jpg"
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowFlyerUrlInput(false)
+                            if (!/^https?:\/\//i.test(flyerUrl)) setFlyerUrl('')
+                          }}
+                          className="mt-1 text-xs text-gray-500 underline hover:text-gray-700"
+                        >
+                          Ocultar campo URL
+                        </button>
+                      </div>
+                    )}
                     {uploadingFlyer && <p className="text-xs text-amber-600 mb-1">Subiendo imagen…</p>}
+                    {(pendingFlyerFileName || (flyerUrl.trim() && !showFlyerUrlInput)) && !uploadingFlyer && (
+                      <p className="text-xs text-green-700 mb-1">
+                        {pendingFlyerFileName
+                          ? (isEditMode ? `Archivo subido: ${pendingFlyerFileName}` : `Archivo seleccionado: ${pendingFlyerFileName}. Guardá el torneo para subirlo.`)
+                          : 'Flyer guardado en el servidor.'}
+                      </p>
+                    )}
                     {(flyerUrl.trim() || pendingFlyerDataUrl) && (
                       <div className="mt-3">
                         <p className="text-xs text-gray-500 mb-1">Vista previa:</p>
@@ -430,7 +474,14 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                           src={pendingFlyerDataUrl || resolveFlyerDisplayUrl(flyerUrl) || ''}
                           alt="Flyer del torneo"
                           className="max-w-full max-h-40 object-contain rounded border border-gray-200 bg-white"
-                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                          onError={(e) => {
+                            const img = e.target as HTMLImageElement
+                            if (pendingFlyerDataUrl && img.src !== pendingFlyerDataUrl) {
+                              img.src = pendingFlyerDataUrl
+                              return
+                            }
+                            img.style.display = 'none'
+                          }}
                         />
                       </div>
                     )}

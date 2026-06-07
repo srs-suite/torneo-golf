@@ -20,6 +20,10 @@ export function resolveFlyerDisplayUrl(rawFlyer: string | null | undefined): str
 
   try {
     if (raw.startsWith('/uploads/')) {
+      if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+        // En prod HTTPS nginx devuelve el SPA para /uploads/; las imágenes responden por HTTP
+        return `http://${window.location.host}${raw}`
+      }
       const fallback = devUploadsFallbackOrigin()
       if (fallback) return `${fallback}${raw}`
       return raw

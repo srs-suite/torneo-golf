@@ -1,11 +1,12 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { X, Trash2 } from 'lucide-react'
 import { Club, CreateClubRequest } from '@/types/club'
-import { useCreateClub, useUpdateClub, useUploadLogo } from '@/hooks/useClubs'
+import { useCreateClub, useUpdateClub, useUploadLogo, useClub } from '@/hooks/useClubs'
 import { useClubAdministrators } from '@/hooks/useAdministrators'
+import { toast } from 'react-hot-toast'
 
 // Create dynamic validation schema
 const createClubSchema = (isEditMode: boolean) => z.object({
@@ -17,8 +18,6 @@ const createClubSchema = (isEditMode: boolean) => z.object({
   phone: z.string().optional().or(z.literal('')),
   email: z.union([z.string().email('Email inválido'), z.literal('')]).optional(),
   website: z.union([z.string().url('URL inválida'), z.literal('')]).optional(),
-  
-  // Field characteristics toggle
   enableFieldCharacteristics: z.boolean().optional(),
   par: z.union([z.number().min(54, 'Par mínimo 54').max(80, 'Par máximo 80'), z.undefined()]).optional(),
   physicalHoles: z.union([z.number().int().min(9).max(18), z.undefined()]).optional(),
@@ -51,20 +50,45 @@ const countries = [
   { code: 'MX', name: 'México', timezone: 'America/Mexico_City', currency: 'MXN' },
 ]
 
+function normalizeCountryCode(country: string | undefined): string {
+  const raw = (country ?? '').trim()
+  if (!raw) return ''
+  if (countries.some((c) => c.code === raw)) return raw
+  const byName = countries.find((c) => c.name.toLowerCase() === raw.toLowerCase())
+  return byName?.code ?? raw
+}
+
+function clubToFormValues(club: Club) {
+  return {
+    clubCode: club.club_code || '',
+    clubName: club.course_name || '',
+    address: club.address || '',
+    city: club.city || '',
+    country: normalizeCountryCode(club.country),
+    phone: club.phone || '',
+    email: club.email || '',
+    website: club.website || '',
+    enableFieldCharacteristics: club.enable_field_characteristics !== false,
+    par: club.par ?? undefined,
+    physicalHoles: club.physical_holes === 9 ? 9 : 18,
+    slopeRating: club.slope_rating ?? undefined,
+    courseRating: club.course_rating ?? undefined,
+    adminName: '',
+    adminEmail: '',
+    adminUsername: '',
+    adminPassword: '',
+  }
+}
+
 export function CreateClubModal({ isOpen, onClose, editClub }: CreateClubModalProps) {
   const [logoFile, setLogoFile] = useState<File | null>(null)
-  
-  // Get administrators for the club when editing
-  const { data: clubAdministrators, isLoading: isLoadingAdmins, error: adminError } = useClubAdministrators(editClub?.course_id || 0)
-  
-  // Debug logs
-  console.log('CreateClubModal - Club ID:', editClub?.course_id)
-  console.log('CreateClubModal - Club Administrators:', clubAdministrators)
-  console.log('CreateClubModal - Loading admins:', isLoadingAdmins)
-  console.log('CreateClubModal - Admin error:', adminError)
   const [logoPreview, setLogoPreview] = useState<string>('')
+  const formPopulatedForClubId = useRef<number | null>(null)
   
   const isEditMode = !!editClub
+  const { data: clubDetails, isLoading: isLoadingClub } = useClub(isEditMode && isOpen ? (editClub?.course_id || 0) : 0)
+  const { data: clubAdministrators, isLoading: isLoadingAdmins } = useClubAdministrators(isEditMode && isOpen ? (editClub?.course_id || 0) : 0)
+  
   const createClub = useCreateClub()
   const updateClub = useUpdateClub()
   const uploadLogo = useUploadLogo()
@@ -97,47 +121,48 @@ export function CreateClubModal({ isOpen, onClose, editClub }: CreateClubModalPr
 
 
 
-  // Reset form when modal opens/closes or when club administrators data changes
+  // Cargar datos del club al abrir edición (una sola vez por club; no pisa lo que el usuario escribe)
   useEffect(() => {
-    if (isOpen) {
-      if (editClub) {
-        // Populate form with edit data
-        setValue('clubCode', editClub.club_code)
-        setValue('clubName', editClub.course_name)
-        setValue('address', editClub.address)
-        setValue('city', editClub.city)
-        setValue('country', editClub.country)
-        setValue('phone', editClub.phone || '')
-        setValue('email', editClub.email || '')
-        setValue('website', editClub.website || '')
-        setValue('enableFieldCharacteristics', editClub.enable_field_characteristics ?? true)
-        setValue('par', editClub.par)
-        setValue('slopeRating', editClub.slope_rating)
-        setValue('courseRating', editClub.course_rating)
-        setValue('physicalHoles', editClub.physical_holes)
-        
-        // Populate administrator data if available
-        if (clubAdministrators && clubAdministrators.length > 0) {
-          const admin = clubAdministrators[0] // Take the first admin (usually primary)
-          console.log('Populating admin data:', admin)
-          setValue('adminName', admin.full_name || '')
-          setValue('adminEmail', admin.email || '')
-          setValue('adminUsername', admin.username || '')
-          // Don't set password in edit mode for security
-        } else {
-          console.log('No administrators found for club', editClub?.course_id)
-        }
-        
-        if (editClub.logo_path) {
-          setLogoPreview(editClub.logo_path)
-        }
-      } else {
-        reset()
-        setLogoFile(null)
-        setLogoPreview('')
-      }
+    if (!isOpen) {
+      formPopulatedForClubId.current = null
+      return
     }
-  }, [isOpen, editClub, clubAdministrators, setValue, reset])
+    if (!isEditMode || !editClub) {
+      reset({
+        enableFieldCharacteristics: true,
+        par: undefined,
+        phone: '',
+        email: '',
+        website: '',
+        adminName: '',
+        adminEmail: '',
+        adminUsername: '',
+        adminPassword: '',
+      })
+      setLogoFile(null)
+      setLogoPreview('')
+      formPopulatedForClubId.current = null
+      return
+    }
+
+    if (isLoadingClub && !clubDetails) return
+    if (formPopulatedForClubId.current === editClub.course_id) return
+
+    const source = clubDetails ?? editClub
+    reset(clubToFormValues(source))
+    formPopulatedForClubId.current = editClub.course_id
+    setLogoFile(null)
+    setLogoPreview(source.logo_path || '')
+  }, [isOpen, isEditMode, editClub, clubDetails, isLoadingClub, reset])
+
+  // Datos del administrador (no resetea el resto del formulario)
+  useEffect(() => {
+    if (!isOpen || !isEditMode || !clubAdministrators?.length) return
+    const admin = clubAdministrators[0]
+    setValue('adminName', admin.full_name || '')
+    setValue('adminEmail', admin.email || '')
+    setValue('adminUsername', admin.username || '')
+  }, [isOpen, isEditMode, clubAdministrators, setValue])
 
   const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -192,7 +217,6 @@ export function CreateClubModal({ isOpen, onClose, editClub }: CreateClubModalPr
       const country = countries.find(c => c.code === data.country)
       
       if (isEditMode && editClub) {
-        // Update existing club
         await updateClub.mutateAsync({
           id: editClub.course_id,
           data: {
@@ -212,16 +236,12 @@ export function CreateClubModal({ isOpen, onClose, editClub }: CreateClubModalPr
             physicalHoles: data.physicalHoles || 18,
             slopeRating: data.slopeRating,
             courseRating: data.courseRating,
+            adminName: data.adminName,
+            adminEmail: data.adminEmail,
+            adminUsername: data.adminUsername,
+            adminPassword: data.adminPassword || undefined,
           }
         })
-        
-        // TODO: Implementar actualización separada del administrador
-        // if (clubAdministrators && clubAdministrators.length > 0) {
-        //   await updateAdministrator.mutateAsync({
-        //     id: clubAdministrators[0].admin_id,
-        //     data: { ... }
-        //   })
-        // }
       } else {
         // Create new club
         const createData: CreateClubRequest = {
@@ -252,8 +272,10 @@ export function CreateClubModal({ isOpen, onClose, editClub }: CreateClubModalPr
       }
       
       onClose()
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error completo al enviar formulario:', error)
+      const message = error?.response?.data?.message || error?.response?.data?.error || error?.message || 'Error al guardar el club'
+      toast.error(message)
     }
   }
 
@@ -277,7 +299,13 @@ export function CreateClubModal({ isOpen, onClose, editClub }: CreateClubModalPr
 
         {/* Body */}
         <div className="modal-body">
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+          {isEditMode && isLoadingClub && (
+            <p className="text-sm text-gray-500 mb-4">Cargando datos del club…</p>
+          )}
+          <form onSubmit={handleSubmit(onSubmit, (errs) => {
+            const first = Object.values(errs)[0]
+            toast.error(first?.message?.toString() || 'Revisá los campos marcados')
+          })} className="space-y-6">
             {/* Basic Info */}
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
@@ -380,9 +408,9 @@ export function CreateClubModal({ isOpen, onClose, editClub }: CreateClubModalPr
                 <label className="label">Sitio Web</label>
                 <input
                   {...register('website')}
-                  type="url"
+                  type="text"
                   className={`input ${errors.website ? 'input-error' : ''}`}
-                  placeholder=""
+                  placeholder="https://..."
                 />
                 {errors.website && (
                   <p className="error-message">{errors.website.message}</p>
@@ -468,23 +496,6 @@ export function CreateClubModal({ isOpen, onClose, editClub }: CreateClubModalPr
                     </div>
                     
                     <div className="form-group">
-                      <label className="label">Hoyos Físicos del Campo</label>
-                      <select
-                        {...register('physicalHoles', { valueAsNumber: true })}
-                        className="input"
-                        disabled={!watchEnableFieldCharacteristics}
-                      >
-                        <option value="18">18 hoyos físicos</option>
-                        <option value="9">9 hoyos físicos (dos vueltas)</option>
-                      </select>
-                      <p className="help-text">
-                        Hoyos físicos reales del campo (no vueltas)
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="form-group">
                       <label className="label">Slope Rating</label>
                       <input
                         {...register('slopeRating', { valueAsNumber: true })}
@@ -499,7 +510,9 @@ export function CreateClubModal({ isOpen, onClose, editClub }: CreateClubModalPr
                         Valor estándar entre 55-155 (113 = neutro)
                       </p>
                     </div>
-                    
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
                     <div className="form-group">
                       <label className="label">Course Rating</label>
                       <input
@@ -517,6 +530,20 @@ export function CreateClubModal({ isOpen, onClose, editClub }: CreateClubModalPr
                       </p>
                     </div>
                   </div>
+                </div>
+
+                <div className="form-group mt-4">
+                  <label className="label">Hoyos Físicos del Campo</label>
+                  <select
+                    {...register('physicalHoles', { valueAsNumber: true })}
+                    className="input"
+                  >
+                    <option value={18}>18 hoyos físicos</option>
+                    <option value={9}>9 hoyos físicos (dos vueltas)</option>
+                  </select>
+                  <p className="help-text">
+                    Hoyos físicos reales del campo (no vueltas). Siempre editable.
+                  </p>
                 </div>
               </div>
             </div>

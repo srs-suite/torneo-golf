@@ -70,6 +70,10 @@ export interface UpdateClubRequest {
   maxMembers?: number
   slopeRating?: number
   courseRating?: number
+  adminName?: string
+  adminEmail?: string
+  adminUsername?: string
+  adminPassword?: string
   subscription_status?: 'active' | 'suspended' | 'cancelled'
 }
 

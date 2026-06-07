@@ -40,7 +40,9 @@ import {
     saveScorecard, getScorecardsByTournament, getScorecardByPlayer, updateScorecard, deleteScorecard, getScorecardForPrint,
     
     // Course functions
-    getCourseHoles, updateCourseHole, getCourseStatistics,
+    createCourseHolesTable, ensureCourseHolesForClub, ensureClubsFormColumns,
+    getCourseHoles, updateCourseHole, updateMultipleCourseHoles, getCourseStatistics,
+    getCourseTees, getHoleTees, createTee, updateTee, deleteTee, getCourseTeesGroupedByHole,
     
     // Rankings functions
     getAnnualRankings, getTournamentRanking,
@@ -366,6 +368,8 @@ async function handleAuthAPI(req, res, pathParts) {
 async function handleSystemAPI(req, res, pathParts) {
     const method = req.method;
     const action = pathParts[2];
+    const resourceId = pathParts[3];
+    const url = new URL(req.url, `http://${req.headers.host}`);
 
     if (method === 'OPTIONS') {
         res.writeHead(200, corsHeaders);
@@ -375,8 +379,31 @@ async function handleSystemAPI(req, res, pathParts) {
 
     try {
         switch (action) {
-            case 'clubs':
-                if (method === 'GET') {
+            case 'clubs': {
+                if (resourceId) {
+                    const clubId = parseInt(resourceId, 10);
+                    if (!Number.isFinite(clubId)) {
+                        sendError(res, 'ID de club inválido', 400);
+                        return;
+                    }
+                    if (method === 'GET') {
+                        const club = await getClubById(clubId);
+                        if (!club) {
+                            sendError(res, 'Club no encontrado', 404);
+                            return;
+                        }
+                        sendJSON(res, { data: club });
+                    } else if (method === 'PUT') {
+                        const clubData = await parseBody(req);
+                        const updated = await updateClub(clubId, clubData);
+                        sendJSON(res, { data: updated, message: 'Club actualizado exitosamente' });
+                    } else if (method === 'DELETE') {
+                        await deleteClub(clubId);
+                        sendJSON(res, { message: 'Club eliminado exitosamente' });
+                    } else {
+                        sendError(res, 'Método no permitido', 405);
+                    }
+                } else if (method === 'GET') {
                     const clubs = await getAllClubs();
                     sendJSON(res, { data: clubs });
                 } else if (method === 'POST') {
@@ -387,9 +414,12 @@ async function handleSystemAPI(req, res, pathParts) {
                     sendError(res, 'Método no permitido', 405);
                 }
                 break;
+            }
             case 'administrators':
                 if (method === 'GET') {
-                    const admins = await getAllAdministrators();
+                    const clubIdParam = url.searchParams.get('clubId');
+                    const clubId = clubIdParam ? parseInt(clubIdParam, 10) : null;
+                    const admins = await getAllAdministrators(Number.isFinite(clubId) ? clubId : null);
                     sendJSON(res, { data: admins });
                 } else {
                     sendError(res, 'Método no permitido', 405);
@@ -495,6 +525,97 @@ async function handleClubAPI(req, res, pathParts) {
             } else {
                 sendError(res, 'Método no permitido', 405);
             }
+            return;
+        }
+
+        // Course holes — /api/club/:clubId/holes
+        if (resource === 'holes') {
+            const parsedClubId = parseInt(clubId, 10);
+
+            if (resourceId === 'statistics' && method === 'GET') {
+                await createCourseHolesTable();
+                await ensureCourseHolesForClub(parsedClubId);
+                const stats = await getCourseStatistics(parsedClubId);
+                sendJSON(res, { success: true, data: stats });
+                return;
+            }
+
+            if (!resourceId) {
+                if (method === 'GET') {
+                    await createCourseHolesTable();
+                    await ensureCourseHolesForClub(parsedClubId);
+                    const holes = await getCourseHoles(parsedClubId);
+                    sendJSON(res, { success: true, data: holes });
+                } else if (method === 'PUT') {
+                    const body = await parseBody(req);
+                    await updateMultipleCourseHoles(parsedClubId, body.holes || []);
+                    sendJSON(res, { success: true, message: 'Hoyos actualizados exitosamente' });
+                } else {
+                    sendError(res, 'Método no permitido', 405);
+                }
+                return;
+            }
+
+            if (method === 'PUT') {
+                const holeId = parseInt(resourceId, 10);
+                const body = await parseBody(req);
+                const updated = await updateCourseHole(holeId, body);
+                if (!updated) {
+                    sendError(res, 'Hoyo no encontrado', 404);
+                    return;
+                }
+                sendJSON(res, { success: true, message: 'Hoyo actualizado exitosamente' });
+                return;
+            }
+
+            sendError(res, 'Método no permitido', 405);
+            return;
+        }
+
+        // Course tees — /api/club/:clubId/tees/...
+        if (resource === 'tees') {
+            const parsedClubId = parseInt(clubId, 10);
+
+            if (resourceId === 'grouped' && method === 'GET') {
+                await createCourseHolesTable();
+                await ensureCourseHolesForClub(parsedClubId);
+                const grouped = await getCourseTeesGroupedByHole(parsedClubId);
+                sendJSON(res, { success: true, data: grouped });
+                return;
+            }
+
+            if (resourceId === 'hole' && subResource && method === 'POST') {
+                const holeId = parseInt(subResource, 10);
+                const body = await parseBody(req);
+                const teeId = await createTee(holeId, body);
+                sendJSON(res, { success: true, data: { tee_id: teeId }, message: 'Salida creada exitosamente' });
+                return;
+            }
+
+            if (resourceId && resourceId !== 'grouped' && resourceId !== 'hole') {
+                const teeId = parseInt(resourceId, 10);
+                if (method === 'PUT') {
+                    const body = await parseBody(req);
+                    const updated = await updateTee(teeId, body);
+                    sendJSON(res, { success: true, data: updated, message: 'Salida actualizada exitosamente' });
+                    return;
+                }
+                if (method === 'DELETE') {
+                    await deleteTee(teeId);
+                    sendJSON(res, { success: true, message: 'Salida eliminada exitosamente' });
+                    return;
+                }
+            }
+
+            if (!resourceId && method === 'GET') {
+                await createCourseHolesTable();
+                await ensureCourseHolesForClub(parsedClubId);
+                const tees = await getCourseTees(parsedClubId);
+                sendJSON(res, { success: true, data: tees });
+                return;
+            }
+
+            sendError(res, 'Recurso no encontrado', 404);
             return;
         }
 
@@ -2266,7 +2387,7 @@ const server = http.createServer(async (req, res) => {
     res.end('Not Found');
 });
 
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, '0.0.0.0', async () => {
     console.log('🎯 ===================================');
     console.log('📊 SERVIDOR CON BASE DE DATOS REAL');
     console.log('🎯 ===================================');
@@ -2279,6 +2400,13 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log('✅ SISTEMA COMPLETO FUNCIONANDO:');
     console.log('   http://localhost:5173');
     console.log('');
+
+    try {
+        await createCourseHolesTable();
+        await ensureClubsFormColumns();
+    } catch (err) {
+        console.error('⚠️ Migración inicial:', err.message);
+    }
 
     startAagWeeklySyncScheduler();
 });
