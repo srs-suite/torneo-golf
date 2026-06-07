@@ -4,6 +4,7 @@ import { useGetScorecardForPrint } from '../hooks/useScorecards';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { formatHcpForDisplay } from '@/utils/scoreUtils';
+import { authFetch } from '@/lib/api';
 import {
   buildPlayerPrintLine,
   playingHcpForPrint,
@@ -32,7 +33,7 @@ export default function PrintableScorecard() {
   const { data: courseHoles } = useQuery({
     queryKey: ['course-holes', clubId],
     queryFn: async () => {
-      const response = await fetch(`/api/club/${clubId}/holes`)
+      const response = await authFetch(`/api/club/${clubId}/holes`)
       if (!response.ok) {
         throw new Error('Error al cargar los hoyos')
       }

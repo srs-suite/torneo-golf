@@ -7,6 +7,7 @@ import { useUserPermissions } from '@/hooks/useUserPermissions'
 import { toast } from 'react-hot-toast'
 import { formatHcpForDisplay } from '@/utils/scoreUtils'
 import { participantPlayingHcp, participantWhIndex } from '@/utils/clubHandicap'
+import { authFetch } from '@/lib/api'
 
 function toPositiveDbId(v: unknown): number | undefined {
   if (v === null || v === undefined || v === '') return undefined
@@ -513,7 +514,7 @@ export default function TeeTimeManagerSimple() {
       for (const participant of selectedList) {
         const participationId = getParticipantId(participant)
         // eslint-disable-next-line no-await-in-loop
-        const response = await fetch(`/api/club/${clubIdNum}/tournaments/${tournamentIdNum}/move-player`, {
+        const response = await authFetch(`/api/club/${clubIdNum}/tournaments/${tournamentIdNum}/move-player`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ participationId, newGroupNumber: targetGroupNumber })

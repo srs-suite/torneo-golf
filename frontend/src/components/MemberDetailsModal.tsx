@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X, Trophy, FileText, TrendingUp, User, Phone, Mail, Calendar, Award, DollarSign, MessageCircle } from 'lucide-react';
 import type { Member } from '@/types/member';
+import { authFetch } from '@/lib/api';
 
 interface Tournament {
   tournament_id: number;
@@ -72,10 +73,10 @@ export function MemberDetailsModal({ isOpen, onClose, member, clubId }: MemberDe
     try {
       // Cargar datos en paralelo
       const [tournamentsRes, scorecardsRes, handicapRes, contributionsRes] = await Promise.allSettled([
-        fetch(`/api/club/${clubId}/members/${member.member_id}/tournaments`),
-        fetch(`/api/club/${clubId}/members/${member.member_id}/scorecards`),
-        fetch(`/api/club/${clubId}/members/${member.member_id}/handicap-history`),
-        fetch(`/api/club/${clubId}/members/${member.member_id}/contributions`)
+        authFetch(`/api/club/${clubId}/members/${member.member_id}/tournaments`),
+        authFetch(`/api/club/${clubId}/members/${member.member_id}/scorecards`),
+        authFetch(`/api/club/${clubId}/members/${member.member_id}/handicap-history`),
+        authFetch(`/api/club/${clubId}/members/${member.member_id}/contributions`)
       ]);
 
       // Procesar torneos
@@ -428,7 +429,7 @@ export function MemberDetailsModal({ isOpen, onClose, member, clubId }: MemberDe
                                   <button
                                     onClick={async () => {
                                       try {
-                                        const response = await fetch(`/api/club/${clubId}/accounting/incomes/${contribution.income_id}/send-whatsapp`, {
+                                        const response = await authFetch(`/api/club/${clubId}/accounting/incomes/${contribution.income_id}/send-whatsapp`, {
                                           method: 'POST',
                                           headers: { 'Content-Type': 'application/json' }
                                         })

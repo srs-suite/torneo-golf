@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Plus, Trash2, Edit } from 'lucide-react';
 import { toast } from 'react-hot-toast';
+import { authFetch } from '@/lib/api';
 
 interface CourseHole {
   hole_id: number;
@@ -66,7 +67,7 @@ export default function TeesManagement() {
   const { data: holesWithTees, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['course-tees-grouped', clubId],
     queryFn: async () => {
-      const response = await fetch(`/api/club/${clubId}/tees/grouped`);
+      const response = await authFetch(`/api/club/${clubId}/tees/grouped`);
       if (!response.ok) {
         throw new Error('Error al cargar las salidas');
       }
@@ -79,7 +80,7 @@ export default function TeesManagement() {
   // Create tee mutation
   const createTeeMutation = useMutation({
     mutationFn: async ({ holeId, teeData }: { holeId: number; teeData: Partial<CourseTee> }) => {
-      const response = await fetch(`/api/club/${clubId}/tees/hole/${holeId}`, {
+      const response = await authFetch(`/api/club/${clubId}/tees/hole/${holeId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(teeData)
@@ -100,7 +101,7 @@ export default function TeesManagement() {
   // Update tee mutation
   const updateTeeMutation = useMutation({
     mutationFn: async ({ teeId, teeData }: { teeId: number; teeData: Partial<CourseTee> }) => {
-      const response = await fetch(`/api/club/${clubId}/tees/${teeId}`, {
+      const response = await authFetch(`/api/club/${clubId}/tees/${teeId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(teeData)
@@ -121,7 +122,7 @@ export default function TeesManagement() {
   // Delete tee mutation
   const deleteTeeMutation = useMutation({
     mutationFn: async (teeId: number) => {
-      const response = await fetch(`/api/club/${clubId}/tees/${teeId}`, {
+      const response = await authFetch(`/api/club/${clubId}/tees/${teeId}`, {
         method: 'DELETE'
       });
       if (!response.ok) throw new Error('Error al eliminar salida');
@@ -140,7 +141,7 @@ export default function TeesManagement() {
   const updateHoleMutation = useMutation({
     mutationFn: async (holeData: HoleData) => {
       console.log('🏌️ Updating hole:', holeData);
-      const response = await fetch(`/api/club/${clubId}/holes/${holeData.hole_id}`, {
+      const response = await authFetch(`/api/club/${clubId}/holes/${holeData.hole_id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(holeData)

@@ -9,6 +9,7 @@ import { useMembers } from '@/hooks/useMembers'
 import { useTournaments } from '@/hooks/useTournaments'
 import { useUserPermissions } from '@/hooks/useUserPermissions'
 import { toast } from 'react-hot-toast'
+import { authFetch } from '@/lib/api'
 import * as XLSX from 'xlsx'
 import { LoadingSpinner } from '@/components/LoadingSpinner'
 import { tournamentService } from '@/services/tournamentService'
@@ -2270,7 +2271,7 @@ export default function Payments() {
                               <button
                                 onClick={async () => {
                                   try {
-                                    const response = await fetch(`/api/club/${clubIdNum}/accounting/incomes/${income.income_id}/send-whatsapp`, {
+                                    const response = await authFetch(`/api/club/${clubIdNum}/accounting/incomes/${income.income_id}/send-whatsapp`, {
                                       method: 'POST',
                                       headers: { 'Content-Type': 'application/json' }
                                     })

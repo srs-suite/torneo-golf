@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'react-hot-toast';
+import { authFetch } from '@/lib/api';
 
 interface CourseHole {
   hole_id: number;
@@ -36,7 +37,7 @@ const HolesManagement: React.FC = () => {
   const { data: holes, isLoading, error } = useQuery({
     queryKey: ['course-holes', clubId],
     queryFn: async () => {
-      const response = await fetch(`/api/club/${clubId}/holes`);
+      const response = await authFetch(`/api/club/${clubId}/holes`);
       if (!response.ok) {
         throw new Error('Error al cargar los hoyos');
       }
@@ -50,7 +51,7 @@ const HolesManagement: React.FC = () => {
   const { data: statistics } = useQuery({
     queryKey: ['course-statistics', clubId],
     queryFn: async () => {
-      const response = await fetch(`/api/club/${clubId}/holes/statistics`);
+      const response = await authFetch(`/api/club/${clubId}/holes/statistics`);
       if (!response.ok) {
         throw new Error('Error al cargar estadísticas');
       }
@@ -70,7 +71,7 @@ const HolesManagement: React.FC = () => {
   // Update holes mutation
   const updateHolesMutation = useMutation({
     mutationFn: async (holesData: CourseHole[]) => {
-      const response = await fetch(`/api/club/${clubId}/holes`, {
+      const response = await authFetch(`/api/club/${clubId}/holes`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

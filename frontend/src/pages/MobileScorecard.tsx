@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Save, Eye, CheckCircle2 } from 'lucide-react'
 import { useTournaments, useTournamentParticipants } from '@/hooks/useTournaments'
 import { useQuery } from '@tanstack/react-query'
+import { authFetch } from '@/lib/api'
 
 interface ScorecardData {
   scores: { [hole: number]: number }
@@ -43,7 +44,7 @@ export default function MobileScorecard() {
   const { data: courseHoles, isLoading: holesLoading } = useQuery({
     queryKey: ['course-holes', clubIdNum],
     queryFn: async () => {
-      const response = await fetch(`/api/club/${clubIdNum}/holes`)
+      const response = await authFetch(`/api/club/${clubIdNum}/holes`)
       if (!response.ok) {
         throw new Error('Error al cargar los hoyos')
       }

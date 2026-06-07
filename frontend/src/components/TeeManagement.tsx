@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Plus, Edit2, Trash2, Save, X } from 'lucide-react';
+import { authFetch } from '@/lib/api';
 
 interface CourseTee {
   tee_id?: number;
@@ -75,7 +76,7 @@ const TeeManagement: React.FC<TeeManagementProps> = ({ clubId, tees, onTeesUpdat
         ? `/api/club/${clubId}/tees`
         : `/api/club/${clubId}/tees/${editingTee.tee_id}`;
 
-      const response = await fetch(url, {
+      const response = await authFetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(editingTee),
@@ -102,7 +103,7 @@ const TeeManagement: React.FC<TeeManagementProps> = ({ clubId, tees, onTeesUpdat
 
     setIsLoading(true);
     try {
-      const response = await fetch(`/api/club/${clubId}/tees/${teeId}`, {
+      const response = await authFetch(`/api/club/${clubId}/tees/${teeId}`, {
         method: 'DELETE',
       });
 

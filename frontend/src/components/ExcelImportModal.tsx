@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { X, Upload, FileSpreadsheet, AlertCircle, CheckCircle, Trash2 } from 'lucide-react'
 import * as XLSX from 'xlsx'
+import { authFetch } from '@/lib/api'
 
 interface ExcelImportModalProps {
   isOpen: boolean
@@ -504,7 +505,7 @@ export function ExcelImportModal({ isOpen, onClose, clubId, onImportSuccess }: E
       console.log(`🚀 Iniciando importación en modo: ${importMode === 'create' ? 'CREAR SOCIOS' : 'ACTUALIZAR INDEX/HCP'}`)
       
       // Primero obtenemos todos los miembros existentes
-      const existingMembersResponse = await fetch(`http://localhost:8000/api/club/${clubId}/members`)
+      const existingMembersResponse = await authFetch(`/api/club/${clubId}/members`)
       if (!existingMembersResponse.ok) {
         throw new Error('Error al obtener miembros existentes')
       }
@@ -678,7 +679,7 @@ export function ExcelImportModal({ isOpen, onClose, clubId, onImportSuccess }: E
               
               console.log('📤 Enviando actualización:', updateData)
 
-              const response = await fetch(`http://localhost:8000/api/club/${clubId}/members/${existingMember.member_id}`, {
+              const response = await authFetch(`/api/club/${clubId}/members/${existingMember.member_id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(updateData)
@@ -718,7 +719,7 @@ export function ExcelImportModal({ isOpen, onClose, clubId, onImportSuccess }: E
 
           console.log('Datos a enviar para', member.full_name, ':', memberData)
 
-          const response = await fetch(`http://localhost:8000/api/club/${clubId}/members`, {
+          const response = await authFetch(`/api/club/${clubId}/members`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(memberData)

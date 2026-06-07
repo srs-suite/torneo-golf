@@ -6,6 +6,7 @@ import { useSaveScorecard, useTournamentScorecards } from '@/hooks/useScorecards
 import { useQuery } from '@tanstack/react-query'
 import { getScoreStyle, formatHcpForDisplay } from '@/utils/scoreUtils'
 import { participantPlayingHcp, participantWhIndex } from '@/utils/clubHandicap'
+import { authFetch } from '@/lib/api'
 import { isTournamentStatusClosed } from '@/types/tournament'
 import { TournamentClosedNotice, TORNEO_CERRADO_ALERT } from '@/components/TournamentClosedNotice'
 // Score styling moved to shared utility
@@ -51,7 +52,7 @@ export default function ManualScorecardEntry() {
   const { data: courseHoles, isLoading: holesLoading } = useQuery({
     queryKey: ['course-holes', clubIdNum, tournamentIdNum],
     queryFn: async () => {
-      const response = await fetch(`/api/club/${clubIdNum}/tournaments/${tournamentIdNum}/holes`)
+      const response = await authFetch(`/api/club/${clubIdNum}/tournaments/${tournamentIdNum}/holes`)
       if (!response.ok) {
         throw new Error('Error al cargar los hoyos')
       }
@@ -142,7 +143,7 @@ export default function ManualScorecardEntry() {
         console.log('📋 Found existing scorecard, loading data:', existingScorecard);
         
         // Cargar los hole scores
-        fetch(`/api/club/${clubIdNum}/tournaments/${tournamentIdNum}/scorecard/${existingScorecard.scorecard_id}`)
+        authFetch(`/api/club/${clubIdNum}/tournaments/${tournamentIdNum}/scorecard/${existingScorecard.scorecard_id}`)
           .then(res => res.json())
           .then(data => {
             if (data.success && data.data) {

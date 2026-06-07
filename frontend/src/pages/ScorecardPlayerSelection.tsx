@@ -7,6 +7,7 @@ import { useTournamentScorecards } from '../hooks/useScorecards';
 import { getScoreStyle, formatHcpForDisplay, computeNetScore } from '../utils/scoreUtils';
 import { participantPlayingHcp, participantWhIndex } from '../utils/clubHandicap';
 import { TournamentClosedNotice, TORNEO_CERRADO_ALERT } from '../components/TournamentClosedNotice';
+import { authFetch } from '@/lib/api';
 
 // Score styling moved to shared utility
 
@@ -463,7 +464,7 @@ export default function ScorecardPlayerSelection() {
         if (existingScorecard.scorecard_id) {
           try {
             const detailUrl = `/api/club/${clubId}/tournaments/${tournamentId}/scorecard/${existingScorecard.scorecard_id}`
-            const detailResponse = await fetch(detailUrl)
+            const detailResponse = await authFetch(detailUrl)
             if (detailResponse.ok) {
               const detailData = await detailResponse.json()
               const apiData = detailData.data || detailData

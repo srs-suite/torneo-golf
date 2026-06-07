@@ -3,6 +3,7 @@ import { ArrowLeft, Printer } from 'lucide-react';
 import { useGetScorecardDetail } from '../hooks/useScorecards';
 import { useQuery } from '@tanstack/react-query';
 import { formatHcpForDisplay } from '@/utils/scoreUtils';
+import { authFetch } from '@/lib/api';
 
 export default function ScorecardDetail() {
   const { clubId, tournamentId, scorecardId } = useParams<{ 
@@ -26,7 +27,7 @@ export default function ScorecardDetail() {
   const { data: courseHoles } = useQuery({
     queryKey: ['course-holes', clubId],
     queryFn: async () => {
-      const response = await fetch(`/api/club/${clubId}/holes`)
+      const response = await authFetch(`/api/club/${clubId}/holes`)
       if (!response.ok) {
         throw new Error('Error al cargar los hoyos')
       }

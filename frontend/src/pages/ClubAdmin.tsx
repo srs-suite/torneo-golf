@@ -52,6 +52,7 @@ import { AagMassSyncPanel } from '@/components/AagMassSyncPanel'
 import { Member } from '@/types/member'
 import { Tournament, isTournamentStatusClosed, tournamentStatusDisplayLabel } from '@/types/tournament'
 import { toast } from 'react-hot-toast'
+import { authFetch } from '@/lib/api'
 import { formatHcpForDisplay } from '@/utils/scoreUtils'
 import { computeHcpFromIndexForClub, formatHcpDisplayForClubPlayer } from '@/utils/clubHandicap'
 
@@ -1345,7 +1346,7 @@ function PhotoManagementSection({ clubId }: { clubId: string | undefined }) {
     setPhoneAuthData(prev => ({ ...prev, isLoading: true, error: null }))
 
     try {
-      const response = await fetch('/api/system/generate-auth', {
+      const response = await authFetch('/api/system/generate-auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1384,7 +1385,7 @@ function PhotoManagementSection({ clubId }: { clubId: string | undefined }) {
   // Cargar participantes del torneo
   const loadParticipants = async (tournamentId: string) => {
     try {
-      const response = await fetch(`/api/club/${clubId}/tournaments/${tournamentId}/participants`)
+      const response = await authFetch(`/api/club/${clubId}/tournaments/${tournamentId}/participants`)
       const result = await response.json()
       console.log('👥 Respuesta de participantes:', result)
       
@@ -1400,7 +1401,7 @@ function PhotoManagementSection({ clubId }: { clubId: string | undefined }) {
   // Generar QR para un jugador específico
   const generatePlayerQR = async (playerId: string, playerName: string) => {
     try {
-      const response = await fetch('/api/system/generate-player-qr', {
+      const response = await authFetch('/api/system/generate-player-qr', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1426,7 +1427,7 @@ function PhotoManagementSection({ clubId }: { clubId: string | undefined }) {
   // Cargar torneos disponibles
   const loadTournaments = async () => {
     try {
-      const response = await fetch(`/api/club/${clubId}/tournaments`)
+      const response = await authFetch(`/api/club/${clubId}/tournaments`)
       const result = await response.json()
       console.log('📋 Respuesta de torneos:', result)
       

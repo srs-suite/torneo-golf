@@ -37,6 +37,7 @@ import { generateMobilePaymentsPin, getParticipantWhatsAppInscriptionUrl, getPub
 import { CreateExternalPlayerModal } from '@/components/CreateExternalPlayerModal'
 import { PaymentModal } from '@/components/PaymentModal'
 import { toast } from 'react-hot-toast'
+import { authFetch } from '@/lib/api'
 
 interface TournamentParticipantsModalProps {
   isOpen: boolean
@@ -236,7 +237,7 @@ export function TournamentParticipantsModal({
   // Load club members
   const loadClubMembers = async () => {
     try {
-      const response = await fetch(`/api/club/${clubId}/members`)
+      const response = await authFetch(`/api/club/${clubId}/members`)
       const data = await response.json()
       
       const membersAsPlayers: PlayerSearchResult[] = data.data.map((member: any) => {

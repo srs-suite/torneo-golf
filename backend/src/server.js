@@ -132,6 +132,51 @@ function validateAdminBearer(req, requestedClubId) {
     return { ok: false, message: 'No autorizado para este club' };
 }
 
+function permFlag(value) {
+    return value === true || value === 1 || value === '1';
+}
+
+/** Rutas de cobro móvil accesibles sin login admin (PIN / sesión temporal) */
+function isPublicClubRoute(pathParts, method) {
+    const resource = pathParts[3];
+    const subResource = pathParts[5];
+    const subAction = pathParts[6];
+    if (resource !== 'tournaments') return false;
+    if (subResource === 'mobile-payments-pin' && method === 'POST' && subAction === 'verify') return true;
+    if (subResource === 'mobile-payments-session' && method === 'POST') return true;
+    if (subResource === 'mobile-payments-participants') return true;
+    return false;
+}
+
+async function resolveClubAdminContext(clubId, session) {
+    if (session.role === 'system_admin') {
+        return { canManageUsers: true, isPrimary: true, user: null };
+    }
+    const user = await getClubUserById(parseInt(clubId, 10), session.adminId);
+    if (!user) return null;
+    if (permFlag(user.is_primary_admin)) {
+        return { canManageUsers: true, isPrimary: true, user };
+    }
+    return {
+        canManageUsers: permFlag(user.can_manage_users),
+        isPrimary: false,
+        user,
+    };
+}
+
+async function requireManageClubUsers(res, clubId, clubAuth) {
+    const ctx = await resolveClubAdminContext(clubId, clubAuth.session);
+    if (!ctx) {
+        sendError(res, 'Usuario no encontrado', 403);
+        return null;
+    }
+    if (!ctx.canManageUsers) {
+        sendError(res, 'No autorizado para gestionar usuarios', 403);
+        return null;
+    }
+    return ctx;
+}
+
 function generateMobilePaymentPin(clubId, tournamentId) {
     cleanupMobilePins();
     const key = `${parseInt(clubId, 10)}:${parseInt(tournamentId, 10)}`;
@@ -498,6 +543,16 @@ async function handleClubAPI(req, res, pathParts) {
         res.writeHead(200, corsHeaders);
         res.end();
         return;
+    }
+
+    let clubAuth = null;
+    if (!isPublicClubRoute(pathParts, method)) {
+        const authResult = validateAdminBearer(req, clubId);
+        if (!authResult.ok) {
+            sendError(res, authResult.message || 'No autorizado', 401);
+            return;
+        }
+        clubAuth = authResult;
     }
 
     try {
@@ -1598,12 +1653,7 @@ async function handleClubAPI(req, res, pathParts) {
         // User management
         else if (resource === 'users') {
             if (method === 'GET' && resourceId === 'me') {
-                const auth = validateAdminBearer(req, clubId);
-                if (!auth.ok) {
-                    sendError(res, auth.message || 'No autorizado', 401);
-                    return;
-                }
-                const meId = auth.session.adminId;
+                const meId = clubAuth.session.adminId;
                 const user = await getClubUserById(parseInt(clubId), meId);
                 if (!user) {
                     sendError(res, 'Usuario no encontrado', 404);
@@ -1611,21 +1661,26 @@ async function handleClubAPI(req, res, pathParts) {
                 }
                 sendJSON(res, { success: true, data: user });
             } else if (method === 'GET' && !resourceId) {
+                if (!(await requireManageClubUsers(res, clubId, clubAuth))) return;
                 const users = await getClubUsers(parseInt(clubId));
                 sendJSON(res, { success: true, data: users });
             } else if (method === 'POST' && !resourceId) {
+                if (!(await requireManageClubUsers(res, clubId, clubAuth))) return;
                 const userData = await parseBody(req);
                 const newUserId = await createClubUser(parseInt(clubId), userData);
                 sendJSON(res, { success: true, data: { userId: newUserId }, message: 'Usuario creado exitosamente' });
             } else if (method === 'PUT' && resourceId && (subResource === 'info' || pathname.endsWith('/info'))) {
+                if (!(await requireManageClubUsers(res, clubId, clubAuth))) return;
                 const userData = await parseBody(req);
                 const updated = await updateUserInfo(parseInt(resourceId, 10), userData);
                 sendJSON(res, { success: true, data: updated, message: 'Usuario actualizado exitosamente' });
             } else if (method === 'PUT' && resourceId) {
+                if (!(await requireManageClubUsers(res, clubId, clubAuth))) return;
                 const permissions = await parseBody(req);
                 await updateUserPermissions(parseInt(resourceId), permissions);
                 sendJSON(res, { success: true, message: 'Permisos actualizados exitosamente' });
             } else if (method === 'DELETE' && resourceId) {
+                if (!(await requireManageClubUsers(res, clubId, clubAuth))) return;
                 await deleteClubUser(parseInt(resourceId));
                 sendJSON(res, { success: true, message: 'Usuario eliminado exitosamente' });
             } else {
