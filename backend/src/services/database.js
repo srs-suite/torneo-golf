@@ -631,6 +631,7 @@ const USER_PERMISSION_COLUMNS = [
 
 function permFlagDb(value) {
     if (value === true || value === 1 || value === '1') return true;
+    if (Buffer.isBuffer(value) && value.length > 0) return value[0] === 1;
     return false;
 }
 

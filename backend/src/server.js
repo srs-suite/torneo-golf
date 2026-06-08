@@ -133,7 +133,9 @@ function validateAdminBearer(req, requestedClubId) {
 }
 
 function permFlag(value) {
-    return value === true || value === 1 || value === '1';
+    if (value === true || value === 1 || value === '1') return true;
+    if (Buffer.isBuffer(value) && value.length > 0) return value[0] === 1;
+    return false;
 }
 
 /** Rutas de cobro móvil accesibles sin login admin (PIN / sesión temporal) */
@@ -394,7 +396,8 @@ async function handleAuthAPI(req, res, pathParts) {
                             name: admin.full_name,
                             email: admin.email,
                             role: admin.role || 'club_admin',
-                            club_id: admin.course_id
+                            club_id: admin.course_id,
+                            is_primary_admin: permFlag(admin.is_primary_admin),
                         }
                     });
                 } else {

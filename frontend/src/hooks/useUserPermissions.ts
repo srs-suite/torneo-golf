@@ -103,11 +103,16 @@ const FULL_PERMISSIONS: UserPermissions = {
   canManageCurrencyExchanges: true,
 }
 
-/** Primer render: system_admin = todo; club_admin = último snapshot guardado (evita “todo false” hasta el GET) */
+function isStoredPrimaryAdmin(): boolean {
+  if (typeof window === 'undefined') return false
+  return localStorage.getItem('isPrimaryAdmin') === '1'
+}
+
+/** Primer render: system_admin / admin principal = todo; club_admin = último snapshot guardado */
 function readInitialPermissionsFromBrowser(): UserPermissions {
   if (typeof window === 'undefined') return DEFAULT_PERMISSIONS
   const adminRole = localStorage.getItem('adminRole')
-  if (adminRole === 'system_admin') {
+  if (adminRole === 'system_admin' || isStoredPrimaryAdmin()) {
     return { ...FULL_PERMISSIONS }
   }
   try {
@@ -190,10 +195,13 @@ export function useUserPermissions(clubId: string | undefined) {
         currentUser.permission_id !== null && currentUser.permission_id !== undefined
 
       if (isPrimary) {
+        localStorage.setItem('isPrimaryAdmin', '1')
         updatePermissions({ ...FULL_PERMISSIONS })
         setIsAdmin(true)
         return
       }
+
+      localStorage.removeItem('isPrimaryAdmin')
 
       if (!hasPermissionRow) {
         updatePermissions({ ...DEFAULT_PERMISSIONS })
@@ -235,37 +243,28 @@ export function useUserPermissions(clubId: string | undefined) {
             setIsLoading(false)
             return
           }
-        } catch {
-          /* fallback a listado completo */
+        } catch (meError) {
+          console.warn('No se pudo cargar /users/me:', meError)
+          if (isStoredPrimaryAdmin()) {
+            updatePermissions({ ...FULL_PERMISSIONS })
+            setIsAdmin(true)
+            setIsLoading(false)
+            return
+          }
         }
 
-        const response = await api.get(`/club/${clubId}/users`)
-        const rawList = response.data?.data ?? response.data
-        const users = Array.isArray(rawList) ? rawList : []
-
-        let currentUser = users.find(
-          (u: Record<string, unknown>) =>
-            sameAdminId(u.admin_id, adminId) || sameAdminId(u.user_id, adminId)
-        )
-        const adminUsername = localStorage.getItem('adminUsername')
-        if (!currentUser && adminUsername && users.length > 0) {
-          const un = adminUsername.trim().toLowerCase()
-          currentUser = users.find(
-            (u: Record<string, unknown>) => String(u.username || '').trim().toLowerCase() === un
-          )
-        }
-
-        if (currentUser) {
-          applyUserRecord(currentUser as Record<string, unknown>)
+        updatePermissions({ ...DEFAULT_PERMISSIONS })
+        setIsAdmin(false)
+        setIsLoading(false)
+      } catch (error) {
+        console.error('Error fetching permissions:', error)
+        if (isStoredPrimaryAdmin()) {
+          updatePermissions({ ...FULL_PERMISSIONS })
+          setIsAdmin(true)
         } else {
           updatePermissions({ ...DEFAULT_PERMISSIONS })
           setIsAdmin(false)
         }
-
-        setIsLoading(false)
-      } catch (error) {
-        console.error('Error fetching permissions:', error)
-        updatePermissions({ ...DEFAULT_PERMISSIONS })
         setIsLoading(false)
       }
     }

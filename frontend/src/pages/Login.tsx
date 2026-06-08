@@ -38,6 +38,11 @@ export function Login() {
         localStorage.setItem('adminUsername', data.admin.username)
         localStorage.setItem('adminEmail', data.admin.email)
         localStorage.setItem('adminRole', data.admin.role)
+        if (data.admin.is_primary_admin) {
+          localStorage.setItem('isPrimaryAdmin', '1')
+        } else {
+          localStorage.removeItem('isPrimaryAdmin')
+        }
         
         const redirectTo = searchParams.get('redirect')
         const safeRedirect = redirectTo && redirectTo.startsWith('/') ? redirectTo : null
