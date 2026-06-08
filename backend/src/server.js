@@ -18,7 +18,7 @@ import {
     // Administrator functions  
     getAllAdministrators, authenticateAdmin, getAdministratorById,
     createAdministrator, updateAdministrator, deleteAdministrator, resetAdministratorPassword,
-    getClubUsers, createClubUser, updateUserInfo, updateUserPermissions, deleteClubUser,
+    getClubUsers, getClubUserById, createClubUser, updateUserInfo, updateUserPermissions, deleteClubUser,
     
     // Member functions
     getAllMembers, getMemberById, createMember, updateMember, deleteMember, updateMemberStatus,
