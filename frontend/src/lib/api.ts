@@ -9,10 +9,17 @@ export const api = axios.create({
   },
 })
 
-function attachClubToken(config: { headers?: Record<string, unknown>; url?: string }) {
+function resolveRequestPath(config: { baseURL?: string; url?: string }): string {
+  const path = config.url || ''
+  if (path.startsWith('http://') || path.startsWith('https://')) return path
+  const base = (config.baseURL || '').replace(/\/$/, '')
+  return `${base}${path.startsWith('/') ? path : `/${path}`}`
+}
+
+function attachClubToken(config: { headers?: Record<string, unknown>; baseURL?: string; url?: string }) {
   if (typeof localStorage === 'undefined') return config
-  const url = config.url || ''
-  if (!url.includes('/api/') && !url.startsWith('/api')) return config
+  const fullPath = resolveRequestPath(config)
+  if (!fullPath.includes('/api/') && !fullPath.startsWith('/api')) return config
   const token = localStorage.getItem('clubToken')
   if (token && !config.headers?.Authorization) {
     config.headers = config.headers ?? {}
