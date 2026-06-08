@@ -33,16 +33,6 @@ export interface UserPermissions {
   canManageCurrencyExchanges: boolean
 }
 
-/** Compara IDs de admin/user aunque vengan como string (MySQL) o number */
-function sameAdminId(a: unknown, b: unknown): boolean {
-  if (a === null || a === undefined || a === '' || b === null || b === undefined || b === '') {
-    return false
-  }
-  const na = Number(a)
-  const nb = Number(b)
-  return Number.isFinite(na) && Number.isFinite(nb) && na === nb
-}
-
 const DEFAULT_PERMISSIONS: UserPermissions = {
   canViewMembers: false,
   canEditMembers: false,
