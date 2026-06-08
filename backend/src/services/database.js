@@ -52,25 +52,75 @@ const CLUB_STATS_SUBSELECT = `
     (SELECT COUNT(*) FROM club_administrators ca WHERE ca.course_id = c.club_id AND ca.is_active = TRUE) AS administrators
 `;
 
+/** Columnas de permisos en user_permissions (SELECT y migración suave). */
+const USER_PERMISSION_COLUMNS = [
+    'can_view_members', 'can_view_tournaments', 'can_view_groups',
+    'can_view_scorecards', 'can_view_photos', 'can_view_settings',
+    'can_view_rankings', 'can_view_accounting', 'can_view_financial_totals',
+    'can_view_balance', 'can_view_tournament_incomes', 'can_manage_tournament_incomes',
+    'can_view_other_incomes', 'can_manage_other_incomes',
+    'can_view_expenses', 'can_manage_expenses',
+    'can_view_currency_exchanges', 'can_manage_currency_exchanges',
+    'can_manage_photos',
+    'can_create_members', 'can_edit_members', 'can_delete_members',
+    'can_view_external_players', 'can_create_external_players', 'can_edit_external_players', 'can_delete_external_players',
+    'can_create_tournaments', 'can_edit_tournaments', 'can_delete_tournaments',
+    'can_manage_participants', 'can_manage_groups', 'can_manage_scorecards',
+    'can_manage_payments', 'can_manage_users',
+];
+
+const USER_PERMISSION_COLUMN_DEFAULTS = {
+    can_view_members: 1,
+    can_view_tournaments: 1,
+    can_view_groups: 1,
+    can_view_scorecards: 1,
+    can_view_photos: 1,
+    can_view_settings: 0,
+    can_view_rankings: 1,
+    can_view_accounting: 0,
+    can_view_financial_totals: 0,
+    can_view_balance: 1,
+    can_view_tournament_incomes: 1,
+    can_manage_tournament_incomes: 0,
+    can_view_other_incomes: 1,
+    can_manage_other_incomes: 0,
+    can_view_expenses: 1,
+    can_manage_expenses: 0,
+    can_view_currency_exchanges: 1,
+    can_manage_currency_exchanges: 0,
+    can_manage_photos: 0,
+    can_create_members: 1,
+    can_edit_members: 1,
+    can_delete_members: 0,
+    can_view_external_players: 0,
+    can_create_external_players: 0,
+    can_edit_external_players: 0,
+    can_delete_external_players: 0,
+    can_create_tournaments: 1,
+    can_edit_tournaments: 1,
+    can_delete_tournaments: 0,
+    can_manage_participants: 1,
+    can_manage_groups: 1,
+    can_manage_scorecards: 1,
+    can_manage_payments: 0,
+    can_manage_users: 0,
+};
+
 /**
  * Asegura columnas de user_permissions (migración suave).
  */
 async function ensureUserPermissionsColumns() {
-    const columns = [
-        ['can_manage_users', 'TINYINT(1) NULL DEFAULT 0'],
-        ['can_view_external_players', 'TINYINT(1) NULL DEFAULT 0'],
-        ['can_create_external_players', 'TINYINT(1) NULL DEFAULT 0'],
-        ['can_edit_external_players', 'TINYINT(1) NULL DEFAULT 0'],
-        ['can_delete_external_players', 'TINYINT(1) NULL DEFAULT 0'],
-    ];
-    for (const [name, definition] of columns) {
+    for (const name of USER_PERMISSION_COLUMNS) {
         const { rows } = await executeQuery(
             `SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.COLUMNS
              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_permissions' AND COLUMN_NAME = ?`,
             [name]
         );
         if (Number(rows[0]?.c) === 0) {
-            await executeQuery(`ALTER TABLE user_permissions ADD COLUMN ${name} ${definition}`);
+            const def = USER_PERMISSION_COLUMN_DEFAULTS[name] ?? 0;
+            await executeQuery(
+                `ALTER TABLE user_permissions ADD COLUMN ${name} TINYINT(1) NULL DEFAULT ${def}`
+            );
             console.log(`✅ user_permissions.${name} agregada`);
         }
     }
@@ -609,25 +659,6 @@ async function authenticateAdmin(username, password) {
     
     return null;
 }
-
-/**
- * Columnas de permisos (evitar SELECT up.*, ca.* que pisa campos como email/admin_id en algunos drivers).
- */
-const USER_PERMISSION_COLUMNS = [
-    'can_view_members', 'can_view_tournaments', 'can_view_groups',
-    'can_view_scorecards', 'can_view_photos', 'can_view_settings',
-    'can_view_rankings', 'can_view_accounting', 'can_view_financial_totals',
-    'can_view_balance', 'can_view_tournament_incomes', 'can_manage_tournament_incomes',
-    'can_view_other_incomes', 'can_manage_other_incomes',
-    'can_view_expenses', 'can_manage_expenses',
-    'can_view_currency_exchanges', 'can_manage_currency_exchanges',
-    'can_manage_photos',
-    'can_create_members', 'can_edit_members', 'can_delete_members',
-    'can_view_external_players', 'can_create_external_players', 'can_edit_external_players', 'can_delete_external_players',
-    'can_create_tournaments', 'can_edit_tournaments', 'can_delete_tournaments',
-    'can_manage_participants', 'can_manage_groups', 'can_manage_scorecards',
-    'can_manage_payments', 'can_manage_users',
-];
 
 function permFlagDb(value) {
     if (value === true || value === 1 || value === '1') return true;
