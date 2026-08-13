@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, ChevronDown, FileSpreadsheet, ListChecks, Trophy } from 'lucide-react'
+import { ArrowLeft, ChevronDown, FileSpreadsheet, ListChecks, Trophy, UserCog } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { tournamentService } from '@/services/tournamentService'
 import { useTournaments } from '@/hooks/useTournaments'
@@ -274,6 +274,16 @@ export default function Rankings() {
                 <h1 className="text-xl font-semibold text-gray-900">Ranking del Club</h1>
               </div>
             </div>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => navigate(`/club/${clubId}/admin?tab=users`)}
+                className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg"
+              >
+                <UserCog className="h-4 w-4" />
+                Usuarios
+              </button>
+            )}
           </div>
         </div>
       </div>

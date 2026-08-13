@@ -150,6 +150,7 @@ function mapApiUserToPermissions(currentUser: Record<string, unknown>): UserPerm
     canViewCurrencyExchanges: permFlag(currentUser.can_view_currency_exchanges),
     canManageCurrencyExchanges: permFlag(currentUser.can_manage_currency_exchanges),
   }
+  const viewAcct = permFlag(currentUser.can_view_accounting)
   const hasGranularAcct =
     next.canViewBalance ||
     next.canViewFinancialTotals ||
@@ -157,13 +158,27 @@ function mapApiUserToPermissions(currentUser: Record<string, unknown>): UserPerm
     next.canViewOtherIncomes ||
     next.canViewExpenses ||
     next.canViewCurrencyExchanges
-  if (pay && !hasGranularAcct) {
+  // Sin flags granulares: ver contabilidad / gestionar cobros habilitan vistas
+  if ((pay || viewAcct) && !hasGranularAcct) {
     next.canViewBalance = true
     next.canViewFinancialTotals = true
     next.canViewTournamentIncomes = true
     next.canViewOtherIncomes = true
     next.canViewExpenses = true
     next.canViewCurrencyExchanges = true
+  }
+  // Gestionar cobros también permite alta/edición de otros ingresos, gastos y conversiones
+  // si no hay permisos de gestión granulares explícitos
+  const hasGranularManage =
+    next.canManageTournamentIncomes ||
+    next.canManageOtherIncomes ||
+    next.canManageExpenses ||
+    next.canManageCurrencyExchanges
+  if (pay && !hasGranularManage) {
+    next.canManageTournamentIncomes = true
+    next.canManageOtherIncomes = true
+    next.canManageExpenses = true
+    next.canManageCurrencyExchanges = true
   }
   return next
 }

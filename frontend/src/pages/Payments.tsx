@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Calendar, DollarSign, Users, Trophy, Settings, Camera, ChevronDown, LogOut, Filter, X, User, UserCircle2, Pencil, Download, MessageCircle, Printer } from 'lucide-react'
+import { Calendar, DollarSign, Users, Trophy, Settings, Camera, ChevronDown, LogOut, Filter, X, User, UserCircle2, UserCog, Pencil, Download, MessageCircle, Printer } from 'lucide-react'
 import { paymentsService } from '@/services/paymentsService'
 import { accountsService } from '@/services/accountsService'
 import { DateInput } from '@/components/DateInput'
@@ -181,7 +181,8 @@ export default function Payments() {
   const { clubId } = useParams<{ clubId: string }>() 
   const navigate = useNavigate()
   const clubIdNum = clubId ? parseInt(clubId) : 0
-  const { permissions, isLoading: permissionsLoading, showExternalPlayersNav } = useUserPermissions(clubId)
+  const { permissions, isLoading: permissionsLoading, showExternalPlayersNav, isAdmin } = useUserPermissions(clubId)
+  const canManageClubUsers = isAdmin
 
   /** Misma condición que la puerta de acceso a Contabilidad (reutilizada en pestañas) */
   const hasAnyAccountingPermission = useMemo(
@@ -1483,6 +1484,16 @@ export default function Payments() {
               >
                 <Camera className="h-4 w-4" />
                 Fotos
+              </button>
+            )}
+            {canManageClubUsers && (
+              <button
+                type="button"
+                onClick={() => navigate(`/club/${clubId}/admin?tab=users`)}
+                className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:border-gray-300 border-b-2 border-transparent transition-colors shrink-0"
+              >
+                <UserCog className="h-4 w-4" />
+                Usuarios
               </button>
             )}
             {permissions.canViewSettings && (

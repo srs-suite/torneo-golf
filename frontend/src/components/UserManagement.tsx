@@ -25,6 +25,16 @@ interface User {
   can_manage_users?: boolean
   can_view_rankings?: boolean
   can_view_accounting?: boolean
+  can_view_financial_totals?: boolean
+  can_view_balance?: boolean
+  can_view_tournament_incomes?: boolean
+  can_manage_tournament_incomes?: boolean
+  can_view_other_incomes?: boolean
+  can_manage_other_incomes?: boolean
+  can_view_expenses?: boolean
+  can_manage_expenses?: boolean
+  can_view_currency_exchanges?: boolean
+  can_manage_currency_exchanges?: boolean
   can_create_members?: boolean
   can_edit_members?: boolean
   can_delete_members?: boolean
@@ -73,6 +83,16 @@ export function UserManagement({ clubId, canManage = true }: UserManagementProps
     can_view_settings: false,
     can_view_rankings: true,
     can_view_accounting: false,
+    can_view_financial_totals: false,
+    can_view_balance: false,
+    can_view_tournament_incomes: false,
+    can_manage_tournament_incomes: false,
+    can_view_other_incomes: false,
+    can_manage_other_incomes: false,
+    can_view_expenses: false,
+    can_manage_expenses: false,
+    can_view_currency_exchanges: false,
+    can_manage_currency_exchanges: false,
     can_manage_users: false,
     can_create_members: true,
     can_edit_members: true,
@@ -229,6 +249,16 @@ export function UserManagement({ clubId, canManage = true }: UserManagementProps
       can_manage_users: permFlag(user.can_manage_users),
       can_view_rankings: permFlag(user.can_view_rankings),
       can_view_accounting: permFlag(user.can_view_accounting),
+      can_view_financial_totals: permFlag(user.can_view_financial_totals),
+      can_view_balance: permFlag(user.can_view_balance),
+      can_view_tournament_incomes: permFlag(user.can_view_tournament_incomes),
+      can_manage_tournament_incomes: permFlag(user.can_manage_tournament_incomes),
+      can_view_other_incomes: permFlag(user.can_view_other_incomes),
+      can_manage_other_incomes: permFlag(user.can_manage_other_incomes),
+      can_view_expenses: permFlag(user.can_view_expenses),
+      can_manage_expenses: permFlag(user.can_manage_expenses),
+      can_view_currency_exchanges: permFlag(user.can_view_currency_exchanges),
+      can_manage_currency_exchanges: permFlag(user.can_manage_currency_exchanges),
       can_create_members: permFlag(user.can_create_members),
       can_edit_members: permFlag(user.can_edit_members),
       can_delete_members: permFlag(user.can_delete_members),
@@ -257,9 +287,19 @@ export function UserManagement({ clubId, canManage = true }: UserManagementProps
       can_view_photos: true,
       can_manage_photos: false,
       can_view_settings: false,
-      can_manage_users: false,
       can_view_rankings: true,
       can_view_accounting: false,
+      can_view_financial_totals: false,
+      can_view_balance: false,
+      can_view_tournament_incomes: false,
+      can_manage_tournament_incomes: false,
+      can_view_other_incomes: false,
+      can_manage_other_incomes: false,
+      can_view_expenses: false,
+      can_manage_expenses: false,
+      can_view_currency_exchanges: false,
+      can_manage_currency_exchanges: false,
+      can_manage_users: false,
       can_create_members: true,
       can_edit_members: true,
       can_delete_members: false,
@@ -681,7 +721,15 @@ function PermissionsGrid({ permissions, setPermissions }: any) {
       title: 'Contabilidad y pagos',
       items: [
         { key: 'can_view_accounting', label: 'Ver contabilidad' },
-        { key: 'can_manage_payments', label: 'Gestionar cobros' },
+        { key: 'can_manage_payments', label: 'Gestionar cobros (torneos)' },
+        { key: 'can_view_other_incomes', label: 'Ver otros ingresos' },
+        { key: 'can_manage_other_incomes', label: 'Gestionar otros ingresos' },
+        { key: 'can_view_expenses', label: 'Ver gastos' },
+        { key: 'can_manage_expenses', label: 'Gestionar gastos' },
+        { key: 'can_view_currency_exchanges', label: 'Ver conversiones' },
+        { key: 'can_manage_currency_exchanges', label: 'Gestionar conversiones' },
+        { key: 'can_view_balance', label: 'Ver balance' },
+        { key: 'can_view_financial_totals', label: 'Ver totales' },
       ],
     },
     {
