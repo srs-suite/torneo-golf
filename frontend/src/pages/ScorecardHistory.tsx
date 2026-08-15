@@ -5,6 +5,7 @@ import { useTournamentScorecards } from '../hooks/useScorecards';
 import { useTournaments } from '../hooks/useTournaments';
 import { isTournamentStatusClosed } from '../types/tournament';
 import { TournamentClosedNotice } from '../components/TournamentClosedNotice';
+import { scorecardPlayerUrlKey } from '@/utils/scorecardPlayerKey';
 
 export default function ScorecardHistory() {
   const { clubId, tournamentId } = useParams<{ clubId: string; tournamentId: string }>();
@@ -204,7 +205,11 @@ export default function ScorecardHistory() {
                     <button
                       onClick={() => {
                         if (tournamentClosed) return;
-                        const playerId = scorecard.member_id || scorecard.external_player_id;
+                        const playerId = scorecardPlayerUrlKey(scorecard);
+                        if (!playerId) {
+                          alert('No se pudo identificar al jugador.');
+                          return;
+                        }
                         navigate(`/club/${clubId}/tournaments/${tournamentId}/manual-entry/${playerId}`, {
                           state: { manualEntryBack: 'scorecard-history' as const },
                         });

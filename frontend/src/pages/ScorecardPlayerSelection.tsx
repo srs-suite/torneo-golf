@@ -7,7 +7,8 @@ import { useTournamentScorecards } from '../hooks/useScorecards';
 import { getScoreStyle, formatHcpForDisplay, computeNetScore } from '../utils/scoreUtils';
 import { participantPlayingHcp, participantWhIndex } from '../utils/clubHandicap';
 import { TournamentClosedNotice, TORNEO_CERRADO_ALERT } from '../components/TournamentClosedNotice';
-import { authFetch } from '@/lib/api';
+import { authFetch } from '@/lib/api'
+import { scorecardPlayerUrlKey } from '@/utils/scorecardPlayerKey';
 
 // Score styling moved to shared utility
 
@@ -66,7 +67,11 @@ function ScorecardModal({
             {!readOnly && (
               <button
                 onClick={() => {
-                  const playerId = scorecard.member_id || scorecard.external_player_id;
+                  const playerId = scorecardPlayerUrlKey(scorecard)
+                  if (!playerId) {
+                    alert('No se pudo identificar al jugador.')
+                    return
+                  }
                   navigate(`/club/${clubId}/tournaments/${tournamentId}/manual-entry/${playerId}`, {
                     state: { manualEntryBack: 'scorecard-selection' as const },
                   });
@@ -957,10 +962,7 @@ export default function ScorecardPlayerSelection() {
                               if (hasScorecard) {
                                 fetchScorecardDetails(participant)
                               } else {
-                                const playerId =
-                                  participant.participant_id ||
-                                  participant.member_id ||
-                                  participant.external_player_id
+                                const playerId = scorecardPlayerUrlKey(participant)
 
                                 if (playerId) {
                                   if (tournamentClosed) {

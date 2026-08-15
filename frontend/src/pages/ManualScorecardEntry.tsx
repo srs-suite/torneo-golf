@@ -9,6 +9,7 @@ import { participantPlayingHcp, participantWhIndex } from '@/utils/clubHandicap'
 import { authFetch } from '@/lib/api'
 import { isTournamentStatusClosed } from '@/types/tournament'
 import { TournamentClosedNotice, TORNEO_CERRADO_ALERT } from '@/components/TournamentClosedNotice'
+import { findParticipantByUrlKey } from '@/utils/scorecardPlayerKey'
 // Score styling moved to shared utility
 
 const MAX_STROKES_PER_HOLE = 20
@@ -97,32 +98,24 @@ export default function ManualScorecardEntry() {
     })
     
     if (playerId && participants && participants.length > 0 && !selectedPlayer) {
-      const playerIdNum = parseInt(playerId)
-      console.log('🔍 Searching for player with ID:', playerIdNum)
-      
-      // Buscar por participant_id, member_id o external_player_id
-      const foundPlayer = participants.find(p => 
-        p.participant_id === playerIdNum || 
-        p.member_id === playerIdNum || 
-        p.external_player_id === playerIdNum
-      )
-      
+      console.log('🔍 Searching for player with URL key:', playerId)
+
+      const foundPlayer = findParticipantByUrlKey(participants, playerId)
+
       if (foundPlayer) {
         console.log('🎯 Auto-selecting player from URL:', foundPlayer.player_name)
         console.log('🎯 Player data:', foundPlayer)
         setSelectedPlayer(foundPlayer)
         setCurrentStep('scorecard')
         console.log('🎯 CurrentStep set to: scorecard')
-        // Ya está en modo scorecard desde el inicio
       } else {
-        console.log('❌ Player not found for ID:', playerIdNum)
+        console.log('❌ Player not found for URL key:', playerId)
         console.log('❌ Available participants:', participants.map(p => ({
           name: p.player_name,
           participant_id: p.participant_id,
           member_id: p.member_id,
           external_player_id: p.external_player_id
         })))
-        // Si no encuentra el jugador, volver a selection
         setViewMode('selection')
       }
     }
