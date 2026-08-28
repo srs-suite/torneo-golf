@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, ChevronDown, Download, FileSpreadsheet, ListChecks, Lock, Trophy, Unlock, UserCog } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -35,6 +35,7 @@ function RankingTable({
   showRounds = true,
   showComputan = false,
   defaultCountingRounds = 3,
+  orderedRowsRef,
 }: {
   rows: any[]
   withHcp: boolean
@@ -42,6 +43,8 @@ function RankingTable({
   showRounds?: boolean
   showComputan?: boolean
   defaultCountingRounds?: number
+  /** Filas en el orden visible (para WhatsApp/Excel). */
+  orderedRowsRef?: React.MutableRefObject<any[]>
 }) {
   type SortCol = 'rounds' | 'net' | null
   const [sortCol, setSortCol] = useState<SortCol>(null)
@@ -84,6 +87,7 @@ function RankingTable({
     if (byGross !== 0) return byGross
     return String(a.player_name ?? '').localeCompare(String(b.player_name ?? ''), 'es')
   })
+  if (orderedRowsRef) orderedRowsRef.current = orderedRows
   const hi = highlightCount ?? orderedRows.length
 
   return (
@@ -265,6 +269,13 @@ export default function Rankings() {
   const [finalizing, setFinalizing] = useState(false)
   /** Panel de torneos del acumulado: cerrado por defecto; el ranking usa todos hasta abrir y guardar selección. */
   const [annualPicksOpen, setAnnualPicksOpen] = useState(false)
+
+  /** Orden visible de cada tabla (para WhatsApp). */
+  const orderedGeneralRef = useRef<any[]>([])
+  const orderedScratchRef = useRef<any[]>([])
+  const orderedHandicapRef = useRef<any[]>([])
+  const orderedTournamentGrossRef = useRef<any[]>([])
+  const orderedTournamentNetRef = useRef<any[]>([])
 
   const rankingTournaments = useMemo(
     () => (tournaments as any[]).filter((t) => isRankingTournament(t)),
@@ -476,6 +487,11 @@ export default function Rankings() {
 
   const handleExportAnnualWhatsApp = async () => {
     if (!annual) return
+    const pickOrdered = (ref: React.MutableRefObject<any[]>, fallback: any[]) =>
+      ref.current.length === fallback.length ? ref.current : fallback
+    const generalOrdered = pickOrdered(orderedGeneralRef, generalRows)
+    const scratchOrdered = pickOrdered(orderedScratchRef, scratchRows)
+    const handicapOrdered = pickOrdered(orderedHandicapRef, handicapRows)
     try {
       let result: WhatsAppShareResult
       if (isFinal) {
@@ -484,12 +500,12 @@ export default function Rankings() {
           heading: `Ranking anual ${annual.year}`,
           subtitle: 'Scratch + Handicap + General',
           sections: [
-            { title: `Scratch — top ${rules.scratch_cut} (Gross)`, withHcp: false, rows: scratchRows, showRounds: true },
-            { title: `Handicap — siguientes ${rules.handicap_cut} (Neto)`, withHcp: true, rows: handicapRows, showRounds: true },
+            { title: `Scratch — top ${rules.scratch_cut} (Gross)`, withHcp: false, rows: scratchOrdered, showRounds: true },
+            { title: `Handicap — siguientes ${rules.handicap_cut} (Neto)`, withHcp: true, rows: handicapOrdered, showRounds: true },
             {
               title: showWithHcp ? 'General Neto' : 'General Gross',
               withHcp: showWithHcp,
-              rows: generalRows,
+              rows: generalOrdered,
               showRounds: true,
             },
           ],
@@ -503,7 +519,7 @@ export default function Rankings() {
             {
               title: showWithHcp ? 'Neto' : 'Gross',
               withHcp: showWithHcp,
-              rows: generalRows,
+              rows: generalOrdered,
               showRounds: true,
             },
           ],
@@ -518,14 +534,20 @@ export default function Rankings() {
 
   const handleExportTournamentWhatsApp = async () => {
     if (!tournamentRanking || !selectedTournament) return
+    const pickOrdered = (ref: React.MutableRefObject<any[]>, fallback: any[]) =>
+      ref.current.length === fallback.length ? ref.current : fallback
+    const grossFallback = tournamentRanking.without_hcp || []
+    const netFallback = tournamentRanking.with_hcp || []
+    const grossOrdered = pickOrdered(orderedTournamentGrossRef, grossFallback)
+    const netOrdered = pickOrdered(orderedTournamentNetRef, netFallback)
     try {
       const result = await shareRankingImageForWhatsApp({
         fileName: `ranking_torneo_${selectedTournament}_club_${clubIdNum}_whatsapp.png`,
         heading: selectedTournamentName || `Torneo ${selectedTournament}`,
         subtitle: 'Ranking por torneo',
         sections: [
-          { title: 'Gross', withHcp: false, rows: tournamentRanking.without_hcp || [], showRounds: false },
-          { title: 'Neto', withHcp: true, rows: tournamentRanking.with_hcp || [], showRounds: false },
+          { title: 'Gross', withHcp: false, rows: grossOrdered, showRounds: false },
+          { title: 'Neto', withHcp: true, rows: netOrdered, showRounds: false },
         ],
       })
       toastWhatsAppShare(result)
@@ -861,6 +883,7 @@ export default function Rankings() {
                           withHcp={showWithHcp}
                           highlightCount={showWithHcp ? 16 : 9}
                           showComputan={false}
+                          orderedRowsRef={orderedGeneralRef}
                         />
                       ) : (
                         <p className="text-sm text-gray-600">
@@ -908,6 +931,7 @@ export default function Rankings() {
                             highlightCount={rules.scratch_cut}
                             showComputan
                             defaultCountingRounds={rules.counting_rounds}
+                            orderedRowsRef={orderedScratchRef}
                           />
                         ) : (
                           <p className="text-sm text-gray-600">
@@ -932,6 +956,7 @@ export default function Rankings() {
                             highlightCount={rules.handicap_cut}
                             showComputan
                             defaultCountingRounds={rules.counting_rounds}
+                            orderedRowsRef={orderedHandicapRef}
                           />
                         ) : (
                           <p className="text-sm text-gray-600">No hay jugadores suficientes para Handicap.</p>
@@ -966,6 +991,7 @@ export default function Rankings() {
                             withHcp={showWithHcp}
                             highlightCount={showWithHcp ? 16 : 9}
                             showComputan={false}
+                            orderedRowsRef={orderedGeneralRef}
                           />
                         ) : (
                           <p className="text-sm text-gray-600">Sin participantes en el general.</p>
@@ -1024,7 +1050,13 @@ export default function Rankings() {
                   <div>
                     <h3 className="text-sm font-semibold text-gray-800 mb-2">Gross</h3>
                     {tournamentRanking.without_hcp?.length ? (
-                      <RankingTable rows={tournamentRanking.without_hcp} withHcp={false} highlightCount={9} showRounds={false} />
+                      <RankingTable
+                        rows={tournamentRanking.without_hcp}
+                        withHcp={false}
+                        highlightCount={9}
+                        showRounds={false}
+                        orderedRowsRef={orderedTournamentGrossRef}
+                      />
                     ) : (
                       <p className="text-sm text-gray-600">No hay jugadores en gross para este torneo.</p>
                     )}
@@ -1032,7 +1064,13 @@ export default function Rankings() {
                   <div>
                     <h3 className="text-sm font-semibold text-gray-800 mb-2">Neto</h3>
                     {tournamentRanking.with_hcp?.length ? (
-                      <RankingTable rows={tournamentRanking.with_hcp} withHcp highlightCount={16} showRounds={false} />
+                      <RankingTable
+                        rows={tournamentRanking.with_hcp}
+                        withHcp
+                        highlightCount={16}
+                        showRounds={false}
+                        orderedRowsRef={orderedTournamentNetRef}
+                      />
                     ) : (
                       <p className="text-sm text-gray-600">No hay jugadores con índice y tarjeta en este torneo.</p>
                     )}
