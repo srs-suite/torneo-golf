@@ -1,4 +1,4 @@
-import axios, { type InternalAxiosRequestConfig } from 'axios'
+import axios, { AxiosHeaders, type InternalAxiosRequestConfig } from 'axios'
 
 // Create axios instance with base configuration
 export const api = axios.create({
@@ -23,11 +23,22 @@ function attachClubToken(config: InternalAxiosRequestConfig): InternalAxiosReque
   const token = localStorage.getItem('clubToken')
   if (!token) return config
 
+  if (!config.headers) {
+    config.headers = new AxiosHeaders()
+  }
+
   const headers = config.headers
-  const existing = headers?.get?.('Authorization') || headers?.Authorization || headers?.authorization
+  const existing =
+    (typeof headers.get === 'function' ? headers.get('Authorization') : undefined) ||
+    (headers as { Authorization?: string; authorization?: string }).Authorization ||
+    (headers as { Authorization?: string; authorization?: string }).authorization
   if (existing) return config
 
-  headers.set('Authorization', `Bearer ${token}`)
+  if (typeof headers.set === 'function') {
+    headers.set('Authorization', `Bearer ${token}`)
+  } else {
+    ;(headers as { Authorization: string }).Authorization = `Bearer ${token}`
+  }
   return config
 }
 

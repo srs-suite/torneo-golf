@@ -141,8 +141,24 @@ export function ClubCard({ club }: ClubCardProps) {
               onClick={() => {
                 const id = Number(club.course_id)
                 if (!Number.isFinite(id) || id <= 0) return
-                // Misma sesión (clubToken + adminRole) que el panel de sistema
+                const token = localStorage.getItem('clubToken')
+                const role = String(localStorage.getItem('adminRole') || '').trim()
+                if (!token) {
+                  window.alert('No hay sesión activa. Volvé a iniciar sesión como administrador del sistema.')
+                  navigate('/login')
+                  return
+                }
+                // Misma pestaña + misma sesión (system_admin puede operar cualquier club)
                 localStorage.setItem('clubId', String(id))
+                if (role === 'system_admin') {
+                  localStorage.setItem('isPrimaryAdmin', '1')
+                }
+                // Evitar caché vacía de un intento anterior con token vencido
+                try {
+                  sessionStorage.setItem('forceClubRefetch', String(Date.now()))
+                } catch {
+                  /* ignore */
+                }
                 navigate(`/club/${id}/admin`)
               }}
             >

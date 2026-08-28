@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { 
   Users, 
   Trophy, 
@@ -70,6 +71,7 @@ export function ClubAdmin() {
   const { clubId } = useParams<{ clubId: string }>()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
+  const queryClient = useQueryClient()
   const { permissions, isLoading: permissionsLoading, showExternalPlayersNav, isAdmin } = useUserPermissions(clubId)
   /** Solo el administrador principal del club (o admin del sistema) gestiona usuarios internos */
   const canManageClubUsers = isAdmin
@@ -159,6 +161,31 @@ export function ClubAdmin() {
       setActiveTab(tabParam)
     }
   }, [searchParams, activeTab])
+
+  // Al entrar al club (p. ej. Acceder desde admin de sistema): forzar refetch con el Bearer actual
+  useEffect(() => {
+    if (!clubId) return
+    const id = parseInt(clubId, 10)
+    if (!Number.isFinite(id)) return
+
+    const role = String(localStorage.getItem('adminRole') || '').trim()
+    if (role === 'system_admin') {
+      localStorage.setItem('isPrimaryAdmin', '1')
+    }
+
+    const token = localStorage.getItem('clubToken')
+    if (!token) {
+      toast.error('Sesión vencida. Iniciá sesión de nuevo.')
+      navigate('/login')
+      return
+    }
+
+    queryClient.invalidateQueries({ queryKey: ['members', id] })
+    queryClient.invalidateQueries({ queryKey: ['tournaments', id] })
+    queryClient.invalidateQueries({ queryKey: ['clubs'] })
+    void refetchMembers()
+    void refetchTournaments()
+  }, [clubId])
 
   useEffect(() => {
     if (!clubId) return

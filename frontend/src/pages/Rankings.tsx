@@ -261,7 +261,7 @@ export default function Rankings() {
     })
   }, [tournaments, year])
 
-  const canConfigureAnnualPicks = permissions.canEditTournaments || isAdmin
+  const canConfigureAnnualPicks = permissions.canEditTournaments || isAdmin || permissions.canViewRankings
   const isFinal = annual?.status === 'final'
   const rules = annual?.rules || {
     expected_tournaments: 5,
@@ -532,7 +532,7 @@ export default function Rankings() {
 
         {mode === 'annual' && (
           <>
-            <div className="bg-white rounded-lg border p-4 space-y-3">
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-sm font-semibold text-gray-900">Reglas del ranking {year}</h2>
@@ -546,33 +546,31 @@ export default function Rankings() {
                     ) : (
                       <>
                         <strong>Provisorio:</strong> se muestran todos los jugadores con al menos una tarjeta (suma de todas las
-                        rondas), como el acumulado habitual. Cuando terminen los torneos, cerrá el ranking final (mín.{' '}
-                        {rules.min_rounds} rondas, best-of-{rules.counting_rounds}, Scratch {rules.scratch_cut} / Handicap{' '}
-                        {rules.handicap_cut}).
+                        rondas). Cuando terminen los torneos del año, usá el botón de abajo para <strong>cerrar el ranking final</strong>.
                       </>
                     )}
                   </p>
                 </div>
                 <span
                   className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${
-                    isFinal ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'
+                    isFinal ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-900'
                   }`}
                 >
                   {isFinal ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5" />}
                   {isFinal ? 'Ranking final' : 'Provisorio'}
                 </span>
               </div>
-              {canConfigureAnnualPicks && (
+              {canConfigureAnnualPicks ? (
                 <div className="flex flex-wrap gap-2">
                   {!isFinal ? (
                     <button
                       type="button"
                       disabled={finalizing || loading}
                       onClick={() => handleFinalize(true)}
-                      className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md bg-yellow-600 text-white hover:bg-yellow-700 disabled:opacity-50"
+                      className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-md bg-yellow-600 text-white hover:bg-yellow-700 disabled:opacity-50 shadow-sm"
                     >
                       <Lock className="h-4 w-4" />
-                      Rondas completadas — cerrar ranking final
+                      Ya se jugaron todos los torneos — cerrar ranking final
                     </button>
                   ) : (
                     <button
@@ -586,6 +584,10 @@ export default function Rankings() {
                     </button>
                   )}
                 </div>
+              ) : (
+                <p className="text-xs text-amber-900">
+                  Para cerrar el ranking final necesitás permiso de editar torneos o ser administrador.
+                </p>
               )}
             </div>
 
