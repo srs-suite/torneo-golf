@@ -28,12 +28,14 @@ function RankingTable({
   withHcp,
   highlightCount,
   showRounds = true,
+  showComputan = false,
   defaultCountingRounds = 3,
 }: {
   rows: any[]
   withHcp: boolean
   highlightCount?: number
   showRounds?: boolean
+  showComputan?: boolean
   defaultCountingRounds?: number
 }) {
   const [roundsSort, setRoundsSort] = useState<'asc' | 'desc' | null>(null)
@@ -83,7 +85,7 @@ function RankingTable({
                 </button>
               </th>
             )}
-            {showRounds && (
+            {showRounds && showComputan && (
               <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Computan</th>
             )}
             {withHcp ? (
@@ -106,7 +108,7 @@ function RankingTable({
               <td className="px-4 py-2">{sanitizeAscii(r.player_name)}</td>
               <td className="px-4 py-2">{r.member_number || '-'}</td>
               {showRounds && <td className="px-4 py-2">{fmtScoreCell(r.rounds)}</td>}
-              {showRounds && (
+              {showRounds && showComputan && (
                 <td className="px-4 py-2">{fmtScoreCell(r.rounds_counted ?? defaultCountingRounds)}</td>
               )}
               {withHcp ? (
@@ -187,23 +189,10 @@ interface AnnualRankings {
     scratch_cut: number
     handicap_cut: number
   }
-  with_hcp: {
-    member_id: number
-    player_name: string
-    member_number?: string
-    rounds: number
-    rounds_counted?: number
-    total_gross: number
-    total_net: number
-  }[]
-  without_hcp: {
-    member_id: number
-    player_name: string
-    member_number?: string
-    rounds: number
-    rounds_counted?: number
-    total_gross: number
-  }[]
+  with_hcp: any[]
+  without_hcp: any[]
+  general_with_hcp?: any[]
+  general_without_hcp?: any[]
   scratch?: any[]
   handicap?: any[]
   not_eligible?: { member_id: number; player_name: string; member_number?: string; rounds: number; rounds_needed: number }[]
@@ -234,6 +223,7 @@ export default function Rankings() {
   const [loading, setLoading] = useState<boolean>(false)
   const [annual, setAnnual] = useState<AnnualRankings | null>(null)
   const [tournamentRanking, setTournamentRanking] = useState<any>(null)
+  const [showWithHcp, setShowWithHcp] = useState(true)
   const [pickedAnnualIds, setPickedAnnualIds] = useState<number[]>([])
   const [savingAnnualPicks, setSavingAnnualPicks] = useState(false)
   const [finalizing, setFinalizing] = useState(false)
@@ -281,8 +271,11 @@ export default function Rankings() {
     handicap_cut: 16,
   }
 
-  const scratchRows = annual?.scratch || annual?.without_hcp || []
-  const handicapRows = annual?.handicap || annual?.with_hcp || []
+  const generalGross = annual?.general_without_hcp || (!isFinal ? annual?.without_hcp : []) || []
+  const generalNet = annual?.general_with_hcp || (!isFinal ? annual?.with_hcp : []) || []
+  const scratchRows = annual?.scratch || []
+  const handicapRows = annual?.handicap || []
+  const generalRows = showWithHcp ? generalNet : generalGross
 
   const selectedTournamentName = useMemo(() => {
     const t = (tournaments as any[]).find((x) => Number(x.tournament_id) === selectedTournament)
@@ -392,14 +385,27 @@ export default function Rankings() {
   const handleExportAnnualExcel = () => {
     if (!annual) return
     try {
-      exportAnnualRankingsExcel({
-        year: annual.year,
-        clubId: clubIdNum,
-        kind: 'both',
-        with_hcp: handicapRows,
-        without_hcp: scratchRows,
-      })
-      toast.success('Excel descargado (Scratch + Handicap)')
+      if (isFinal) {
+        exportAnnualRankingsExcel({
+          year: annual.year,
+          clubId: clubIdNum,
+          kind: 'both',
+          with_hcp: handicapRows,
+          without_hcp: scratchRows,
+          general_with_hcp: generalNet,
+          general_without_hcp: generalGross,
+        })
+        toast.success('Excel descargado (Scratch + Handicap + General)')
+      } else {
+        exportAnnualRankingsExcel({
+          year: annual.year,
+          clubId: clubIdNum,
+          kind: showWithHcp ? 'net' : 'gross',
+          with_hcp: generalNet,
+          without_hcp: generalGross,
+        })
+        toast.success(showWithHcp ? 'Excel Neto descargado' : 'Excel Gross descargado')
+      }
     } catch {
       toast.error('No se pudo exportar a Excel')
     }
@@ -508,6 +514,20 @@ export default function Rankings() {
               )}
             </div>
           )}
+
+          {mode === 'annual' && !isFinal && (
+            <div className="flex items-center gap-2 ml-auto">
+              <label className="text-sm text-gray-700">Mostrar</label>
+              <select
+                value={showWithHcp ? 'with' : 'without'}
+                onChange={(e) => setShowWithHcp(e.target.value === 'with')}
+                className="px-3 py-2 border border-gray-300 rounded-md"
+              >
+                <option value="with">Neto (con índice)</option>
+                <option value="without">Gross</option>
+              </select>
+            </div>
+          )}
         </div>
 
         {mode === 'annual' && (
@@ -517,9 +537,20 @@ export default function Rankings() {
                 <div>
                   <h2 className="text-sm font-semibold text-gray-900">Reglas del ranking {year}</h2>
                   <p className="text-sm text-gray-600 mt-1">
-                    Torneos del año: hasta {rules.expected_tournaments}. Para clasificar: mínimo {rules.min_rounds} torneos jugados.
-                    Si jugó más, se descartan las peores por <strong>Gross</strong> y computan las mejores {rules.counting_rounds}.
-                    Luego: top {rules.scratch_cut} Gross → <strong>Scratch</strong>; siguientes {rules.handicap_cut} → <strong>Handicap</strong> (orden Neto).
+                    {isFinal ? (
+                      <>
+                        Ranking final: mín. {rules.min_rounds} torneos, mejores {rules.counting_rounds} por Gross → Scratch top{' '}
+                        {rules.scratch_cut} + Handicap siguientes {rules.handicap_cut}. El <strong>ranking general</strong> sigue
+                        mostrando a todos los que jugaron (todas sus rondas).
+                      </>
+                    ) : (
+                      <>
+                        <strong>Provisorio:</strong> se muestran todos los jugadores con al menos una tarjeta (suma de todas las
+                        rondas), como el acumulado habitual. Cuando terminen los torneos, cerrá el ranking final (mín.{' '}
+                        {rules.min_rounds} rondas, best-of-{rules.counting_rounds}, Scratch {rules.scratch_cut} / Handicap{' '}
+                        {rules.handicap_cut}).
+                      </>
+                    )}
                   </p>
                 </div>
                 <span
@@ -686,71 +717,147 @@ export default function Rankings() {
           <>
             {mode === 'annual' && annual && (
               <div className="space-y-6">
-                <div className="bg-white rounded-lg border">
-                  <div className="px-6 py-4 border-b flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <h2 className="text-lg font-semibold">Scratch — top {rules.scratch_cut} (Gross)</h2>
-                      <p className="text-xs text-gray-500">
-                        Elegibles: {annual.eligible_count ?? scratchRows.length + handicapRows.length}. Suma de las mejores{' '}
-                        {rules.counting_rounds} tarjetas (por Gross).
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleExportAnnualExcel}
-                      className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
-                    >
-                      <FileSpreadsheet className="h-4 w-4 text-green-700" />
-                      Exportar Excel
-                    </button>
-                  </div>
-                  <div className="p-6">
-                    {scratchRows.length ? (
-                      <RankingTable
-                        rows={scratchRows}
-                        withHcp={false}
-                        highlightCount={rules.scratch_cut}
-                        defaultCountingRounds={rules.counting_rounds}
-                      />
-                    ) : (
-                      <p className="text-sm text-gray-600">
-                        No hay jugadores elegibles aún (mínimo {rules.min_rounds} torneos con tarjeta).
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-lg border">
-                  <div className="px-6 py-4 border-b">
-                    <h2 className="text-lg font-semibold">Handicap — siguientes {rules.handicap_cut} (Neto)</h2>
-                    <p className="text-xs text-gray-500">
-                      Jugadores que siguen al Scratch por Gross; ordenados por neto de las {rules.counting_rounds} tarjetas
-                      computables.
-                    </p>
-                  </div>
-                  <div className="p-6">
-                    {handicapRows.length ? (
-                      <RankingTable
-                        rows={handicapRows}
-                        withHcp
-                        highlightCount={rules.handicap_cut}
-                        defaultCountingRounds={rules.counting_rounds}
-                      />
-                    ) : (
-                      <p className="text-sm text-gray-600">No hay jugadores suficientes para el ranking Handicap.</p>
-                    )}
-                  </div>
-                </div>
-
-                {(annual.not_eligible?.length ?? 0) > 0 && (
+                {!isFinal ? (
                   <div className="bg-white rounded-lg border">
-                    <div className="px-6 py-4 border-b">
-                      <h2 className="text-lg font-semibold text-gray-700">Sin clasificar (&lt; {rules.min_rounds} torneos)</h2>
+                    <div className="px-6 py-4 border-b flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h2 className="text-lg font-semibold">Acumulado {annual.year}</h2>
+                        <p className="text-xs text-gray-500">
+                          Todos los jugadores con tarjeta. Suma de todas las rondas jugadas.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleExportAnnualExcel}
+                        className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
+                      >
+                        <FileSpreadsheet className="h-4 w-4 text-green-700" />
+                        {showWithHcp ? 'Exportar Excel (Neto)' : 'Exportar Excel (Gross)'}
+                      </button>
                     </div>
                     <div className="p-6">
-                      <NotEligibleTable rows={annual.not_eligible!} />
+                      {generalRows.length ? (
+                        <RankingTable
+                          rows={generalRows}
+                          withHcp={showWithHcp}
+                          highlightCount={showWithHcp ? 16 : 9}
+                          showComputan={false}
+                        />
+                      ) : (
+                        <p className="text-sm text-gray-600">
+                          {showWithHcp
+                            ? 'No hay resultados en Neto (hace falta índice WHS). Probá Gross.'
+                            : 'No hay tarjetas cargadas en torneos de ranking para este año.'}
+                        </p>
+                      )}
                     </div>
                   </div>
+                ) : (
+                  <>
+                    <div className="bg-white rounded-lg border">
+                      <div className="px-6 py-4 border-b flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <h2 className="text-lg font-semibold">Scratch — top {rules.scratch_cut} (Gross)</h2>
+                          <p className="text-xs text-gray-500">
+                            Elegibles: {annual.eligible_count ?? 0}. Mejores {rules.counting_rounds} tarjetas por Gross.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleExportAnnualExcel}
+                          className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
+                        >
+                          <FileSpreadsheet className="h-4 w-4 text-green-700" />
+                          Exportar Excel
+                        </button>
+                      </div>
+                      <div className="p-6">
+                        {scratchRows.length ? (
+                          <RankingTable
+                            rows={scratchRows}
+                            withHcp={false}
+                            highlightCount={rules.scratch_cut}
+                            showComputan
+                            defaultCountingRounds={rules.counting_rounds}
+                          />
+                        ) : (
+                          <p className="text-sm text-gray-600">
+                            No hay jugadores elegibles (mínimo {rules.min_rounds} torneos).
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="bg-white rounded-lg border">
+                      <div className="px-6 py-4 border-b">
+                        <h2 className="text-lg font-semibold">Handicap — siguientes {rules.handicap_cut} (Neto)</h2>
+                        <p className="text-xs text-gray-500">
+                          Siguientes al Scratch por Gross; orden por neto de las {rules.counting_rounds} tarjetas computables.
+                        </p>
+                      </div>
+                      <div className="p-6">
+                        {handicapRows.length ? (
+                          <RankingTable
+                            rows={handicapRows}
+                            withHcp
+                            highlightCount={rules.handicap_cut}
+                            showComputan
+                            defaultCountingRounds={rules.counting_rounds}
+                          />
+                        ) : (
+                          <p className="text-sm text-gray-600">No hay jugadores suficientes para Handicap.</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="bg-white rounded-lg border">
+                      <div className="px-6 py-4 border-b flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <h2 className="text-lg font-semibold">Ranking general — todos los participantes</h2>
+                          <p className="text-xs text-gray-500">
+                            Sin filtro de cantidad de torneos. Suma de todas las rondas. Neto excluye al top 9 Gross.
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <label className="text-sm text-gray-700">Mostrar</label>
+                          <select
+                            value={showWithHcp ? 'with' : 'without'}
+                            onChange={(e) => setShowWithHcp(e.target.value === 'with')}
+                            className="px-3 py-2 border border-gray-300 rounded-md text-sm"
+                          >
+                            <option value="with">Neto</option>
+                            <option value="without">Gross</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div className="p-6">
+                        {generalRows.length ? (
+                          <RankingTable
+                            rows={generalRows}
+                            withHcp={showWithHcp}
+                            highlightCount={showWithHcp ? 16 : 9}
+                            showComputan={false}
+                          />
+                        ) : (
+                          <p className="text-sm text-gray-600">Sin participantes en el general.</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {(annual.not_eligible?.length ?? 0) > 0 && (
+                      <div className="bg-white rounded-lg border">
+                        <div className="px-6 py-4 border-b">
+                          <h2 className="text-lg font-semibold text-gray-700">
+                            Fuera de Scratch/Handicap (&lt; {rules.min_rounds} torneos)
+                          </h2>
+                          <p className="text-xs text-gray-500">Igual figuran en el ranking general de arriba.</p>
+                        </div>
+                        <div className="p-6">
+                          <NotEligibleTable rows={annual.not_eligible!} />
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}

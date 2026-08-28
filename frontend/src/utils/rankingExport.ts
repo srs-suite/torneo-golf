@@ -9,7 +9,7 @@ function cellNum(v: unknown): number | string {
 export type RankingExportKind = 'net' | 'gross' | 'both'
 
 /**
- * Excel del ranking anual: Scratch (gross) y/o Handicap (neto).
+ * Excel del ranking anual: Scratch/Handicap y/o General.
  */
 export function exportAnnualRankingsExcel(params: {
   year: number
@@ -17,9 +17,12 @@ export function exportAnnualRankingsExcel(params: {
   kind: RankingExportKind
   with_hcp: any[]
   without_hcp: any[]
+  general_with_hcp?: any[]
+  general_without_hcp?: any[]
 }) {
   const wb = XLSX.utils.book_new()
   const kind = params.kind || 'both'
+  const hasFinalSheets = (params.general_with_hcp || params.general_without_hcp) != null
 
   if (kind === 'net' || kind === 'both') {
     const netRows = params.with_hcp || []
@@ -32,7 +35,11 @@ export function exportAnnualRankingsExcel(params: {
       'Total gross': cellNum(r.total_gross),
       'Total neto': cellNum(r.total_net),
     }))
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(netJson), 'Handicap')
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.json_to_sheet(netJson),
+      hasFinalSheets ? 'Handicap' : 'Neto'
+    )
   }
 
   if (kind === 'gross' || kind === 'both') {
@@ -45,10 +52,37 @@ export function exportAnnualRankingsExcel(params: {
       Computan: cellNum(r.rounds_counted ?? ''),
       'Total Gross': cellNum(r.total_gross),
     }))
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(grossJson), 'Scratch')
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.json_to_sheet(grossJson),
+      hasFinalSheets ? 'Scratch' : 'Gross'
+    )
   }
 
-  const suffix = kind === 'net' ? '_handicap' : kind === 'gross' ? '_scratch' : '_scratch_handicap'
+  if (params.general_without_hcp?.length) {
+    const g = params.general_without_hcp.map((r, i) => ({
+      Pos: r.position ?? i + 1,
+      Jugador: String(r.player_name ?? ''),
+      Matricula: String(r.member_number ?? ''),
+      Jugadas: cellNum(r.rounds),
+      'Total Gross': cellNum(r.total_gross),
+    }))
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(g), 'General Gross')
+  }
+  if (params.general_with_hcp?.length) {
+    const g = params.general_with_hcp.map((r, i) => ({
+      Pos: r.position ?? i + 1,
+      Jugador: String(r.player_name ?? ''),
+      Matricula: String(r.member_number ?? ''),
+      Jugadas: cellNum(r.rounds),
+      'Total gross': cellNum(r.total_gross),
+      'Total neto': cellNum(r.total_net),
+    }))
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(g), 'General Neto')
+  }
+
+  const suffix =
+    kind === 'net' ? '_neto' : kind === 'gross' ? '_gross' : hasFinalSheets ? '_final' : '_acumulado'
   XLSX.writeFile(wb, `ranking_anual_${params.year}_club_${params.clubId}${suffix}.xlsx`)
 }
 
