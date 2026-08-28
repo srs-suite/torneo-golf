@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, ChevronDown, FileSpreadsheet, ImageDown, ListChecks, Lock, Trophy, Unlock, UserCog } from 'lucide-react'
+import { ArrowLeft, ChevronDown, Download, FileSpreadsheet, ListChecks, Lock, Trophy, Unlock, UserCog } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { tournamentService } from '@/services/tournamentService'
 import { useTournaments } from '@/hooks/useTournaments'
