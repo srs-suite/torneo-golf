@@ -577,28 +577,38 @@ export default function PublicMemberPortal() {
               )}
               {annual && (
                 <div className="space-y-4 text-sm">
+                  {(annual as any).status === 'final' && (
+                    <p className="text-xs font-medium text-green-700 bg-green-50 border border-green-100 rounded p-2">
+                      Ranking final {annual.year}
+                    </p>
+                  )}
                   <div>
-                    <p className="font-medium text-gray-800 mb-1">Acumulado gross (sin hándicap / grilla gross)</p>
+                    <p className="font-medium text-gray-800 mb-1">Scratch (top Gross)</p>
                     <ol className="list-decimal list-inside space-y-0.5 text-gray-700 max-h-64 overflow-y-auto">
                       {(annual.without_hcp || []).map((row, i) => (
                         <li key={`a-g-${i}`}>
-                          {row.player_name}: {row.total_gross} ({row.rounds} rondas)
+                          {row.player_name}: {row.total_gross} ({row.rounds} rondas
+                          {(row as any).rounds_counted != null ? `, computan ${(row as any).rounds_counted}` : ''})
                         </li>
                       ))}
                     </ol>
+                    {(annual.without_hcp || []).length === 0 && (
+                      <p className="text-gray-500 text-xs">Sin jugadores en Scratch aún.</p>
+                    )}
                   </div>
-                  {(annual.with_hcp || []).length > 0 && (
-                    <div>
-                      <p className="font-medium text-gray-800 mb-1">Acumulado neto</p>
-                      <ol className="list-decimal list-inside space-y-0.5 text-gray-700 max-h-64 overflow-y-auto">
-                        {(annual.with_hcp || []).map((row, i) => (
-                          <li key={`a-n-${i}`}>
-                            {row.player_name}: neto {row.total_net} · gross {row.total_gross} ({row.rounds} rondas)
-                          </li>
-                        ))}
-                      </ol>
-                    </div>
-                  )}
+                  <div>
+                    <p className="font-medium text-gray-800 mb-1">Handicap (Neto)</p>
+                    <ol className="list-decimal list-inside space-y-0.5 text-gray-700 max-h-64 overflow-y-auto">
+                      {(annual.with_hcp || []).map((row, i) => (
+                        <li key={`a-n-${i}`}>
+                          {row.player_name}: neto {row.total_net} · gross {row.total_gross} ({row.rounds} rondas)
+                        </li>
+                      ))}
+                    </ol>
+                    {(annual.with_hcp || []).length === 0 && (
+                      <p className="text-gray-500 text-xs">Sin jugadores en Handicap aún.</p>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

@@ -1753,6 +1753,161 @@ async function getCourseTeesGroupedByHole(courseId) {
 // RANKINGS FUNCTIONS
 // ================================
 
+const DEFAULT_ANNUAL_RANKING_RULES = {
+    expected_tournaments: 5,
+    min_rounds: 3,
+    counting_rounds: 3,
+    scratch_cut: 8,
+    handicap_cut: 16
+};
+
+async function ensureAnnualRankingYearStateTable() {
+    await executeQuery(`
+        CREATE TABLE IF NOT EXISTS annual_ranking_year_state (
+            course_id INT NOT NULL,
+            calendar_year SMALLINT NOT NULL,
+            status ENUM('provisional', 'final') NOT NULL DEFAULT 'provisional',
+            expected_tournaments SMALLINT NOT NULL DEFAULT 5,
+            min_rounds SMALLINT NOT NULL DEFAULT 3,
+            counting_rounds SMALLINT NOT NULL DEFAULT 3,
+            scratch_cut SMALLINT NOT NULL DEFAULT 8,
+            handicap_cut SMALLINT NOT NULL DEFAULT 16,
+            finalized_at TIMESTAMP NULL DEFAULT NULL,
+            finalized_by INT NULL DEFAULT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (course_id, calendar_year),
+            KEY idx_arys_club_year (course_id, calendar_year)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+}
+
+/**
+ * Estado + reglas del ranking anual (club/año). Crea fila con defaults si no existe.
+ */
+async function getAnnualRankingYearState(clubId, year) {
+    const courseId = parseInt(clubId, 10);
+    const yearInt = parseInt(year, 10);
+    await ensureAnnualRankingYearStateTable();
+    const { rows } = await executeQuery(
+        `SELECT course_id, calendar_year, status,
+                expected_tournaments, min_rounds, counting_rounds, scratch_cut, handicap_cut,
+                finalized_at, finalized_by, updated_at
+         FROM annual_ranking_year_state
+         WHERE course_id = ? AND calendar_year = ?
+         LIMIT 1`,
+        [courseId, yearInt]
+    );
+    if (rows && rows[0]) {
+        const r = rows[0];
+        return {
+            course_id: courseId,
+            year: yearInt,
+            status: r.status === 'final' ? 'final' : 'provisional',
+            expected_tournaments: Number(r.expected_tournaments) || DEFAULT_ANNUAL_RANKING_RULES.expected_tournaments,
+            min_rounds: Number(r.min_rounds) || DEFAULT_ANNUAL_RANKING_RULES.min_rounds,
+            counting_rounds: Number(r.counting_rounds) || DEFAULT_ANNUAL_RANKING_RULES.counting_rounds,
+            scratch_cut: Number(r.scratch_cut) || DEFAULT_ANNUAL_RANKING_RULES.scratch_cut,
+            handicap_cut: Number(r.handicap_cut) || DEFAULT_ANNUAL_RANKING_RULES.handicap_cut,
+            finalized_at: r.finalized_at || null,
+            finalized_by: r.finalized_by || null,
+            updated_at: r.updated_at || null
+        };
+    }
+    return {
+        course_id: courseId,
+        year: yearInt,
+        status: 'provisional',
+        ...DEFAULT_ANNUAL_RANKING_RULES,
+        finalized_at: null,
+        finalized_by: null,
+        updated_at: null
+    };
+}
+
+/**
+ * Cierra o reabre el ranking anual del año.
+ * finalize=true → status final (bloquea cambios de selección de torneos).
+ * finalize=false → vuelve a provisional.
+ */
+async function setAnnualRankingYearFinalized(clubId, year, finalize, adminId = null) {
+    const courseId = parseInt(clubId, 10);
+    const yearInt = parseInt(year, 10);
+    await ensureAnnualRankingYearStateTable();
+    const current = await getAnnualRankingYearState(courseId, yearInt);
+
+    if (finalize) {
+        const candidates = await getAnnualRankingCandidates(courseId, yearInt);
+        const picks = await fetchAnnualRankingPickIds(courseId, yearInt);
+        const countingTournaments = picks.length > 0 ? picks.length : (candidates || []).length;
+        if (countingTournaments < current.min_rounds) {
+            throw new Error(
+                `No se puede cerrar: hacen falta al menos ${current.min_rounds} torneos de ranking en el año (hay ${countingTournaments}).`
+            );
+        }
+        await executeQuery(
+            `INSERT INTO annual_ranking_year_state (
+                course_id, calendar_year, status,
+                expected_tournaments, min_rounds, counting_rounds, scratch_cut, handicap_cut,
+                finalized_at, finalized_by
+             ) VALUES (?, ?, 'final', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+             ON DUPLICATE KEY UPDATE
+                status = 'final',
+                finalized_at = CURRENT_TIMESTAMP,
+                finalized_by = VALUES(finalized_by)`,
+            [
+                courseId,
+                yearInt,
+                current.expected_tournaments,
+                current.min_rounds,
+                current.counting_rounds,
+                current.scratch_cut,
+                current.handicap_cut,
+                adminId || null
+            ]
+        );
+    } else {
+        await executeQuery(
+            `INSERT INTO annual_ranking_year_state (
+                course_id, calendar_year, status,
+                expected_tournaments, min_rounds, counting_rounds, scratch_cut, handicap_cut,
+                finalized_at, finalized_by
+             ) VALUES (?, ?, 'provisional', ?, ?, ?, ?, ?, NULL, NULL)
+             ON DUPLICATE KEY UPDATE
+                status = 'provisional',
+                finalized_at = NULL,
+                finalized_by = NULL`,
+            [
+                courseId,
+                yearInt,
+                current.expected_tournaments,
+                current.min_rounds,
+                current.counting_rounds,
+                current.scratch_cut,
+                current.handicap_cut
+            ]
+        );
+    }
+    return getAnnualRankingYearState(courseId, yearInt);
+}
+
+/** Neto por ronda (mismo criterio que el front / ranking por torneo). */
+function annualRoundNet(totalGross, handicapIndex, handicapLocal) {
+    const gross = Number(totalGross) || 0;
+    const hcp = Number(
+        handicapLocal != null && handicapLocal !== ''
+            ? handicapLocal
+            : handicapIndex != null && handicapIndex !== ''
+              ? handicapIndex
+              : 0
+    );
+    const rounded = Math.round(hcp);
+    const idx = handicapIndex != null && handicapIndex !== '' ? Number(handicapIndex) : null;
+    if (idx != null && !Number.isNaN(idx) && idx < 0) {
+        return gross + Math.abs(rounded);
+    }
+    return gross - rounded;
+}
+
 /**
  * IDs guardados para el acumulado anual. Vacío = provisorio: cuentan todos los torneos del año con is_ranking_event = 1.
  */
@@ -1807,6 +1962,10 @@ async function getAnnualRankingTournamentPicks(clubId, year) {
 async function setAnnualRankingTournamentPicks(clubId, year, tournamentIds) {
     const yearInt = parseInt(year, 10);
     const courseId = parseInt(clubId, 10);
+    const yearState = await getAnnualRankingYearState(courseId, yearInt);
+    if (yearState.status === 'final') {
+        throw new Error('El ranking del año está cerrado. Reabrilo para cambiar los torneos que cuentan.');
+    }
     const unique = [
         ...new Set(
             (tournamentIds || [])
@@ -1863,59 +2022,43 @@ async function setAnnualRankingTournamentPicks(clubId, year, tournamentIds) {
 }
 
 /**
- * Get annual rankings for a club
- * Usa tournament_participants + scorecards (mismo esquema que el resto de TeeTracker).
- * Solo socios/visitantes del club (no externos). Torneos con is_ranking_event = 1 en el año.
- * Si hay filas en annual_ranking_tournament_picks para ese año, solo esos torneos entran al acumulado.
+ * Ranking anual del club (Scratch + Handicap).
  *
- * - without_hcp (API): Gross — todos ordenados por total gross; solo tarjetas con total_gross > 0 (0 = no presentó).
- * - with_hcp (API): Neto — socios con índice WHS; excluye al top 9 Gross (un jugador no figura en ambos).
+ * Reglas (defaults; configurables en annual_ranking_year_state):
+ * - Solo socios del club con tarjetas total_gross > 0 en torneos de ranking del año.
+ * - Mínimo `min_rounds` torneos jugados (default 3).
+ * - Si jugó más, se descartan las peores por GROSS hasta quedar `counting_rounds` (default 3).
+ * - Orden por suma de esas N GROSS: top `scratch_cut` → Scratch; siguientes `handicap_cut` → Handicap (ordenados por Neto).
+ * - without_hcp = Scratch; with_hcp = Handicap (compat. API / portal).
  */
 async function getAnnualRankings(clubId, year) {
     try {
         const startDate = `${year}-01-01`;
         const endDate = `${year}-12-31`;
+        const yearState = await getAnnualRankingYearState(clubId, year);
+        const minRounds = yearState.min_rounds;
+        const countingRounds = yearState.counting_rounds;
+        const scratchCut = yearState.scratch_cut;
+        const handicapCut = yearState.handicap_cut;
 
         const pickIds = await fetchAnnualRankingPickIds(clubId, year);
         const pickFilterSql =
             pickIds.length > 0 ? `AND t.tournament_id IN (${pickIds.map(() => '?').join(',')})` : '';
 
-        const rankParams = [clubId, clubId, startDate, endDate];
-        const rankParamsWithPicks = pickIds.length > 0 ? [...rankParams, ...pickIds] : rankParams;
+        const params = [clubId, clubId, startDate, endDate];
+        const paramsWithPicks = pickIds.length > 0 ? [...params, ...pickIds] : params;
 
-        const grossTop9IdsQuery = `
-            SELECT agg.member_id FROM (
-                SELECT 
-                    m.member_id,
-                    SUM(s.total_gross) as total_gross
-                FROM members m
-                INNER JOIN tournament_participants tp ON m.member_id = tp.member_id
-                INNER JOIN tournaments t ON tp.tournament_id = t.tournament_id
-                    AND COALESCE(t.is_ranking_event, 0) = 1
-                    AND t.course_id = ?
-                INNER JOIN scorecards s ON s.tournament_id = tp.tournament_id
-                    AND s.member_id = tp.member_id
-                    AND s.total_gross > 0
-                WHERE m.course_id = ?
-                    AND t.tournament_date BETWEEN ? AND ?
-                    ${pickFilterSql}
-                GROUP BY m.member_id, m.first_name, m.last_name, m.member_number
-                HAVING SUM(s.total_gross) > 0
-                ORDER BY total_gross ASC
-                LIMIT 9
-            ) agg
-        `;
-
-        const { rows: grossTopRows } = await executeQuery(grossTop9IdsQuery, rankParamsWithPicks);
-        const grossTopMemberIds = (grossTopRows || []).map((r) => r.member_id).filter((id) => id != null);
-
-        const withoutHcpQuery = `
-            SELECT 
+        const roundsQuery = `
+            SELECT
                 m.member_id,
-                CONCAT(m.first_name, ' ', m.last_name) as player_name,
+                CONCAT(m.first_name, ' ', m.last_name) AS player_name,
                 m.member_number,
-                COUNT(DISTINCT tp.tournament_id) as rounds,
-                SUM(s.total_gross) as total_gross
+                m.handicap_index,
+                m.handicap_local,
+                t.tournament_id,
+                t.tournament_name,
+                t.tournament_date,
+                s.total_gross
             FROM members m
             INNER JOIN tournament_participants tp ON m.member_id = tp.member_id
             INNER JOIN tournaments t ON tp.tournament_id = t.tournament_id
@@ -1927,79 +2070,148 @@ async function getAnnualRankings(clubId, year) {
             WHERE m.course_id = ?
                 AND t.tournament_date BETWEEN ? AND ?
                 ${pickFilterSql}
-            GROUP BY m.member_id, m.first_name, m.last_name, m.member_number
-            HAVING SUM(s.total_gross) > 0
-            ORDER BY total_gross ASC
+            ORDER BY m.member_id, s.total_gross ASC, t.tournament_date ASC
         `;
 
-        const { rows: withoutHcp } = await executeQuery(withoutHcpQuery, rankParamsWithPicks);
-        const excludeGrossTop =
-            grossTopMemberIds.length > 0
-                ? `AND m.member_id NOT IN (${grossTopMemberIds.map(() => '?').join(',')})`
-                : '';
+        const { rows: roundRows } = await executeQuery(roundsQuery, paramsWithPicks);
+        const byMember = new Map();
 
-        // Neto calculado como en el front (computeNetScore): HCP = local ?? índice redondeado; índice negativo → gross + |HCP|
-        const annualNetRowExpr = `(CASE
-                WHEN m.handicap_index IS NOT NULL AND m.handicap_index < 0
-                THEN s.total_gross + ABS(ROUND(COALESCE(m.handicap_local, m.handicap_index, 0)))
-                ELSE s.total_gross - ROUND(COALESCE(m.handicap_local, m.handicap_index, 0))
-            END)`;
+        for (const row of roundRows || []) {
+            const mid = Number(row.member_id);
+            if (!byMember.has(mid)) {
+                byMember.set(mid, {
+                    member_id: mid,
+                    player_name: row.player_name,
+                    member_number: row.member_number,
+                    handicap_index: row.handicap_index,
+                    handicap_local: row.handicap_local,
+                    rounds: []
+                });
+            }
+            const entry = byMember.get(mid);
+            const gross = Number(row.total_gross) || 0;
+            entry.rounds.push({
+                tournament_id: row.tournament_id,
+                tournament_name: row.tournament_name,
+                tournament_date: row.tournament_date,
+                total_gross: gross,
+                total_net: annualRoundNet(gross, row.handicap_index, row.handicap_local)
+            });
+        }
 
-        const withHcpQuery = `
-            SELECT
-                ranked.member_id,
-                ranked.player_name,
-                ranked.member_number,
-                ranked.rounds,
-                ranked.total_gross,
-                ranked.total_net
-            FROM (
-                SELECT
-                    m.member_id,
-                    CONCAT(m.first_name, ' ', m.last_name) as player_name,
-                    m.member_number,
-                    COUNT(DISTINCT tp.tournament_id) as rounds,
-                    SUM(s.total_gross) as total_gross,
-                    SUM(${annualNetRowExpr}) as total_net
-                FROM members m
-                INNER JOIN tournament_participants tp ON m.member_id = tp.member_id
-                INNER JOIN tournaments t ON tp.tournament_id = t.tournament_id
-                    AND COALESCE(t.is_ranking_event, 0) = 1
-                    AND t.course_id = ?
-                INNER JOIN scorecards s ON s.tournament_id = tp.tournament_id
-                    AND s.member_id = tp.member_id
-                    AND s.total_gross > 0
-                WHERE m.course_id = ?
-                    AND t.tournament_date BETWEEN ? AND ?
-                    AND m.handicap_index IS NOT NULL
-                    ${pickFilterSql}
-                    ${excludeGrossTop}
-                GROUP BY m.member_id, m.first_name, m.last_name, m.member_number
-                HAVING SUM(s.total_gross) > 0
-            ) ranked
-            ORDER BY
-                CASE WHEN COALESCE(ranked.total_net, 0) = 0 THEN 1 ELSE 0 END ASC,
-                ranked.total_net ASC,
-                ranked.total_gross ASC,
-                ranked.member_id
-        `;
+        const eligible = [];
+        const notEligible = [];
 
-        const netParams = [...rankParamsWithPicks, ...grossTopMemberIds];
-        const { rows: withHcp } = await executeQuery(withHcpQuery, netParams);
+        for (const entry of byMember.values()) {
+            // Una tarjeta por torneo (si hubiera duplicados, nos quedamos con la de menor gross)
+            const byTournament = new Map();
+            for (const r of entry.rounds) {
+                const tid = Number(r.tournament_id);
+                const prev = byTournament.get(tid);
+                if (!prev || r.total_gross < prev.total_gross) byTournament.set(tid, r);
+            }
+            const uniqueRounds = Array.from(byTournament.values()).sort(
+                (a, b) => a.total_gross - b.total_gross || a.tournament_id - b.tournament_id
+            );
+            const roundsPlayed = uniqueRounds.length;
+            if (roundsPlayed < minRounds) {
+                notEligible.push({
+                    member_id: entry.member_id,
+                    player_name: entry.player_name,
+                    member_number: entry.member_number,
+                    rounds: roundsPlayed,
+                    rounds_needed: minRounds,
+                    total_gross: uniqueRounds.reduce((s, r) => s + r.total_gross, 0)
+                });
+                continue;
+            }
+
+            const kept = uniqueRounds.slice(0, countingRounds);
+            const dropped = uniqueRounds.slice(countingRounds);
+            const totalGross = kept.reduce((s, r) => s + r.total_gross, 0);
+            const totalNet = kept.reduce((s, r) => s + r.total_net, 0);
+
+            eligible.push({
+                member_id: entry.member_id,
+                player_name: entry.player_name,
+                member_number: entry.member_number,
+                rounds: roundsPlayed,
+                rounds_counted: kept.length,
+                total_gross: totalGross,
+                total_net: totalNet,
+                kept_tournaments: kept.map((r) => ({
+                    tournament_id: r.tournament_id,
+                    tournament_name: r.tournament_name,
+                    total_gross: r.total_gross,
+                    total_net: r.total_net
+                })),
+                dropped_tournaments: dropped.map((r) => ({
+                    tournament_id: r.tournament_id,
+                    tournament_name: r.tournament_name,
+                    total_gross: r.total_gross,
+                    total_net: r.total_net
+                }))
+            });
+        }
+
+        eligible.sort(
+            (a, b) =>
+                a.total_gross - b.total_gross ||
+                a.total_net - b.total_net ||
+                a.member_id - b.member_id
+        );
+
+        const scratch = eligible.slice(0, scratchCut).map((r, i) => ({
+            ...r,
+            position: i + 1,
+            ranking_list: 'scratch'
+        }));
+
+        const handicapPool = eligible.slice(scratchCut, scratchCut + handicapCut);
+        const handicap = [...handicapPool]
+            .sort(
+                (a, b) =>
+                    a.total_net - b.total_net ||
+                    a.total_gross - b.total_gross ||
+                    a.member_id - b.member_id
+            )
+            .map((r, i) => ({
+                ...r,
+                position: i + 1,
+                ranking_list: 'handicap'
+            }));
 
         return {
             year,
             club_id: clubId,
-            with_hcp: withHcp,
-            without_hcp: withoutHcp,
-            top_cuts: {
-                with_hcp: withHcp.slice(0, 16),
-                without_hcp: withoutHcp.slice(0, 9)
+            status: yearState.status,
+            finalized_at: yearState.finalized_at,
+            rules: {
+                expected_tournaments: yearState.expected_tournaments,
+                min_rounds: minRounds,
+                counting_rounds: countingRounds,
+                scratch_cut: scratchCut,
+                handicap_cut: handicapCut,
+                drop_worst_by: 'gross',
+                scratch_ordered_by: 'gross',
+                handicap_ordered_by: 'net'
             },
+            // Compat: without_hcp = Scratch (gross), with_hcp = Handicap (net)
+            without_hcp: scratch,
+            with_hcp: handicap,
+            scratch,
+            handicap,
+            top_cuts: {
+                without_hcp: scratch,
+                with_hcp: handicap
+            },
+            not_eligible: notEligible.sort((a, b) => b.rounds - a.rounds || a.player_name.localeCompare(b.player_name, 'es')),
+            eligible_count: eligible.length,
             annual_selection: {
                 uses_explicit_selection: pickIds.length > 0,
                 tournament_ids: pickIds
-            }
+            },
+            year_state: yearState
         };
     } catch (error) {
         console.error('❌ Error getting annual rankings:', error);
@@ -9329,6 +9541,7 @@ export {
     // Rankings functions
     getAnnualRankings, getTournamentRanking,
     getAnnualRankingCandidates, getAnnualRankingTournamentPicks, setAnnualRankingTournamentPicks,
+    getAnnualRankingYearState, setAnnualRankingYearFinalized,
     
     // Payments and accounting functions
     getPaymentsSummary, getExpenses, addExpense, updateExpense, deleteExpense,

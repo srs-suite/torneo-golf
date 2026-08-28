@@ -6,10 +6,10 @@ function cellNum(v: unknown): number | string {
   return Number.isFinite(n) ? n : String(v)
 }
 
-export type RankingExportKind = 'net' | 'gross'
+export type RankingExportKind = 'net' | 'gross' | 'both'
 
 /**
- * Un archivo .xlsx con una sola hoja según la vista (Neto o Gross, acumulado anual).
+ * Excel del ranking anual: Scratch (gross) y/o Handicap (neto).
  */
 export function exportAnnualRankingsExcel(params: {
   year: number
@@ -19,44 +19,41 @@ export function exportAnnualRankingsExcel(params: {
   without_hcp: any[]
 }) {
   const wb = XLSX.utils.book_new()
+  const kind = params.kind || 'both'
 
-  if (params.kind === 'net') {
+  if (kind === 'net' || kind === 'both') {
     const netRows = params.with_hcp || []
-    const netHasRounds = netRows.length > 0 && 'rounds' in netRows[0]
-    const netJson = netRows.map((r, i) => {
-      const row: Record<string, string | number> = {
-        Pos: i + 1,
-        Jugador: String(r.player_name ?? ''),
-        Matricula: String(r.member_number ?? ''),
-        'Total gross': cellNum(r.total_gross),
-        'Total neto': cellNum(r.total_net),
-      }
-      if (netHasRounds) row.Rondas = cellNum(r.rounds)
-      return row
-    })
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(netJson), 'Neto')
-    XLSX.writeFile(wb, `ranking_acumulado_${params.year}_club_${params.clubId}_neto.xlsx`)
-    return
-  }
-
-  const grossRows = params.without_hcp || []
-  const grossHasRounds = grossRows.length > 0 && 'rounds' in grossRows[0]
-  const grossJson = grossRows.map((r, i) => {
-    const row: Record<string, string | number> = {
-      Pos: i + 1,
+    const netJson = netRows.map((r, i) => ({
+      Pos: r.position ?? i + 1,
       Jugador: String(r.player_name ?? ''),
       Matricula: String(r.member_number ?? ''),
+      Jugadas: cellNum(r.rounds),
+      Computan: cellNum(r.rounds_counted ?? ''),
       'Total gross': cellNum(r.total_gross),
-    }
-    if (grossHasRounds) row.Rondas = cellNum(r.rounds)
-    return row
-  })
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(grossJson), 'Gross')
-  XLSX.writeFile(wb, `ranking_acumulado_${params.year}_club_${params.clubId}_gross.xlsx`)
+      'Total neto': cellNum(r.total_net),
+    }))
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(netJson), 'Handicap')
+  }
+
+  if (kind === 'gross' || kind === 'both') {
+    const grossRows = params.without_hcp || []
+    const grossJson = grossRows.map((r, i) => ({
+      Pos: r.position ?? i + 1,
+      Jugador: String(r.player_name ?? ''),
+      Matricula: String(r.member_number ?? ''),
+      Jugadas: cellNum(r.rounds),
+      Computan: cellNum(r.rounds_counted ?? ''),
+      'Total Gross': cellNum(r.total_gross),
+    }))
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(grossJson), 'Scratch')
+  }
+
+  const suffix = kind === 'net' ? '_handicap' : kind === 'gross' ? '_scratch' : '_scratch_handicap'
+  XLSX.writeFile(wb, `ranking_anual_${params.year}_club_${params.clubId}${suffix}.xlsx`)
 }
 
 /**
- * Un archivo .xlsx con una sola hoja según la vista (Neto o Gross, un torneo).
+ * Excel ranking por torneo (Gross y/o Neto).
  */
 export function exportTournamentRankingsExcel(params: {
   clubId: number | string
@@ -67,6 +64,7 @@ export function exportTournamentRankingsExcel(params: {
   without_hcp: any[]
 }) {
   const wb = XLSX.utils.book_new()
+  const kind = params.kind || 'both'
 
   const safeName = String(params.tournamentName ?? '')
     .normalize('NFD')
@@ -76,7 +74,7 @@ export function exportTournamentRankingsExcel(params: {
     .slice(0, 35)
   const nameSuffix = safeName ? `_${safeName}` : ''
 
-  if (params.kind === 'net') {
+  if (kind === 'net' || kind === 'both') {
     const netRows = params.with_hcp || []
     const netJson = netRows.map((r, i) => ({
       Pos: i + 1,
@@ -86,17 +84,19 @@ export function exportTournamentRankingsExcel(params: {
       'Total neto': cellNum(r.total_net),
     }))
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(netJson), 'Neto')
-    XLSX.writeFile(wb, `ranking_torneo_${params.tournamentId}_club_${params.clubId}${nameSuffix}_neto.xlsx`)
-    return
   }
 
-  const grossRows = params.without_hcp || []
-  const grossJson = grossRows.map((r, i) => ({
-    Pos: i + 1,
-    Jugador: String(r.player_name ?? ''),
-    Matricula: String(r.member_number ?? ''),
-    'Total gross': cellNum(r.total_gross),
-  }))
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(grossJson), 'Gross')
-  XLSX.writeFile(wb, `ranking_torneo_${params.tournamentId}_club_${params.clubId}${nameSuffix}_gross.xlsx`)
+  if (kind === 'gross' || kind === 'both') {
+    const grossRows = params.without_hcp || []
+    const grossJson = grossRows.map((r, i) => ({
+      Pos: i + 1,
+      Jugador: String(r.player_name ?? ''),
+      Matricula: String(r.member_number ?? ''),
+      'Total Gross': cellNum(r.total_gross),
+    }))
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(grossJson), 'Gross')
+  }
+
+  const suffix = kind === 'net' ? '_neto' : kind === 'gross' ? '_gross' : ''
+  XLSX.writeFile(wb, `ranking_torneo_${params.tournamentId}_club_${params.clubId}${nameSuffix}${suffix}.xlsx`)
 }

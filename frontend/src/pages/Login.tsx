@@ -37,7 +37,7 @@ export function Login() {
         localStorage.setItem('adminName', data.admin.name)
         localStorage.setItem('adminUsername', data.admin.username)
         localStorage.setItem('adminEmail', data.admin.email)
-        localStorage.setItem('adminRole', data.admin.role)
+        localStorage.setItem('adminRole', String(data.admin.role || ''))
         if (data.admin.is_primary_admin) {
           localStorage.setItem('isPrimaryAdmin', '1')
         } else {

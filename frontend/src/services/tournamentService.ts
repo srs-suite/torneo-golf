@@ -271,6 +271,12 @@ export const tournamentService = {
     return response.data.data || response.data
   },
 
+  /** Cierra (finalize=true) o reabre (finalize=false) el ranking anual del año. */
+  async setAnnualRankingFinalized(clubId: number, year: number, finalize: boolean): Promise<any> {
+    const response = await api.put(`/club/${clubId}/rankings/annual/${year}/finalize`, { finalize })
+    return response.data.data || response.data
+  },
+
   // Obtener ranking de un torneo específico
   async getTournamentRanking(clubId: number, tournamentId: number): Promise<any> {
     console.log(`🏆 API: GET /club/${clubId}/rankings/tournament/${tournamentId}`)

@@ -16,14 +16,30 @@ function resolveRequestPath(config: { baseURL?: string; url?: string }): string 
   return `${base}${path.startsWith('/') ? path : `/${path}`}`
 }
 
-function attachClubToken(config: { headers?: Record<string, unknown>; baseURL?: string; url?: string }) {
+function attachClubToken(config: {
+  headers?: Record<string, unknown> & { set?: (k: string, v: string) => void; get?: (k: string) => string | undefined }
+  baseURL?: string
+  url?: string
+}) {
   if (typeof localStorage === 'undefined') return config
   const fullPath = resolveRequestPath(config)
   if (!fullPath.includes('/api/') && !fullPath.startsWith('/api')) return config
   const token = localStorage.getItem('clubToken')
-  if (token && !config.headers?.Authorization) {
-    config.headers = config.headers ?? {}
-    config.headers.Authorization = `Bearer ${token}`
+  if (!token) return config
+
+  const headers = config.headers ?? {}
+  config.headers = headers
+  const existing =
+    typeof headers.get === 'function'
+      ? headers.get('Authorization') || headers.get('authorization')
+      : (headers.Authorization as string | undefined) || (headers.authorization as string | undefined)
+  if (existing) return config
+
+  const value = `Bearer ${token}`
+  if (typeof headers.set === 'function') {
+    headers.set('Authorization', value)
+  } else {
+    headers.Authorization = value
   }
   return config
 }

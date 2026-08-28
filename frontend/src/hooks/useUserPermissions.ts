@@ -98,11 +98,15 @@ function isStoredPrimaryAdmin(): boolean {
   return localStorage.getItem('isPrimaryAdmin') === '1'
 }
 
+function isStoredSystemAdmin(): boolean {
+  if (typeof window === 'undefined') return false
+  return String(localStorage.getItem('adminRole') || '').trim() === 'system_admin'
+}
+
 /** Primer render: system_admin / admin principal = todo; club_admin = último snapshot guardado */
 function readInitialPermissionsFromBrowser(): UserPermissions {
   if (typeof window === 'undefined') return DEFAULT_PERMISSIONS
-  const adminRole = localStorage.getItem('adminRole')
-  if (adminRole === 'system_admin' || isStoredPrimaryAdmin()) {
+  if (isStoredSystemAdmin() || isStoredPrimaryAdmin()) {
     return { ...FULL_PERMISSIONS }
   }
   try {
@@ -223,7 +227,7 @@ export function useUserPermissions(clubId: string | undefined) {
   useEffect(() => {
     const fetchPermissions = async () => {
       try {
-        const adminRole = localStorage.getItem('adminRole')
+        const adminRole = String(localStorage.getItem('adminRole') || '').trim()
         const adminId = localStorage.getItem('adminId')
 
         if (adminRole === 'system_admin') {
@@ -280,7 +284,7 @@ export function useUserPermissions(clubId: string | undefined) {
   const showExternalPlayersNav = useMemo(() => {
     if (typeof window === 'undefined') return false
     if (!clubId) return false
-    const role = localStorage.getItem('adminRole')
+    const role = String(localStorage.getItem('adminRole') || '').trim()
     if (role === 'system_admin') return true
     return permissions.canViewExternalPlayers
   }, [clubId, permissions.canViewExternalPlayers])

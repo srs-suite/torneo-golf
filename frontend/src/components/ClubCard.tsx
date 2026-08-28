@@ -138,7 +138,13 @@ export function ClubCard({ club }: ClubCardProps) {
           <div className="flex justify-between space-x-2 mb-2">
             <button
               className="btn btn-outline flex-1 flex items-center justify-center space-x-1"
-              onClick={() => window.open(`/club/${club.course_id}/admin`, '_blank')}
+              onClick={() => {
+                const id = Number(club.course_id)
+                if (!Number.isFinite(id) || id <= 0) return
+                // Misma sesión (clubToken + adminRole) que el panel de sistema
+                localStorage.setItem('clubId', String(id))
+                navigate(`/club/${id}/admin`)
+              }}
             >
               <ExternalLink className="w-4 h-4" />
               <span>Acceder</span>

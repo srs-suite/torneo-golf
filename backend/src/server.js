@@ -48,6 +48,7 @@ import {
     // Rankings functions
     getAnnualRankings, getTournamentRanking,
     getAnnualRankingCandidates, getAnnualRankingTournamentPicks, setAnnualRankingTournamentPicks,
+    getAnnualRankingYearState, setAnnualRankingYearFinalized,
     
     // Payments and accounting functions
     getPaymentsSummary, getExpenses, addExpense, updateExpense, deleteExpense,
@@ -119,6 +120,16 @@ function cleanupMobilePins() {
     }
 }
 
+/** Normaliza role de MySQL (string / Buffer) para comparar con 'system_admin'. */
+function normalizeAdminRole(role) {
+    if (role == null) return '';
+    if (Buffer.isBuffer(role)) return role.toString('utf8').trim();
+    if (typeof role === 'object' && role.type === 'Buffer' && Array.isArray(role.data)) {
+        return Buffer.from(role.data).toString('utf8').trim();
+    }
+    return String(role).trim();
+}
+
 function validateAdminBearer(req, requestedClubId) {
     cleanupAdminLoginTokens();
     const auth = req.headers.authorization;
@@ -127,7 +138,7 @@ function validateAdminBearer(req, requestedClubId) {
     const sess = adminLoginTokens.get(token);
     if (!sess || sess.expiresAt <= Date.now()) return { ok: false, message: 'Sesión inválida o vencida' };
     const cid = parseInt(requestedClubId, 10);
-    if (sess.role === 'system_admin') return { ok: true, session: sess };
+    if (normalizeAdminRole(sess.role) === 'system_admin') return { ok: true, session: sess };
     if (sess.clubId != null && Number(sess.clubId) === cid) return { ok: true, session: sess };
     return { ok: false, message: 'No autorizado para este club' };
 }
@@ -151,7 +162,7 @@ function isPublicClubRoute(pathParts, method) {
 }
 
 async function resolveClubAdminContext(clubId, session) {
-    if (session.role === 'system_admin') {
+    if (normalizeAdminRole(session.role) === 'system_admin') {
         return { canManageUsers: true, isPrimary: true, user: null };
     }
     const user = await getClubUserById(parseInt(clubId, 10), session.adminId);
@@ -379,13 +390,14 @@ async function handleAuthAPI(req, res, pathParts) {
                     }
 
                     const token = crypto.randomBytes(32).toString('hex');
+                    const adminRole = normalizeAdminRole(admin.role) || 'club_admin';
                     adminLoginTokens.set(token, {
                         adminId: admin.admin_id,
                         clubId: admin.course_id != null ? Number(admin.course_id) : null,
-                        role: admin.role || 'club_admin',
+                        role: adminRole,
                         expiresAt: Date.now() + ADMIN_LOGIN_TOKEN_TTL_MS
                     });
-                    console.log('✅ Login exitoso para:', admin.username);
+                    console.log('✅ Login exitoso para:', admin.username, 'role:', adminRole);
                     
                     sendJSON(res, {
                         success: true,
@@ -395,7 +407,7 @@ async function handleAuthAPI(req, res, pathParts) {
                             username: admin.username,
                             name: admin.full_name,
                             email: admin.email,
-                            role: admin.role || 'club_admin',
+                            role: adminRole,
                             club_id: admin.course_id,
                             is_primary_admin: permFlag(admin.is_primary_admin),
                         }
@@ -1267,11 +1279,11 @@ async function handleClubAPI(req, res, pathParts) {
             }
         }
         
-        // Rankings — /rankings/annual/:year | /rankings/annual/:year/candidates | /rankings/annual/:year/selection
+        // Rankings — /rankings/annual/:year | .../candidates | .../selection | .../finalize
         else if (resource === 'rankings') {
             const rankingType = pathParts[4]; // 'annual' | 'tournament'
             const identifier = pathParts[5]; // año o tournament_id
-            const rankingSub = pathParts[6]; // 'candidates' | 'selection' | undefined
+            const rankingSub = pathParts[6]; // 'candidates' | 'selection' | 'finalize' | undefined
 
             if (rankingType === 'annual' && identifier) {
                 const year = parseInt(identifier, 10);
@@ -1299,6 +1311,33 @@ async function handleClubAPI(req, res, pathParts) {
                     } catch (e) {
                         sendError(res, e.message || 'Error al guardar selección', 400);
                     }
+                    return;
+                }
+                if (rankingSub === 'finalize' && method === 'PUT') {
+                    const auth = validateAdminBearer(req, clubId);
+                    if (!auth.ok) {
+                        sendError(res, auth.message || 'No autorizado', 401);
+                        return;
+                    }
+                    const body = await parseBody(req);
+                    const finalize = body.finalize !== false && body.finalize !== 0 && body.finalize !== '0';
+                    try {
+                        const state = await setAnnualRankingYearFinalized(
+                            parseInt(clubId, 10),
+                            year,
+                            finalize,
+                            auth.session?.adminId || null
+                        );
+                        const rankings = await getAnnualRankings(parseInt(clubId, 10), year);
+                        sendJSON(res, { success: true, data: { year_state: state, rankings } });
+                    } catch (e) {
+                        sendError(res, e.message || 'Error al actualizar estado del ranking', 400);
+                    }
+                    return;
+                }
+                if (rankingSub === 'status' && method === 'GET') {
+                    const state = await getAnnualRankingYearState(parseInt(clubId, 10), year);
+                    sendJSON(res, { success: true, data: state });
                     return;
                 }
                 if (!rankingSub && method === 'GET') {

@@ -8,6 +8,7 @@ import { resolveFlyerDisplayUrl } from '@/utils/flyerUrl'
 import { useCreateTournament, useUpdateTournament } from '@/hooks/useTournaments'
 import { Tournament, CreateTournamentData } from '@/types/tournament'
 import { toast } from 'react-hot-toast'
+import { permFlag } from '@/lib/permissionFlags'
 import { 
   getCurrentDateHTML
 } from '@/utils/dateFormatter'
@@ -52,7 +53,7 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
 
   const createTournament = useCreateTournament(clubId)
   const updateTournament = useUpdateTournament(clubId, tournament?.tournament_id || 0)
-  const [isRankingEvent, setIsRankingEvent] = useState<boolean>((tournament as any)?.is_ranking_event === 1 || (tournament as any)?.is_ranking_event === true)
+  const [isRankingEvent, setIsRankingEvent] = useState<boolean>(permFlag((tournament as any)?.is_ranking_event))
   const readResultsMode = (t: any): 'standard' | 'scratch_bands' => {
     const v = t?.results_mode
     if (v === 'scratch_bands' || (typeof v === 'string' && v.toLowerCase() === 'scratch_bands')) return 'scratch_bands'
@@ -90,7 +91,7 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
         setResultsMode(readResultsMode(t))
       setSeparateLadies(t?.separate_ladies === 1 || t?.separate_ladies === true)
       setLadiesByHcp(t?.ladies_by_hcp === 1 || t?.ladies_by_hcp === true)
-      setIsRankingEvent(t?.is_ranking_event === 1 || t?.is_ranking_event === true)
+      setIsRankingEvent(permFlag(t?.is_ranking_event))
       setTeeSimultaneousStarts(t?.enable_simultaneous_starts === 1 || t?.enable_simultaneous_starts === true)
       setTeeIntervalMinutes(typeof t?.tee_interval_minutes === 'number' ? t.tee_interval_minutes : 10)
       setTeePreferredSession(t?.preferred_session === 'afternoon' ? 'afternoon' : 'morning')

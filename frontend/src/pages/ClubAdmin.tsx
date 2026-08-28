@@ -52,7 +52,7 @@ import { AagMassSyncPanel } from '@/components/AagMassSyncPanel'
 import { Member } from '@/types/member'
 import { Tournament, isTournamentStatusClosed, tournamentStatusDisplayLabel } from '@/types/tournament'
 import { toast } from 'react-hot-toast'
-import { authFetch } from '@/lib/api'
+import { api, authFetch } from '@/lib/api'
 import { formatHcpForDisplay } from '@/utils/scoreUtils'
 import { computeHcpFromIndexForClub, formatHcpDisplayForClubPlayer } from '@/utils/clubHandicap'
 
@@ -161,30 +161,51 @@ export function ClubAdmin() {
   }, [searchParams, activeTab])
 
   useEffect(() => {
-    // Usar el hook useClubs que ya funciona correctamente
-    if (clubId && clubs.length > 0) {
-      console.log('All clubs:', clubs)
-      console.log('Looking for clubId:', clubId)
-      
-      const club = clubs.find((c: any) => c.course_id === parseInt(clubId))
-      console.log('Found club:', club)
-      
-      if (club) {
+    if (!clubId) return
+    const id = parseInt(clubId, 10)
+    if (!Number.isFinite(id) || id <= 0) return
+
+    const fromList = clubs.find(
+      (c: any) => Number(c.course_id) === id || Number((c as any).club_id) === id
+    )
+    if (fromList) {
+      setClubData({
+        course_id: Number(fromList.course_id) || id,
+        course_name: fromList.course_name,
+        location: [fromList.city, fromList.country].filter(Boolean).join(', '),
+        phone: fromList.phone || '',
+        email: fromList.email || '',
+        website: fromList.website || ''
+      })
+      return
+    }
+
+    // Fallback: admin de sistema / lista aún no cargada → GET /api/club/:id (Bearer)
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await api.get(`/club/${id}`)
+        const club = res.data?.data ?? res.data
+        if (cancelled || !club) return
         setClubData({
-          course_id: club.course_id,
-          course_name: club.course_name,
-          // Build safe location without "undefined, undefined"
+          course_id: Number(club.course_id ?? club.club_id) || id,
+          course_name: club.course_name || club.club_name || `Club ${id}`,
           location: [club.city, club.country].filter(Boolean).join(', '),
           phone: club.phone || '',
           email: club.email || '',
           website: club.website || ''
         })
+      } catch (e) {
+        console.error('No se pudo cargar datos del club:', e)
       }
+    })()
+    return () => {
+      cancelled = true
     }
   }, [clubId, clubs])
 
   const handleLogout = () => {
-    const adminRole = localStorage.getItem('adminRole')
+    const adminRole = String(localStorage.getItem('adminRole') || '').trim()
     
     // Si es administrador de sistema, solo borrar datos del club y volver al dashboard
     if (adminRole === 'system_admin') {
