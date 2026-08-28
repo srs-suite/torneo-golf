@@ -38,15 +38,38 @@ function RankingTable({
   showComputan?: boolean
   defaultCountingRounds?: number
 }) {
-  const [roundsSort, setRoundsSort] = useState<'asc' | 'desc' | null>(null)
+  type SortCol = 'rounds' | 'net' | null
+  const [sortCol, setSortCol] = useState<SortCol>(null)
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const toNum = (v: unknown) => {
     const n = Number(v)
     return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY
   }
+  const cycleSort = (col: 'rounds' | 'net') => {
+    if (sortCol !== col) {
+      setSortCol(col)
+      setSortDir('asc')
+      return
+    }
+    if (sortDir === 'asc') {
+      setSortDir('desc')
+      return
+    }
+    setSortCol(null)
+    setSortDir('asc')
+  }
+  const sortHint = (col: 'rounds' | 'net') => {
+    if (sortCol !== col) return '↕'
+    return sortDir === 'asc' ? '↑ menor' : '↓ mayor'
+  }
   const orderedRows = [...rows].sort((a, b) => {
-    if (roundsSort && showRounds) {
+    if (sortCol === 'rounds' && showRounds) {
       const byRounds = toNum(a.rounds) - toNum(b.rounds)
-      if (byRounds !== 0) return roundsSort === 'asc' ? byRounds : -byRounds
+      if (byRounds !== 0) return sortDir === 'asc' ? byRounds : -byRounds
+    }
+    if (sortCol === 'net' && withHcp) {
+      const byNet = toNum(a.total_net) - toNum(b.total_net)
+      if (byNet !== 0) return sortDir === 'asc' ? byNet : -byNet
     }
     if (withHcp) {
       const byNet = toNum(a.total_net) - toNum(b.total_net)
@@ -57,10 +80,6 @@ function RankingTable({
     return String(a.player_name ?? '').localeCompare(String(b.player_name ?? ''), 'es')
   })
   const hi = highlightCount ?? orderedRows.length
-
-  const cycleRoundsSort = () => {
-    setRoundsSort((prev) => (prev === null ? 'asc' : prev === 'asc' ? 'desc' : null))
-  }
 
   return (
     <div className="overflow-x-auto">
@@ -74,13 +93,13 @@ function RankingTable({
               <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 <button
                   type="button"
-                  onClick={cycleRoundsSort}
+                  onClick={() => cycleSort('rounds')}
                   title="Ordenar por rondas jugadas (menor / mayor / por score)"
                   className="inline-flex items-center gap-1 hover:text-gray-800"
                 >
                   Jugadas
                   <span className="text-[10px] font-normal normal-case text-gray-400">
-                    {roundsSort === 'asc' ? '↑ menor' : roundsSort === 'desc' ? '↓ mayor' : '↕'}
+                    {sortHint('rounds')}
                   </span>
                 </button>
               </th>
@@ -91,7 +110,19 @@ function RankingTable({
             {withHcp ? (
               <>
                 <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total gross</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total neto</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <button
+                    type="button"
+                    onClick={() => cycleSort('net')}
+                    title="Ordenar por total neto (menor / mayor / por defecto)"
+                    className="inline-flex items-center gap-1 hover:text-gray-800"
+                  >
+                    Total neto
+                    <span className="text-[10px] font-normal normal-case text-gray-400">
+                      {sortHint('net')}
+                    </span>
+                  </button>
+                </th>
               </>
             ) : (
               <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Gross</th>
@@ -725,7 +756,7 @@ export default function Rankings() {
                       <div>
                         <h2 className="text-lg font-semibold">Acumulado {annual.year}</h2>
                         <p className="text-xs text-gray-500">
-                          Todos los jugadores con tarjeta. Suma de todas las rondas jugadas.
+                          Todos los jugadores con tarjeta. Suma de todas las rondas. En Neto solo faltan quienes no tienen índice WHS.
                         </p>
                       </div>
                       <button
@@ -817,7 +848,7 @@ export default function Rankings() {
                         <div>
                           <h2 className="text-lg font-semibold">Ranking general — todos los participantes</h2>
                           <p className="text-xs text-gray-500">
-                            Sin filtro de cantidad de torneos. Suma de todas las rondas. Neto excluye al top 9 Gross.
+                            Sin filtro de cantidad de torneos. Suma de todas las rondas. En Neto solo faltan quienes no tienen índice WHS.
                           </p>
                         </div>
                         <div className="flex items-center gap-2">

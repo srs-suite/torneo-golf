@@ -2186,10 +2186,9 @@ async function getAnnualRankings(clubId, year) {
                 ranking_list: 'general_gross'
             }));
 
-        // General Neto: con índice; excluye top 9 Gross (comportamiento histórico)
-        const grossTop9Ids = new Set(generalGross.slice(0, 9).map((r) => r.member_id));
+        // General Neto: todos con índice WHS (incluye también a quienes van arriba en Gross)
         const generalNet = generalAll
-            .filter((r) => r.has_index && !grossTop9Ids.has(r.member_id))
+            .filter((r) => r.has_index)
             .sort(
                 (a, b) =>
                     a.total_net - b.total_net ||
