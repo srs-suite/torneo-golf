@@ -1,4 +1,4 @@
-import axios from 'axios'
+import axios, { type InternalAxiosRequestConfig } from 'axios'
 
 // Create axios instance with base configuration
 export const api = axios.create({
@@ -16,48 +16,29 @@ function resolveRequestPath(config: { baseURL?: string; url?: string }): string 
   return `${base}${path.startsWith('/') ? path : `/${path}`}`
 }
 
-function attachClubToken(config: {
-  headers?: Record<string, unknown> & { set?: (k: string, v: string) => void; get?: (k: string) => string | undefined }
-  baseURL?: string
-  url?: string
-}) {
+function attachClubToken(config: InternalAxiosRequestConfig): InternalAxiosRequestConfig {
   if (typeof localStorage === 'undefined') return config
   const fullPath = resolveRequestPath(config)
   if (!fullPath.includes('/api/') && !fullPath.startsWith('/api')) return config
   const token = localStorage.getItem('clubToken')
   if (!token) return config
 
-  const headers = config.headers ?? {}
-  config.headers = headers
-  const existing =
-    typeof headers.get === 'function'
-      ? headers.get('Authorization') || headers.get('authorization')
-      : (headers.Authorization as string | undefined) || (headers.authorization as string | undefined)
+  const headers = config.headers
+  const existing = headers?.get?.('Authorization') || headers?.Authorization || headers?.authorization
   if (existing) return config
 
-  const value = `Bearer ${token}`
-  if (typeof headers.set === 'function') {
-    headers.set('Authorization', value)
-  } else {
-    headers.Authorization = value
-  }
+  headers.set('Authorization', `Bearer ${token}`)
   return config
 }
 
 api.interceptors.request.use(
-  (config) => {
-    attachClubToken(config)
-    return config
-  },
+  (config) => attachClubToken(config),
   (error) => Promise.reject(error)
 )
 
 /** Todas las llamadas axios a /api/* envían Bearer si hay sesión de club */
 axios.interceptors.request.use(
-  (config) => {
-    attachClubToken(config)
-    return config
-  },
+  (config) => attachClubToken(config),
   (error) => Promise.reject(error)
 )
 
