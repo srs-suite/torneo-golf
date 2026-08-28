@@ -135,7 +135,7 @@ function RankingTable({
               key={String(r.participation_id ?? r.member_id ?? i)}
               className={i < hi ? 'bg-yellow-50' : 'bg-white'}
             >
-              <td className="px-4 py-2">{r.position ?? i + 1}</td>
+              <td className="px-4 py-2">{i + 1}</td>
               <td className="px-4 py-2">{sanitizeAscii(r.player_name)}</td>
               <td className="px-4 py-2">{r.member_number || '-'}</td>
               {showRounds && <td className="px-4 py-2">{fmtScoreCell(r.rounds)}</td>}
