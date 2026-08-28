@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, ChevronDown, FileSpreadsheet, ListChecks, Lock, Trophy, Unlock, UserCog } from 'lucide-react'
+import { ArrowLeft, ChevronDown, FileSpreadsheet, ImageDown, ListChecks, Lock, Trophy, Unlock, UserCog } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { tournamentService } from '@/services/tournamentService'
 import { useTournaments } from '@/hooks/useTournaments'
 import { useUserPermissions } from '@/hooks/useUserPermissions'
-import { exportAnnualRankingsExcel, exportTournamentRankingsExcel } from '@/utils/rankingExport'
+import {
+  exportAnnualRankingsExcel,
+  exportRankingImageForWhatsApp,
+  exportTournamentRankingsExcel,
+} from '@/utils/rankingExport'
 import { permFlag } from '@/lib/permissionFlags'
 
 function isRankingTournament(t: { is_ranking_event?: unknown }): boolean {
@@ -459,6 +463,64 @@ export default function Rankings() {
     }
   }
 
+  const handleExportAnnualWhatsApp = async () => {
+    if (!annual) return
+    try {
+      if (isFinal) {
+        await exportRankingImageForWhatsApp({
+          fileName: `ranking_anual_${annual.year}_club_${clubIdNum}_whatsapp.png`,
+          heading: `Ranking anual ${annual.year}`,
+          subtitle: 'Scratch + Handicap + General — listo para WhatsApp',
+          sections: [
+            { title: `Scratch — top ${rules.scratch_cut} (Gross)`, withHcp: false, rows: scratchRows, showRounds: true },
+            { title: `Handicap — siguientes ${rules.handicap_cut} (Neto)`, withHcp: true, rows: handicapRows, showRounds: true },
+            {
+              title: showWithHcp ? 'General Neto' : 'General Gross',
+              withHcp: showWithHcp,
+              rows: generalRows,
+              showRounds: true,
+            },
+          ],
+        })
+      } else {
+        await exportRankingImageForWhatsApp({
+          fileName: `ranking_anual_${annual.year}_club_${clubIdNum}_${showWithHcp ? 'neto' : 'gross'}_whatsapp.png`,
+          heading: `Acumulado ${annual.year}`,
+          subtitle: showWithHcp ? 'Ranking Neto' : 'Ranking Gross',
+          sections: [
+            {
+              title: showWithHcp ? 'Neto' : 'Gross',
+              withHcp: showWithHcp,
+              rows: generalRows,
+              showRounds: true,
+            },
+          ],
+        })
+      }
+      toast.success('Imagen descargada — adjuntála en WhatsApp')
+    } catch {
+      toast.error('No se pudo generar la imagen')
+    }
+  }
+
+  const handleExportTournamentWhatsApp = async () => {
+    if (!tournamentRanking || !selectedTournament) return
+    try {
+      await exportRankingImageForWhatsApp({
+        fileName: `ranking_torneo_${selectedTournament}_club_${clubIdNum}_whatsapp.png`,
+        heading: selectedTournamentName || `Torneo ${selectedTournament}`,
+        subtitle: 'Ranking por torneo — listo para WhatsApp',
+        sections: [
+          { title: 'Gross', withHcp: false, rows: tournamentRanking.without_hcp || [], showRounds: false },
+          { title: 'Neto', withHcp: true, rows: tournamentRanking.with_hcp || [], showRounds: false },
+        ],
+      })
+      toast.success('Imagen descargada — adjuntála en WhatsApp')
+    } catch {
+      toast.error('No se pudo generar la imagen')
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="bg-white shadow-sm border-b">
@@ -759,14 +821,24 @@ export default function Rankings() {
                           Todos los jugadores con tarjeta. Suma de todas las rondas. En Neto solo faltan quienes no tienen índice WHS.
                         </p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={handleExportAnnualExcel}
-                        className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
-                      >
-                        <FileSpreadsheet className="h-4 w-4 text-green-700" />
-                        {showWithHcp ? 'Exportar Excel (Neto)' : 'Exportar Excel (Gross)'}
-                      </button>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleExportAnnualExcel}
+                          className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
+                        >
+                          <FileSpreadsheet className="h-4 w-4 text-green-700" />
+                          {showWithHcp ? 'Exportar Excel (Neto)' : 'Exportar Excel (Gross)'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleExportAnnualWhatsApp}
+                          className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
+                        >
+                          <ImageDown className="h-4 w-4 text-emerald-600" />
+                          Descargar para WhatsApp
+                        </button>
+                      </div>
                     </div>
                     <div className="p-6">
                       {generalRows.length ? (
@@ -795,14 +867,24 @@ export default function Rankings() {
                             Elegibles: {annual.eligible_count ?? 0}. Mejores {rules.counting_rounds} tarjetas por Gross.
                           </p>
                         </div>
-                        <button
-                          type="button"
-                          onClick={handleExportAnnualExcel}
-                          className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
-                        >
-                          <FileSpreadsheet className="h-4 w-4 text-green-700" />
-                          Exportar Excel
-                        </button>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={handleExportAnnualExcel}
+                            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
+                          >
+                            <FileSpreadsheet className="h-4 w-4 text-green-700" />
+                            Exportar Excel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleExportAnnualWhatsApp}
+                            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
+                          >
+                            <ImageDown className="h-4 w-4 text-emerald-600" />
+                            Descargar para WhatsApp
+                          </button>
+                        </div>
                       </div>
                       <div className="p-6">
                         {scratchRows.length ? (
@@ -905,14 +987,24 @@ export default function Rankings() {
               <div className="bg-white rounded-lg border">
                 <div className="px-6 py-4 border-b flex flex-wrap items-center justify-between gap-3">
                   <h2 className="text-lg font-semibold">Ranking por Torneo</h2>
-                  <button
-                    type="button"
-                    onClick={handleExportTournamentExcel}
-                    className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
-                  >
-                    <FileSpreadsheet className="h-4 w-4 text-green-700" />
-                    Exportar Excel
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleExportTournamentExcel}
+                      className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
+                    >
+                      <FileSpreadsheet className="h-4 w-4 text-green-700" />
+                      Exportar Excel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleExportTournamentWhatsApp}
+                      className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
+                    >
+                      <ImageDown className="h-4 w-4 text-emerald-600" />
+                      Descargar para WhatsApp
+                    </button>
+                  </div>
                 </div>
                 <div className="p-6 space-y-8">
                   <div>
