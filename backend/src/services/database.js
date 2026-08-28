@@ -2025,7 +2025,7 @@ async function setAnnualRankingTournamentPicks(clubId, year, tournamentIds) {
  * Ranking anual del club.
  *
  * - general_* : todos los socios con ≥1 tarjeta; suma de TODAS las rondas (como el acumulado previo).
- *   Neto general excluye al top 9 Gross (mismo criterio histórico).
+ *   Neto general: quienes tienen índice WHS (incluye también a quienes van arriba en Gross).
  * - scratch / handicap : reglas finales (mín. N rondas, best-of-M por Gross, cortes Scratch/HCP).
  * - without_hcp / with_hcp : en provisorio = general; en final = scratch / handicap (compat. portal).
  */
