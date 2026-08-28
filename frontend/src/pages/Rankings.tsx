@@ -1016,7 +1016,7 @@ export default function Rankings() {
                       className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
                     >
                       <Download className="h-4 w-4 text-emerald-600" />
-                      Descargar para WhatsApp
+                      Enviar por WhatsApp
                     </button>
                   </div>
                 </div>
