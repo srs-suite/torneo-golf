@@ -7,8 +7,9 @@ import { useTournaments } from '@/hooks/useTournaments'
 import { useUserPermissions } from '@/hooks/useUserPermissions'
 import {
   exportAnnualRankingsExcel,
-  exportRankingImageForWhatsApp,
+  shareRankingImageForWhatsApp,
   exportTournamentRankingsExcel,
+  type WhatsAppShareResult,
 } from '@/utils/rankingExport'
 import { permFlag } from '@/lib/permissionFlags'
 
@@ -463,14 +464,25 @@ export default function Rankings() {
     }
   }
 
+  const toastWhatsAppShare = (result: WhatsAppShareResult) => {
+    if (result === 'shared') {
+      toast.success('Elegí WhatsApp en el menú para enviar la imagen')
+    } else if (result === 'clipboard') {
+      toast.success('Imagen copiada — en WhatsApp elegí el chat y pegá con Ctrl+V', { duration: 6000 })
+    } else {
+      toast.success('WhatsApp abierto — adjuntá la imagen descargada (clip 📎)', { duration: 6000 })
+    }
+  }
+
   const handleExportAnnualWhatsApp = async () => {
     if (!annual) return
     try {
+      let result: WhatsAppShareResult
       if (isFinal) {
-        await exportRankingImageForWhatsApp({
+        result = await shareRankingImageForWhatsApp({
           fileName: `ranking_anual_${annual.year}_club_${clubIdNum}_whatsapp.png`,
           heading: `Ranking anual ${annual.year}`,
-          subtitle: 'Scratch + Handicap + General — listo para WhatsApp',
+          subtitle: 'Scratch + Handicap + General',
           sections: [
             { title: `Scratch — top ${rules.scratch_cut} (Gross)`, withHcp: false, rows: scratchRows, showRounds: true },
             { title: `Handicap — siguientes ${rules.handicap_cut} (Neto)`, withHcp: true, rows: handicapRows, showRounds: true },
@@ -483,7 +495,7 @@ export default function Rankings() {
           ],
         })
       } else {
-        await exportRankingImageForWhatsApp({
+        result = await shareRankingImageForWhatsApp({
           fileName: `ranking_anual_${annual.year}_club_${clubIdNum}_${showWithHcp ? 'neto' : 'gross'}_whatsapp.png`,
           heading: `Acumulado ${annual.year}`,
           subtitle: showWithHcp ? 'Ranking Neto' : 'Ranking Gross',
@@ -497,27 +509,29 @@ export default function Rankings() {
           ],
         })
       }
-      toast.success('Imagen descargada — adjuntála en WhatsApp')
-    } catch {
-      toast.error('No se pudo generar la imagen')
+      toastWhatsAppShare(result)
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return
+      toast.error('No se pudo enviar por WhatsApp')
     }
   }
 
   const handleExportTournamentWhatsApp = async () => {
     if (!tournamentRanking || !selectedTournament) return
     try {
-      await exportRankingImageForWhatsApp({
+      const result = await shareRankingImageForWhatsApp({
         fileName: `ranking_torneo_${selectedTournament}_club_${clubIdNum}_whatsapp.png`,
         heading: selectedTournamentName || `Torneo ${selectedTournament}`,
-        subtitle: 'Ranking por torneo — listo para WhatsApp',
+        subtitle: 'Ranking por torneo',
         sections: [
           { title: 'Gross', withHcp: false, rows: tournamentRanking.without_hcp || [], showRounds: false },
           { title: 'Neto', withHcp: true, rows: tournamentRanking.with_hcp || [], showRounds: false },
         ],
       })
-      toast.success('Imagen descargada — adjuntála en WhatsApp')
-    } catch {
-      toast.error('No se pudo generar la imagen')
+      toastWhatsAppShare(result)
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return
+      toast.error('No se pudo enviar por WhatsApp')
     }
   }
 
@@ -836,7 +850,7 @@ export default function Rankings() {
                           className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
                         >
                           <Download className="h-4 w-4 text-emerald-600" />
-                          Descargar para WhatsApp
+                          Enviar por WhatsApp
                         </button>
                       </div>
                     </div>
@@ -882,7 +896,7 @@ export default function Rankings() {
                             className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
                           >
                             <Download className="h-4 w-4 text-emerald-600" />
-                            Descargar para WhatsApp
+                            Enviar por WhatsApp
                           </button>
                         </div>
                       </div>

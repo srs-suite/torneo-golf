@@ -157,14 +157,13 @@ function sanitizeName(text: unknown): string {
 }
 
 /**
- * PNG del ranking para adjuntar en WhatsApp (sin dependencias extra).
+ * Genera el PNG del ranking como Blob.
  */
-export async function exportRankingImageForWhatsApp(params: {
-  fileName: string
+export async function buildRankingImageBlob(params: {
   heading: string
   subtitle?: string
   sections: RankingImageSection[]
-}): Promise<void> {
+}): Promise<Blob> {
   const sections = (params.sections || []).filter((s) => (s.rows || []).length > 0)
   if (!sections.length) {
     throw new Error('No hay filas para exportar')
@@ -303,12 +302,87 @@ export async function exportRankingImageForWhatsApp(params: {
     canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('No se pudo generar PNG'))), 'image/png')
   })
 
+  return blob
+}
+
+function downloadBlob(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = params.fileName.endsWith('.png') ? params.fileName : `${params.fileName}.png`
+  a.download = fileName.endsWith('.png') ? fileName : `${fileName}.png`
   document.body.appendChild(a)
   a.click()
   a.remove()
   URL.revokeObjectURL(url)
+}
+
+/** Abre WhatsApp Desktop o WhatsApp Web (elige contacto y envía). */
+function openWhatsAppApp(message?: string) {
+  const text = message ? encodeURIComponent(message) : ''
+  const url = text ? `https://api.whatsapp.com/send?text=${text}` : 'https://web.whatsapp.com/'
+  window.open(url, '_blank', 'noopener,noreferrer')
+}
+
+export type WhatsAppShareResult = 'shared' | 'clipboard' | 'downloaded'
+
+/**
+ * Comparte el ranking por WhatsApp: menú nativo, portapapeles + app, o descarga.
+ */
+export async function shareRankingImageForWhatsApp(params: {
+  fileName: string
+  heading: string
+  subtitle?: string
+  sections: RankingImageSection[]
+}): Promise<WhatsAppShareResult> {
+  const blob = await buildRankingImageBlob({
+    heading: params.heading,
+    subtitle: params.subtitle,
+    sections: params.sections,
+  })
+  const fileName = params.fileName.endsWith('.png') ? params.fileName : `${params.fileName}.png`
+  const file = new File([blob], fileName, { type: 'image/png' })
+  const shareText = params.heading
+
+  if (typeof navigator.share === 'function') {
+    try {
+      const payload: ShareData = { title: params.heading, text: shareText, files: [file] }
+      if (!navigator.canShare || navigator.canShare(payload)) {
+        await navigator.share(payload)
+        return 'shared'
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        throw err
+      }
+    }
+  }
+
+  if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+      openWhatsAppApp(shareText)
+      return 'clipboard'
+    } catch {
+      // seguir al fallback de descarga
+    }
+  }
+
+  downloadBlob(blob, fileName)
+  openWhatsAppApp(shareText)
+  return 'downloaded'
+}
+
+/** Descarga PNG (compatibilidad). */
+export async function exportRankingImageForWhatsApp(params: {
+  fileName: string
+  heading: string
+  subtitle?: string
+  sections: RankingImageSection[]
+}): Promise<void> {
+  const blob = await buildRankingImageBlob({
+    heading: params.heading,
+    subtitle: params.subtitle,
+    sections: params.sections,
+  })
+  downloadBlob(blob, params.fileName)
 }
