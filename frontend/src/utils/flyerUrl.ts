@@ -1,5 +1,5 @@
-/** Origen de uploads en producción (nginx sirve imágenes por HTTP, no por HTTPS). */
-const DEFAULT_PROD_UPLOADS_ORIGIN = 'http://torneogolf.retailsolutionstimetracker.com'
+/** En desarrollo local, los archivos están en prod (no en disco local). */
+const DEFAULT_PROD_UPLOADS_ORIGIN = 'https://torneogolf.retailsolutionstimetracker.com'
 
 function devUploadsFallbackOrigin(): string {
   const fromEnv = (import.meta.env.VITE_UPLOADS_FALLBACK_ORIGIN as string | undefined)?.trim()
@@ -10,9 +10,8 @@ function devUploadsFallbackOrigin(): string {
 
 /**
  * URL del flyer para mostrar en inscripción pública y admin.
- * - Mismo origen que la página → ruta relativa /uploads/...
- * - Dev con ruta relativa o URL remota → URL absoluta de prod (archivos no están en disco local).
- * - No forzar HTTPS: en prod los /uploads/ solo responden bien por HTTP.
+ * - Producción: ruta relativa /uploads/... (mismo origen HTTPS; Nginx proxya al backend).
+ * - Dev: URL absoluta de prod para ver imágenes reales.
  */
 export function resolveFlyerDisplayUrl(rawFlyer: string | null | undefined): string {
   const raw = (rawFlyer ?? '').trim()
@@ -20,10 +19,6 @@ export function resolveFlyerDisplayUrl(rawFlyer: string | null | undefined): str
 
   try {
     if (raw.startsWith('/uploads/')) {
-      if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
-        // En prod HTTPS nginx devuelve el SPA para /uploads/; las imágenes responden por HTTP
-        return `http://${window.location.host}${raw}`
-      }
       const fallback = devUploadsFallbackOrigin()
       if (fallback) return `${fallback}${raw}`
       return raw
@@ -33,13 +28,19 @@ export function resolveFlyerDisplayUrl(rawFlyer: string | null | undefined): str
       const u = new URL(raw)
       if (!u.pathname.startsWith('/uploads/')) return raw
 
-      if (u.origin === window.location.origin) {
-        return u.pathname
+      // Mismo host que la página → ruta relativa (evita mixed content)
+      if (typeof window !== 'undefined' && u.host === window.location.host) {
+        return u.pathname + u.search
       }
 
-      // /uploads/ en prod: preferir HTTP (HTTPS devuelve el index.html del frontend)
-      if (u.protocol === 'https:') {
-        return `http://${u.host}${u.pathname}${u.search}`
+      const fallback = devUploadsFallbackOrigin()
+      if (fallback && import.meta.env.DEV) {
+        return `${fallback}${u.pathname}${u.search}`
+      }
+
+      // Preferir HTTPS en prod
+      if (u.protocol === 'http:') {
+        return `https://${u.host}${u.pathname}${u.search}`
       }
 
       return raw
