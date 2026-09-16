@@ -13,19 +13,6 @@ function roundDetailsOf(row: any): any[] {
   return [...kept, ...dropped]
 }
 
-function countedTournamentsLabel(row: any): string {
-  const details = roundDetailsOf(row)
-  const counted = details.filter((d: any) => d?.counts !== false)
-  const source = counted.length ? counted : details
-  return source
-    .map((d: any) => {
-      const date = fmtDate(d?.tournament_date)
-      const name = String(d?.tournament_name ?? '').trim()
-      return [date, name].filter(Boolean).join(' ')
-    })
-    .join(' | ')
-}
-
 function fmtDate(v: unknown): string {
   const s = String(v ?? '')
   const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/)
@@ -36,43 +23,6 @@ function fmtDate(v: unknown): string {
   const m = String(d.getMonth() + 1).padStart(2, '0')
   const day = String(d.getDate()).padStart(2, '0')
   return `${day}/${m}/${y}`
-}
-
-function detailRows(rows: any[], includeNet: boolean) {
-  const out: Record<string, string | number>[] = []
-  for (const r of rows || []) {
-    const details = [...roundDetailsOf(r)]
-    details.sort((a, b) => {
-      const ac = a?.counts === false ? 1 : 0
-      const bc = b?.counts === false ? 1 : 0
-      if (ac !== bc) return ac - bc
-      return String(a?.tournament_date ?? '').localeCompare(String(b?.tournament_date ?? ''))
-    })
-    for (const d of details) {
-      const row: Record<string, string | number> = {
-        Pos: r.position ?? '',
-        Jugador: String(r.player_name ?? ''),
-        Matricula: String(r.member_number ?? ''),
-        Torneo: String(d.tournament_name ?? ''),
-        Fecha: fmtDate(d.tournament_date),
-        Computa: d.counts === false ? 'NO' : 'SI',
-        Handicap: cellNum(d.handicap_used),
-        Ida: cellNum(d.front_nine),
-        Vuelta: cellNum(d.back_nine),
-        Gross: cellNum(d.total_gross),
-      }
-      if (includeNet) row.Neto = cellNum(d.total_net)
-      out.push(row)
-    }
-  }
-  return out
-}
-
-function appendDetailSheet(wb: XLSX.WorkBook, name: string, rows: any[], includeNet: boolean) {
-  const detail = detailRows(rows, includeNet)
-  if (!detail.length) return
-  const safe = name.slice(0, 31)
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detail), safe)
 }
 
 export type RankingExportKind = 'net' | 'gross' | 'both'
@@ -88,79 +38,37 @@ export function exportAnnualRankingsExcel(params: {
   without_hcp: any[]
   general_with_hcp?: any[]
   general_without_hcp?: any[]
+  tournaments?: { tournament_id: number; tournament_name: string; tournament_date?: string }[]
 }) {
-  const wb = XLSX.utils.book_new()
   const kind = params.kind || 'both'
   const hasFinalSheets = (params.general_with_hcp || params.general_without_hcp) != null
+  const tournaments = params.tournaments || []
+  const sheets: { name: string; rows: any[]; tournaments: ExcelTournamentCol[] }[] = []
 
   if (kind === 'net' || kind === 'both') {
-    const netRows = params.with_hcp || []
-    const netJson = netRows.map((r, i) => ({
-      Pos: r.position ?? i + 1,
-      Jugador: String(r.player_name ?? ''),
-      Matricula: String(r.member_number ?? ''),
-      Jugadas: cellNum(r.rounds),
-      Computan: cellNum(r.rounds_counted ?? ''),
-      'Torneos que computan': countedTournamentsLabel(r),
-      'Total gross': cellNum(r.total_gross),
-      'Total neto': cellNum(r.total_net),
-    }))
-    XLSX.utils.book_append_sheet(
-      wb,
-      XLSX.utils.json_to_sheet(netJson),
-      hasFinalSheets ? 'Handicap' : 'Neto'
-    )
-    appendDetailSheet(wb, hasFinalSheets ? 'Handicap detalle' : 'Neto detalle', netRows, true)
+    sheets.push({
+      name: hasFinalSheets ? 'Handicap' : 'Neto',
+      rows: params.with_hcp || [],
+      tournaments,
+    })
   }
-
   if (kind === 'gross' || kind === 'both') {
-    const grossRows = params.without_hcp || []
-    const grossJson = grossRows.map((r, i) => ({
-      Pos: r.position ?? i + 1,
-      Jugador: String(r.player_name ?? ''),
-      Matricula: String(r.member_number ?? ''),
-      Jugadas: cellNum(r.rounds),
-      Computan: cellNum(r.rounds_counted ?? ''),
-      'Torneos que computan': countedTournamentsLabel(r),
-      'Total Gross': cellNum(r.total_gross),
-    }))
-    XLSX.utils.book_append_sheet(
-      wb,
-      XLSX.utils.json_to_sheet(grossJson),
-      hasFinalSheets ? 'Scratch' : 'Gross'
-    )
-    appendDetailSheet(wb, hasFinalSheets ? 'Scratch detalle' : 'Gross detalle', grossRows, true)
+    sheets.push({
+      name: hasFinalSheets ? 'Scratch' : 'Gross',
+      rows: params.without_hcp || [],
+      tournaments,
+    })
   }
-
   if (params.general_without_hcp?.length) {
-    const g = params.general_without_hcp.map((r, i) => ({
-      Pos: r.position ?? i + 1,
-      Jugador: String(r.player_name ?? ''),
-      Matricula: String(r.member_number ?? ''),
-      Jugadas: cellNum(r.rounds),
-      'Torneos que computan': countedTournamentsLabel(r),
-      'Total Gross': cellNum(r.total_gross),
-    }))
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(g), 'General Gross')
-    appendDetailSheet(wb, 'General Gross detalle', params.general_without_hcp, true)
+    sheets.push({ name: 'General Gross', rows: params.general_without_hcp, tournaments })
   }
   if (params.general_with_hcp?.length) {
-    const g = params.general_with_hcp.map((r, i) => ({
-      Pos: r.position ?? i + 1,
-      Jugador: String(r.player_name ?? ''),
-      Matricula: String(r.member_number ?? ''),
-      Jugadas: cellNum(r.rounds),
-      'Torneos que computan': countedTournamentsLabel(r),
-      'Total gross': cellNum(r.total_gross),
-      'Total neto': cellNum(r.total_net),
-    }))
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(g), 'General Neto')
-    appendDetailSheet(wb, 'General Neto detalle', params.general_with_hcp, true)
+    sheets.push({ name: 'General Neto', rows: params.general_with_hcp, tournaments })
   }
 
   const suffix =
     kind === 'net' ? '_neto' : kind === 'gross' ? '_gross' : hasFinalSheets ? '_final' : '_acumulado'
-  XLSX.writeFile(wb, `ranking_anual_${params.year}_club_${params.clubId}${suffix}.xlsx`)
+  downloadWorkbookXml(`ranking_anual_${params.year}_club_${params.clubId}${suffix}.xls`, sheets)
 }
 
 /**
@@ -382,15 +290,167 @@ export async function buildRankingImageBlob(params: {
   return blob
 }
 
+function escXml(v: unknown): string {
+  return String(v ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
 function downloadBlob(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = fileName.endsWith('.png') ? fileName : `${fileName}.png`
+  a.download = fileName
   document.body.appendChild(a)
   a.click()
   a.remove()
   URL.revokeObjectURL(url)
+}
+
+type ExcelTournamentCol = {
+  tournament_id: number
+  tournament_name: string
+  tournament_date?: string
+}
+
+function collectTournamentCols(rows: any[], extra: ExcelTournamentCol[] = []): ExcelTournamentCol[] {
+  const map = new Map<number, ExcelTournamentCol>()
+  for (const t of extra) {
+    const id = Number(t.tournament_id)
+    if (!Number.isFinite(id)) continue
+    map.set(id, {
+      tournament_id: id,
+      tournament_name: String(t.tournament_name ?? `Torneo ${id}`),
+      tournament_date: t.tournament_date,
+    })
+  }
+  for (const r of rows || []) {
+    for (const d of roundDetailsOf(r)) {
+      const id = Number(d?.tournament_id)
+      if (!Number.isFinite(id) || map.has(id)) continue
+      map.set(id, {
+        tournament_id: id,
+        tournament_name: String(d.tournament_name ?? `Torneo ${id}`),
+        tournament_date: d.tournament_date,
+      })
+    }
+  }
+  return [...map.values()].sort((a, b) => String(a.tournament_date ?? '').localeCompare(String(b.tournament_date ?? '')))
+}
+
+function xmlCell(value: string | number | '', style: string, opts?: { index?: number; mergeAcross?: number; mergeDown?: number; number?: boolean }) {
+  const attrs = [
+    `ss:StyleID="${style}"`,
+    opts?.index ? `ss:Index="${opts.index}"` : '',
+    opts?.mergeAcross ? `ss:MergeAcross="${opts.mergeAcross}"` : '',
+    opts?.mergeDown ? `ss:MergeDown="${opts.mergeDown}"` : '',
+  ].filter(Boolean).join(' ')
+  if (value === '' || value == null) return `<Cell ${attrs}/>`
+  const type = opts?.number && value !== '' && Number.isFinite(Number(value)) ? 'Number' : 'String'
+  const data = type === 'Number' ? String(value) : escXml(value)
+  return `<Cell ${attrs}><Data ss:Type="${type}">${data}</Data></Cell>`
+}
+
+/** Una fila por jugador. Cada torneo es un bloque; los que computan van resaltados. */
+function matrixSheetXml(rows: any[], tournaments: ExcelTournamentCol[]): string {
+  const cols = collectTournamentCols(rows, tournaments)
+  const sub = ['HCP', 'Ida', 'Vuelta', 'Gross', 'Neto']
+  const colXml = [
+    '<Column ss:Width="55"/>',
+    '<Column ss:Width="180"/>',
+    '<Column ss:Width="80"/>',
+    ...cols.flatMap(() => [
+      '<Column ss:Width="42"/>',
+      '<Column ss:Width="42"/>',
+      '<Column ss:Width="52"/>',
+      '<Column ss:Width="52"/>',
+      '<Column ss:Width="48"/>',
+    ]),
+  ].join('')
+
+  const titleCells = [
+    xmlCell('Posicion', 'head', { mergeDown: 1 }),
+    xmlCell('Jugador', 'head', { mergeDown: 1 }),
+    xmlCell('Matricula', 'head', { mergeDown: 1 }),
+  ]
+  cols.forEach((t, i) => {
+    const date = fmtDate(t.tournament_date)
+    const title = [date, t.tournament_name].filter(Boolean).join(' — ')
+    titleCells.push(xmlCell(title || `Torneo ${i + 1}`, 'title', {
+      index: 4 + i * 5,
+      mergeAcross: 4,
+    }))
+  })
+
+  const subCells: string[] = []
+  cols.forEach((_, i) => {
+    sub.forEach((label, j) => {
+      subCells.push(xmlCell(label, 'sub', j === 0 ? { index: 4 + i * 5 } : undefined))
+    })
+  })
+
+  const dataRows = (rows || []).map((r, idx) => {
+    const details = roundDetailsOf(r)
+    const byId = new Map<number, any>()
+    for (const d of details) byId.set(Number(d.tournament_id), d)
+    const cells = [
+      xmlCell(r.position ?? idx + 1, 'cell', { number: true }),
+      xmlCell(String(r.player_name ?? ''), 'name'),
+      xmlCell(String(r.member_number ?? ''), 'cell'),
+    ]
+    cols.forEach((t, i) => {
+      const d = byId.get(t.tournament_id)
+      const played = d && (d.total_gross != null || d.total_net != null || d.front_nine != null)
+      const counts = played && d.counts !== false
+      const style = counts ? 'hl' : 'cell'
+      const start = 4 + i * 5
+      const values: Array<string | number | ''> = played
+        ? [
+            d.handicap_used ?? '',
+            d.front_nine ?? '',
+            d.back_nine ?? '',
+            d.total_gross ?? '',
+            d.total_net ?? '',
+          ]
+        : ['', '', '', '', '']
+      values.forEach((v, j) => {
+        const empty = v === '' || v == null
+        cells.push(xmlCell(empty ? '' : v, played ? style : 'cell', {
+          index: j === 0 ? start : undefined,
+          number: !empty,
+        }))
+      })
+    })
+    return `<Row>${cells.join('')}</Row>`
+  })
+
+  return `<Table>${colXml}<Row ss:Height="36">${titleCells.join('')}</Row><Row>${subCells.join('')}</Row>${dataRows.join('')}</Table>`
+}
+
+function downloadWorkbookXml(fileName: string, sheets: { name: string; rows: any[]; tournaments: ExcelTournamentCol[] }[]) {
+  const xmlSheets = sheets
+    .filter((s) => (s.rows || []).length)
+    .map((s) => {
+      const name = s.name.replace(/[\\/?*[\]:]/g, ' ').slice(0, 31)
+      return `<Worksheet ss:Name="${escXml(name)}">${matrixSheetXml(s.rows, s.tournaments)}</Worksheet>`
+    })
+    .join('')
+  const xml = `<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+<Styles>
+<Style ss:ID="head"><Alignment ss:Horizontal="Center" ss:Vertical="Center"/><Font ss:Bold="1"/><Interior ss:Color="#F3F4F6" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D1D5DB"/></Borders></Style>
+<Style ss:ID="title"><Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/><Font ss:Bold="1"/><Interior ss:Color="#E5E7EB" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D1D5DB"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D1D5DB"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D1D5DB"/></Borders></Style>
+<Style ss:ID="sub"><Alignment ss:Horizontal="Center"/><Font ss:Bold="1" ss:Size="9"/><Interior ss:Color="#F9FAFB" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E5E7EB"/></Borders></Style>
+<Style ss:ID="cell"><Alignment ss:Horizontal="Center"/></Style>
+<Style ss:ID="name"><Alignment ss:Horizontal="Left"/></Style>
+<Style ss:ID="hl"><Alignment ss:Horizontal="Center"/><Interior ss:Color="#D6EAF8" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BFDBFE"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BFDBFE"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BFDBFE"/></Borders></Style>
+</Styles>
+${xmlSheets}
+</Workbook>`
+  downloadBlob(new Blob([xml], { type: 'application/vnd.ms-excel' }), fileName.endsWith('.xls') ? fileName : `${fileName}.xls`)
 }
 
 /** Abre WhatsApp Desktop o WhatsApp Web (elige contacto y envía). */

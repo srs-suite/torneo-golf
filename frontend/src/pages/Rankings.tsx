@@ -318,6 +318,19 @@ export default function Rankings() {
     handicap_cut: 16,
   }
 
+  const rankingExcelTournaments = useMemo(() => {
+    const selected = annual?.annual_selection?.uses_explicit_selection
+      ? new Set((annual.annual_selection.tournament_ids || []).map(Number))
+      : null
+    return annualRankingCandidates
+      .filter((t: any) => !selected || selected.has(Number(t.tournament_id)))
+      .map((t: any) => ({
+        tournament_id: Number(t.tournament_id),
+        tournament_name: String(t.tournament_name ?? ''),
+        tournament_date: t.tournament_date,
+      }))
+      .sort((a, b) => String(a.tournament_date ?? '').localeCompare(String(b.tournament_date ?? '')))
+  }, [annual, annualRankingCandidates])
   const generalGross = annual?.general_without_hcp || (!isFinal ? annual?.without_hcp : []) || []
   const generalNet = annual?.general_with_hcp || (!isFinal ? annual?.with_hcp : []) || []
   const scratchRows = annual?.scratch || []
@@ -441,6 +454,7 @@ export default function Rankings() {
           without_hcp: scratchRows,
           general_with_hcp: generalNet,
           general_without_hcp: generalGross,
+          tournaments: rankingExcelTournaments,
         })
         toast.success('Excel descargado (Scratch + Handicap + General)')
       } else {
@@ -450,6 +464,7 @@ export default function Rankings() {
           kind: showWithHcp ? 'net' : 'gross',
           with_hcp: generalNet,
           without_hcp: generalGross,
+          tournaments: rankingExcelTournaments,
         })
         toast.success(showWithHcp ? 'Excel Neto descargado' : 'Excel Gross descargado')
       }
