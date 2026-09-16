@@ -6,6 +6,21 @@ function cellNum(v: unknown): number | string {
   return Number.isFinite(n) ? n : String(v)
 }
 
+function countedTournamentIds(details: any[], limit: number): Set<number> {
+  const played = (details || []).filter(
+    (d) => d && (d.total_gross != null || d.total_net != null || d.front_nine != null)
+  )
+  const explicit = played.filter((d) => d.counts === true)
+  const hasDropped = played.some((d) => d.counts === false)
+  const pool = hasDropped && explicit.length ? explicit : played
+  const best = [...pool].sort((a, b) => {
+    const byGross = (Number(a.total_gross) || 0) - (Number(b.total_gross) || 0)
+    if (byGross !== 0) return byGross
+    return Number(a.tournament_id) - Number(b.tournament_id)
+  }).slice(0, Math.max(1, limit))
+  return new Set(best.map((d) => Number(d.tournament_id)))
+}
+
 function roundDetailsOf(row: any): any[] {
   if (Array.isArray(row?.round_details) && row.round_details.length) return row.round_details
   const kept = Array.isArray(row?.kept_tournaments) ? row.kept_tournaments.map((d: any) => ({ ...d, counts: true })) : []
@@ -39,6 +54,7 @@ export function exportAnnualRankingsExcel(params: {
   general_with_hcp?: any[]
   general_without_hcp?: any[]
   tournaments?: { tournament_id: number; tournament_name: string; tournament_date?: string }[]
+  countingRounds?: number
 }) {
   const kind = params.kind || 'both'
   const hasFinalSheets = (params.general_with_hcp || params.general_without_hcp) != null
@@ -68,7 +84,11 @@ export function exportAnnualRankingsExcel(params: {
 
   const suffix =
     kind === 'net' ? '_neto' : kind === 'gross' ? '_gross' : hasFinalSheets ? '_final' : '_acumulado'
-  downloadMatrixXlsx(`ranking_por_torneos_${params.year}_club_${params.clubId}${suffix}.xlsx`, sheets)
+  downloadMatrixXlsx(
+    `ranking_por_torneos_${params.year}_club_${params.clubId}${suffix}.xlsx`,
+    sheets,
+    params.countingRounds || 3
+  )
 }
 
 /**
@@ -422,7 +442,7 @@ function xlsxCell(col: number, row: number, value: string | number | '', style: 
   return `<c r="${ref}" s="${style}" t="inlineStr"><is><t>${escXml(value)}</t></is></c>`
 }
 
-function matrixSheetXml(rows: any[], tournaments: ExcelTournamentCol[]): string {
+function matrixSheetXml(rows: any[], tournaments: ExcelTournamentCol[], countingRounds = 3): string {
   const cols = collectTournamentCols(rows, tournaments)
   const sub = ['HCP', 'Ida', 'Vuelta', 'Gross', 'Neto']
   const merges = ['A1:A2', 'B1:B2', 'C1:C2']
@@ -452,6 +472,7 @@ function matrixSheetXml(rows: any[], tournaments: ExcelTournamentCol[]): string 
 
   const data = (rows || []).map((r, idx) => {
     const details = roundDetailsOf(r)
+    const counted = countedTournamentIds(details, countingRounds)
     const byId = new Map<number, any>()
     for (const d of details) byId.set(Number(d.tournament_id), d)
     const excelRow = idx + 3
@@ -463,7 +484,7 @@ function matrixSheetXml(rows: any[], tournaments: ExcelTournamentCol[]): string 
     cols.forEach((t, i) => {
       const d = byId.get(t.tournament_id)
       const played = d && (d.total_gross != null || d.total_net != null || d.front_nine != null)
-      const counts = played && d.counts !== false
+      const counts = played && counted.has(t.tournament_id)
       const style = counts ? 6 : 5
       const start = 4 + i * 5
       const values: Array<string | number | ''> = played
@@ -524,13 +545,17 @@ const XLSX_STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 </cellXfs>
 </styleSheet>`
 
-function downloadMatrixXlsx(fileName: string, sheets: { name: string; rows: any[]; tournaments: ExcelTournamentCol[] }[]) {
+function downloadMatrixXlsx(
+  fileName: string,
+  sheets: { name: string; rows: any[]; tournaments: ExcelTournamentCol[] }[],
+  countingRounds = 3
+) {
   const usable = sheets.filter((s) => (s.rows || []).length)
   if (!usable.length) throw new Error('No hay filas para exportar')
   const enc = new TextEncoder()
   const sheetFiles = usable.map((s, i) => ({
     name: `xl/worksheets/sheet${i + 1}.xml`,
-    data: enc.encode(matrixSheetXml(s.rows, s.tournaments)),
+    data: enc.encode(matrixSheetXml(s.rows, s.tournaments, countingRounds)),
   }))
   const sheetRels = usable
     .map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`)
@@ -654,159 +679,157 @@ export async function exportRankingImageForWhatsApp(params: {
   downloadBlob(blob, params.fileName)
 }
 
-export type WallPosterSheet = {
+function firstRoundPairs(size: number): Array<[number, number]> {
+  const slotOrder = [1, 8, 4, 5, 3, 6, 2, 7]
+  if (size <= 8) {
+    const pairs: Array<[number, number]> = []
+    for (let i = 0; i < slotOrder.length; i += 2) {
+      pairs.push([slotOrder[i], slotOrder[i + 1]])
+    }
+    return pairs
+  }
+  return slotOrder.map((seed) => [seed, size + 1 - seed])
+}
+
+function bracketRoundLabels(size: number): string[] {
+  if (size <= 8) return ['Cuartos de final', 'Semifinales', 'Final', 'Campeón']
+  return ['Octavos de final', 'Cuartos de final', 'Semifinales', 'Final', 'Campeón']
+}
+
+function bracketPageHtml(sheet: {
   title: string
-  subtitle: string
+  size: number
   rows: any[]
-  tournaments: ExcelTournamentCol[]
-}
-
-function posterNum(v: unknown): string {
-  if (v === null || v === undefined || v === '') return ''
-  const n = Number(v)
-  return Number.isFinite(n) ? String(n) : escXml(v)
-}
-
-function wallPosterHtml(params: {
-  year: number
   clubName: string
-  countingRounds: number
-  sheets: WallPosterSheet[]
+  year: number
+  throughLabel: string
 }): string {
-  const pages = params.sheets
-    .filter((s) => (s.rows || []).length)
-    .map((sheet) => {
-      const cols = collectTournamentCols(sheet.rows, sheet.tournaments)
-      const groupHeads = cols
-        .map((t) => {
-          const title = [fmtDate(t.tournament_date), t.tournament_name].filter(Boolean).join(' — ')
-          return `<th class="tname sep" colspan="5">${escXml(title || 'Torneo')}</th>`
-        })
-        .join('')
-      const sub = cols
-        .map(() =>
-          ['HCP', 'Ida', 'Vuelta', 'Gross', 'Neto']
-            .map((label, j) => `<th class="${j === 0 ? 'sep' : ''}">${label}</th>`)
-            .join('')
-        )
-        .join('')
-      const body = sheet.rows
-        .map((r, idx) => {
-          const details = roundDetailsOf(r)
-          const byId = new Map<number, any>()
-          for (const d of details) byId.set(Number(d.tournament_id), d)
-          const cells = cols
-            .map((t) => {
-              const d = byId.get(t.tournament_id)
-              const played = d && (d.total_gross != null || d.total_net != null || d.front_nine != null)
-              const counts = played && d.counts !== false
-              const values = played
-                ? [d.handicap_used, d.front_nine, d.back_nine, d.total_gross, d.total_net]
-                : ['', '', '', '', '']
-              return values
-                .map((v, j) => {
-                  const cls = [j === 0 ? 'sep' : '', counts ? 'hl' : ''].filter(Boolean).join(' ')
-                  return `<td class="${cls}">${posterNum(v)}</td>`
-                })
-                .join('')
-            })
-            .join('')
-          return `<tr>
-<td class="pos">${idx + 1}</td>
-<td class="name">${escXml(r.player_name ?? '')}</td>
-<td>${escXml(r.member_number ?? '')}</td>
-${cells}
-<td class="sep total">${posterNum(r.total_gross)}</td>
-<td class="total">${posterNum(r.total_net)}</td>
-</tr>`
-        })
-        .join('')
-      return `<section class="sheet">
-<header>
-  <div>
-    <p class="kicker">${escXml(params.clubName || 'Club')}</p>
-    <h1>Ranking anual ${params.year}</h1>
-  </div>
-  <div class="badge">${escXml(sheet.title)}</div>
-</header>
-<p class="sub">${escXml(sheet.subtitle)}</p>
-<table>
-  <colgroup>
-    <col class="c-pos"/><col class="c-name"/><col class="c-mat"/>
-    ${cols.map(() => '<col/><col/><col/><col/><col/>').join('')}
-    <col class="c-tot"/><col class="c-tot"/>
-  </colgroup>
-  <thead>
-    <tr>
-      <th rowspan="2">Pos</th>
-      <th rowspan="2" class="name">Jugador</th>
-      <th rowspan="2">Matrícula</th>
-      ${groupHeads}
-      <th class="sep tname" colspan="2">Total</th>
-    </tr>
-    <tr>${sub}<th class="sep">Gross</th><th>Neto</th></tr>
-  </thead>
-  <tbody>${body}</tbody>
-</table>
-<footer>
-  <span>Celeste: las ${params.countingRounds} tarjetas que computan. La línea vertical separa cada torneo.</span>
-  <span>Orden oficial del grupo</span>
-</footer>
-</section>`
+  const size = sheet.size <= 8 ? 8 : 16
+  const pairs = firstRoundPairs(size)
+  const rounds = Math.log2(size)
+  const labels = bracketRoundLabels(size)
+  const player = (seed: number) => {
+    const row = sheet.rows[seed - 1]
+    const name = String(row?.player_name ?? '').trim()
+    return { seed, name }
+  }
+  const firstRound = pairs
+    .map(([a, b]) => {
+      const pa = player(a)
+      const pb = player(b)
+      return `<div class="match">
+        <div class="slot">${pa.name ? `<span class="seed">${pa.seed}</span><span class="nm">${escXml(pa.name)}</span>` : `<span class="seed">${pa.seed}</span>`}</div>
+        <div class="slot">${pb.name ? `<span class="seed">${pb.seed}</span><span class="nm">${escXml(pb.name)}</span>` : `<span class="seed">${pb.seed}</span>`}</div>
+      </div>`
     })
     .join('')
+  const later = Array.from({ length: rounds - 1 }, (_, roundIndex) => {
+    const matchCount = size / 2 ** (roundIndex + 2)
+    const matches = Array.from({ length: matchCount }, () => `<div class="match empty"><div class="slot"></div><div class="slot"></div></div>`).join('')
+    return `<div class="round">${matches}</div>`
+  }).join('')
+  const compact = size > 8 ? ' compact' : ''
+  return `<section class="sheet${compact}">
+    <header class="banner">
+      <div>
+        <h1>TORNEO FINAL</h1>
+        <p>Llave de eliminación directa – ${size} jugadores</p>
+      </div>
+      <div class="until">
+        <span>HASTA EL</span>
+        <strong>${escXml(sheet.throughLabel)}</strong>
+      </div>
+    </header>
+    <p class="meta">${escXml(sheet.clubName || 'Club')} · ${escXml(sheet.title)} · Ranking ${sheet.year}</p>
+    <div class="labels">${labels.map((label) => `<span>${label}</span>`).join('')}</div>
+    <div class="bracket">
+      <div class="round">${firstRound}</div>
+      ${later}
+      <div class="round champ-col">
+        <div class="champ">
+          <div class="champ-tag">Campeón</div>
+          <div class="champ-name"></div>
+        </div>
+      </div>
+    </div>
+    <p class="foot">Completá los ganadores en los casilleros vacíos. Cruces: 1 vs ${size}, 4 vs 5 en el lado alto.</p>
+  </section>`
+}
 
+function bracketHtml(params: {
+  year: number
+  clubName: string
+  throughLabel: string
+  sheets: { title: string; size: number; rows: any[] }[]
+}): string {
+  const pages = params.sheets
+    .map((sheet) =>
+      bracketPageHtml({
+        ...sheet,
+        clubName: params.clubName,
+        year: params.year,
+        throughLabel: params.throughLabel,
+      })
+    )
+    .join('')
   return `<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="utf-8"/>
-<title>Ranking anual ${params.year}</title>
+<title>Llave ranking ${params.year}</title>
 <style>
-  @page { size: A4 landscape; margin: 7mm; }
+  @page { size: A4 landscape; margin: 8mm; }
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; color: #111827; font-family: Calibri, "Segoe UI", Arial, sans-serif; }
-  .sheet { width: 283mm; min-height: 196mm; page-break-after: always; display: flex; flex-direction: column; }
+  html, body { margin: 0; color: #1e293b; font-family: Calibri, "Segoe UI", Arial, sans-serif; }
+  .sheet { width: 281mm; min-height: 194mm; page-break-after: always; display: flex; flex-direction: column; }
   .sheet:last-child { page-break-after: auto; }
-  header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2.5px solid #14532d; padding-bottom: 3mm; margin-bottom: 2mm; }
-  .kicker { margin: 0; font-size: 8pt; letter-spacing: 0.12em; text-transform: uppercase; color: #14532d; font-weight: 700; }
-  h1 { margin: 1mm 0 0; font-size: 16pt; font-weight: 700; letter-spacing: 0.01em; }
-  .badge { font-size: 14pt; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #14532d; border: 1.5px solid #14532d; padding: 1.5mm 4mm; }
-  .sub { margin: 0 0 2mm; font-size: 8.5pt; color: #4b5563; }
-  table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 7.5pt; }
-  th, td { border-bottom: 0.4pt solid #e5e7eb; padding: 1.1mm 0.6mm; text-align: center; vertical-align: middle; }
-  thead th { background: #f3f4f6; font-size: 6.5pt; font-weight: 700; color: #374151; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .tname { font-size: 7pt; line-height: 1.15; }
-  .name { text-align: left; font-weight: 600; overflow: hidden; }
-  .pos { font-weight: 700; }
-  .sep { border-left: 1.25pt solid #1f2937; }
-  .hl { background: #D6EAF8; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .total { font-weight: 700; }
-  .c-pos { width: 8mm; }
-  .c-name { width: 42mm; }
-  .c-mat { width: 16mm; }
-  .c-tot { width: 12mm; }
-  footer { margin-top: auto; padding-top: 2mm; display: flex; justify-content: space-between; font-size: 7.5pt; color: #6b7280; border-top: 0.4pt solid #e5e7eb; }
+  .banner { display: flex; justify-content: space-between; align-items: center; background: #16324f; color: white; padding: 4mm 5mm; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .banner h1 { margin: 0; font-size: 20pt; letter-spacing: 0.04em; font-weight: 800; }
+  .banner p { margin: 1mm 0 0; font-size: 10pt; opacity: 0.9; }
+  .until { text-align: right; border-left: 1px solid rgba(255,255,255,.45); padding-left: 5mm; }
+  .until span { display: block; font-size: 8pt; letter-spacing: 0.12em; }
+  .until strong { font-size: 16pt; }
+  .meta { margin: 2.5mm 0 1.5mm; font-size: 9pt; color: #475569; letter-spacing: 0.04em; text-transform: uppercase; }
+  .labels { display: flex; gap: 3mm; margin-bottom: 2mm; }
+  .labels span { flex: 1; text-align: center; background: #e8eef5; color: #334155; font-size: 8pt; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 1.4mm 1mm; border-radius: 2px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .labels span:last-child { flex: 0.7; }
+  .bracket { flex: 1; display: flex; min-height: 150mm; }
+  .round { flex: 1; display: flex; flex-direction: column; justify-content: space-around; }
+  .match { position: relative; display: flex; flex-direction: column; justify-content: center; margin: 1.2mm 8mm 1.2mm 0; }
+  .match::after { content: ""; position: absolute; right: -8mm; top: 22%; bottom: 22%; width: 8mm; border: 1.6px solid #16324f; border-left: 0; }
+  .champ-col { justify-content: center; flex: 0.85; }
+  .slot { display: flex; align-items: center; gap: 1.5mm; min-height: 8.5mm; margin: 0.8mm 0; padding: 0 1.5mm; border: 1px solid #d5dee8; border-radius: 2px; background: white; font-size: 9pt; }
+  .seed { flex: 0 0 5.5mm; height: 5.5mm; display: inline-flex; align-items: center; justify-content: center; background: #eef3f8; color: #16324f; font-size: 8pt; font-weight: 700; border-radius: 2px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .nm { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .compact .slot { min-height: 5.6mm; font-size: 7.4pt; margin: 0.35mm 0; }
+  .compact .seed { flex-basis: 4.6mm; height: 4.6mm; font-size: 7pt; }
+  .compact .match { margin-right: 6mm; }
+  .compact .match::after { right: -6mm; width: 6mm; }
+  .champ { display: flex; align-items: center; gap: 2mm; }
+  .champ-tag { background: #16324f; color: white; font-weight: 800; font-size: 8pt; letter-spacing: 0.08em; text-transform: uppercase; padding: 2.2mm 3mm; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .champ-name { flex: 1; min-height: 9mm; border: 1px solid #d5dee8; border-radius: 2px; background: white; }
+  .foot { margin: 2mm 0 0; font-size: 7.5pt; color: #64748b; }
   @media screen {
     body { background: #e5e7eb; padding: 12px; }
-    .sheet { background: white; margin: 0 auto 12px; padding: 7mm; box-shadow: 0 1px 4px rgba(0,0,0,.12); }
+    .sheet { background: white; margin: 0 auto 12px; box-shadow: 0 1px 4px rgba(0,0,0,.12); }
   }
 </style>
 </head>
 <body>
-${pages || '<p>No hay jugadores para imprimir.</p>'}
-<script>window.addEventListener('load', function () { setTimeout(function () { window.print() }, 200) })</script>
+${pages}
+<script>window.addEventListener('load', function () { setTimeout(function () { window.print() }, 250) })</script>
 </body>
 </html>`
 }
 
-/** Cartel A4 horizontal: una página por grupo, para imprimir y pegar. */
-export function printAnnualWallPoster(params: {
+/** Llave A4 horizontal: Scratch (8) y Handicap (16). */
+export function printAnnualBracket(params: {
   year: number
   clubName: string
-  countingRounds: number
-  sheets: WallPosterSheet[]
+  throughLabel: string
+  sheets: { title: string; size: number; rows: any[] }[]
 }) {
-  const html = wallPosterHtml(params)
+  const html = bracketHtml(params)
   const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }))
   const w = window.open(url, '_blank')
   if (!w) {
@@ -815,3 +838,5 @@ export function printAnnualWallPoster(params: {
   }
   setTimeout(() => URL.revokeObjectURL(url), 60000)
 }
+
+

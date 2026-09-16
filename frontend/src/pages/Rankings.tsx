@@ -8,7 +8,7 @@ import { useTournaments } from '@/hooks/useTournaments'
 import { useUserPermissions } from '@/hooks/useUserPermissions'
 import {
   exportAnnualRankingsExcel,
-  printAnnualWallPoster,
+  printAnnualBracket,
   shareRankingImageForWhatsApp,
   exportTournamentRankingsExcel,
   type WhatsAppShareResult,
@@ -458,6 +458,7 @@ export default function Rankings() {
           general_with_hcp: generalNet,
           general_without_hcp: generalGross,
           tournaments: rankingExcelTournaments,
+          countingRounds: rules.counting_rounds,
         })
         toast.success('Planilla por torneos descargada (.xlsx)')
       } else {
@@ -468,6 +469,7 @@ export default function Rankings() {
           with_hcp: generalNet,
           without_hcp: generalGross,
           tournaments: rankingExcelTournaments,
+          countingRounds: rules.counting_rounds,
         })
         toast.success(showWithHcp ? 'Planilla Neto descargada (.xlsx)' : 'Planilla Gross descargada (.xlsx)')
       }
@@ -476,26 +478,23 @@ export default function Rankings() {
     }
   }
 
-  const handlePrintWallPoster = () => {
+  const handlePrintBracket = () => {
     if (!isFinal) return
     try {
-      printAnnualWallPoster({
+      const sortedDates = [...rankingExcelTournaments].sort((a, b) =>
+        String(a.tournament_date ?? '').localeCompare(String(b.tournament_date ?? ''))
+      )
+      const last = sortedDates[sortedDates.length - 1]
+      const raw = String(last?.tournament_date ?? '')
+      const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/)
+      const throughLabel = iso ? `${iso[3]}/${iso[2]}` : ''
+      printAnnualBracket({
         year: annual?.year || year,
         clubName: club?.course_name || 'Club',
-        countingRounds: rules.counting_rounds,
+        throughLabel,
         sheets: [
-          {
-            title: 'Scratch',
-            subtitle: `Mejores ${rules.counting_rounds} tarjetas por Gross. Primeros ${rules.scratch_cut}.`,
-            rows: scratchRows,
-            tournaments: rankingExcelTournaments,
-          },
-          {
-            title: 'Handicap',
-            subtitle: `Siguientes ${rules.handicap_cut} por Gross, ordenados por neto de las ${rules.counting_rounds} tarjetas que computan.`,
-            rows: handicapRows,
-            tournaments: rankingExcelTournaments,
-          },
+          { title: 'Scratch', size: 8, rows: scratchRows.slice(0, 8) },
+          { title: 'Handicap', size: 16, rows: handicapRows.slice(0, 16) },
         ],
       })
     } catch {
@@ -960,11 +959,11 @@ export default function Rankings() {
                           </button>
                           <button
                             type="button"
-                            onClick={handlePrintWallPoster}
+                            onClick={handlePrintBracket}
                             className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
                           >
                             <Printer className="h-4 w-4 text-gray-700" />
-                            Imprimir cartel
+                            Imprimir llave
                           </button>
                           <button
                             type="button"
