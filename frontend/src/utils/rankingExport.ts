@@ -446,8 +446,8 @@ function matrixSheetXml(rows: any[], tournaments: ExcelTournamentCol[]): string 
   cols.forEach((t, i) => {
     const start = 4 + i * 5
     const title = [fmtDate(t.tournament_date), t.tournament_name].filter(Boolean).join(' — ')
-    row1.push(xlsxCell(start, 1, title || `Torneo ${i + 1}`, 2))
-    sub.forEach((label, j) => row2.push(xlsxCell(start + j, 2, label, 3)))
+    row1.push(xlsxCell(start, 1, title || `Torneo ${i + 1}`, 7))
+    sub.forEach((label, j) => row2.push(xlsxCell(start + j, 2, label, j === 0 ? 8 : 3)))
   })
 
   const data = (rows || []).map((r, idx) => {
@@ -472,7 +472,8 @@ function matrixSheetXml(rows: any[], tournaments: ExcelTournamentCol[]): string 
       values.forEach((v, j) => {
         const empty = v === '' || v == null
         const num = !empty && Number.isFinite(Number(v)) ? Number(v) : ''
-        cells.push(xlsxCell(start + j, excelRow, empty ? '' : num === '' ? String(v) : num, played ? style : 5))
+        const colStyle = j === 0 ? (played && counts ? 10 : 9) : (played ? style : 5)
+        cells.push(xlsxCell(start + j, excelRow, empty ? '' : num === '' ? String(v) : num, colStyle))
       })
     })
     return `<row r="${excelRow}">${cells.join('')}</row>`
@@ -503,9 +504,12 @@ const XLSX_STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <fill><patternFill patternType="solid"><fgColor rgb="FFE5E7EB"/></patternFill></fill>
 <fill><patternFill patternType="solid"><fgColor rgb="FFD6EAF8"/></patternFill></fill>
 </fills>
-<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+<borders count="2">
+<border><left/><right/><top/><bottom/><diagonal/></border>
+<border><left style="medium"><color rgb="FF1F2937"/></left><right/><top/><bottom/><diagonal/></border>
+</borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="7">
+<cellXfs count="11">
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
 <xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
 <xf numFmtId="0" fontId="1" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
@@ -513,6 +517,10 @@ const XLSX_STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="left"/></xf>
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="center"/></xf>
 <xf numFmtId="0" fontId="0" fillId="4" borderId="0" xfId="0" applyFill="1" applyAlignment="1"><alignment horizontal="center"/></xf>
+<xf numFmtId="0" fontId="1" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center"/></xf>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="center"/></xf>
+<xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center"/></xf>
 </cellXfs>
 </styleSheet>`
 
@@ -644,4 +652,166 @@ export async function exportRankingImageForWhatsApp(params: {
     sections: params.sections,
   })
   downloadBlob(blob, params.fileName)
+}
+
+export type WallPosterSheet = {
+  title: string
+  subtitle: string
+  rows: any[]
+  tournaments: ExcelTournamentCol[]
+}
+
+function posterNum(v: unknown): string {
+  if (v === null || v === undefined || v === '') return ''
+  const n = Number(v)
+  return Number.isFinite(n) ? String(n) : escXml(v)
+}
+
+function wallPosterHtml(params: {
+  year: number
+  clubName: string
+  countingRounds: number
+  sheets: WallPosterSheet[]
+}): string {
+  const pages = params.sheets
+    .filter((s) => (s.rows || []).length)
+    .map((sheet) => {
+      const cols = collectTournamentCols(sheet.rows, sheet.tournaments)
+      const groupHeads = cols
+        .map((t) => {
+          const title = [fmtDate(t.tournament_date), t.tournament_name].filter(Boolean).join(' — ')
+          return `<th class="tname sep" colspan="5">${escXml(title || 'Torneo')}</th>`
+        })
+        .join('')
+      const sub = cols
+        .map(() =>
+          ['HCP', 'Ida', 'Vuelta', 'Gross', 'Neto']
+            .map((label, j) => `<th class="${j === 0 ? 'sep' : ''}">${label}</th>`)
+            .join('')
+        )
+        .join('')
+      const body = sheet.rows
+        .map((r, idx) => {
+          const details = roundDetailsOf(r)
+          const byId = new Map<number, any>()
+          for (const d of details) byId.set(Number(d.tournament_id), d)
+          const cells = cols
+            .map((t) => {
+              const d = byId.get(t.tournament_id)
+              const played = d && (d.total_gross != null || d.total_net != null || d.front_nine != null)
+              const counts = played && d.counts !== false
+              const values = played
+                ? [d.handicap_used, d.front_nine, d.back_nine, d.total_gross, d.total_net]
+                : ['', '', '', '', '']
+              return values
+                .map((v, j) => {
+                  const cls = [j === 0 ? 'sep' : '', counts ? 'hl' : ''].filter(Boolean).join(' ')
+                  return `<td class="${cls}">${posterNum(v)}</td>`
+                })
+                .join('')
+            })
+            .join('')
+          return `<tr>
+<td class="pos">${idx + 1}</td>
+<td class="name">${escXml(r.player_name ?? '')}</td>
+<td>${escXml(r.member_number ?? '')}</td>
+${cells}
+<td class="sep total">${posterNum(r.total_gross)}</td>
+<td class="total">${posterNum(r.total_net)}</td>
+</tr>`
+        })
+        .join('')
+      return `<section class="sheet">
+<header>
+  <div>
+    <p class="kicker">${escXml(params.clubName || 'Club')}</p>
+    <h1>Ranking anual ${params.year}</h1>
+  </div>
+  <div class="badge">${escXml(sheet.title)}</div>
+</header>
+<p class="sub">${escXml(sheet.subtitle)}</p>
+<table>
+  <colgroup>
+    <col class="c-pos"/><col class="c-name"/><col class="c-mat"/>
+    ${cols.map(() => '<col/><col/><col/><col/><col/>').join('')}
+    <col class="c-tot"/><col class="c-tot"/>
+  </colgroup>
+  <thead>
+    <tr>
+      <th rowspan="2">Pos</th>
+      <th rowspan="2" class="name">Jugador</th>
+      <th rowspan="2">Matrícula</th>
+      ${groupHeads}
+      <th class="sep tname" colspan="2">Total</th>
+    </tr>
+    <tr>${sub}<th class="sep">Gross</th><th>Neto</th></tr>
+  </thead>
+  <tbody>${body}</tbody>
+</table>
+<footer>
+  <span>Celeste: las ${params.countingRounds} tarjetas que computan. La línea vertical separa cada torneo.</span>
+  <span>Orden oficial del grupo</span>
+</footer>
+</section>`
+    })
+    .join('')
+
+  return `<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<title>Ranking anual ${params.year}</title>
+<style>
+  @page { size: A4 landscape; margin: 7mm; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; color: #111827; font-family: Calibri, "Segoe UI", Arial, sans-serif; }
+  .sheet { width: 283mm; min-height: 196mm; page-break-after: always; display: flex; flex-direction: column; }
+  .sheet:last-child { page-break-after: auto; }
+  header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2.5px solid #14532d; padding-bottom: 3mm; margin-bottom: 2mm; }
+  .kicker { margin: 0; font-size: 8pt; letter-spacing: 0.12em; text-transform: uppercase; color: #14532d; font-weight: 700; }
+  h1 { margin: 1mm 0 0; font-size: 16pt; font-weight: 700; letter-spacing: 0.01em; }
+  .badge { font-size: 14pt; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #14532d; border: 1.5px solid #14532d; padding: 1.5mm 4mm; }
+  .sub { margin: 0 0 2mm; font-size: 8.5pt; color: #4b5563; }
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 7.5pt; }
+  th, td { border-bottom: 0.4pt solid #e5e7eb; padding: 1.1mm 0.6mm; text-align: center; vertical-align: middle; }
+  thead th { background: #f3f4f6; font-size: 6.5pt; font-weight: 700; color: #374151; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .tname { font-size: 7pt; line-height: 1.15; }
+  .name { text-align: left; font-weight: 600; overflow: hidden; }
+  .pos { font-weight: 700; }
+  .sep { border-left: 1.25pt solid #1f2937; }
+  .hl { background: #D6EAF8; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .total { font-weight: 700; }
+  .c-pos { width: 8mm; }
+  .c-name { width: 42mm; }
+  .c-mat { width: 16mm; }
+  .c-tot { width: 12mm; }
+  footer { margin-top: auto; padding-top: 2mm; display: flex; justify-content: space-between; font-size: 7.5pt; color: #6b7280; border-top: 0.4pt solid #e5e7eb; }
+  @media screen {
+    body { background: #e5e7eb; padding: 12px; }
+    .sheet { background: white; margin: 0 auto 12px; padding: 7mm; box-shadow: 0 1px 4px rgba(0,0,0,.12); }
+  }
+</style>
+</head>
+<body>
+${pages || '<p>No hay jugadores para imprimir.</p>'}
+<script>window.addEventListener('load', function () { setTimeout(function () { window.print() }, 200) })</script>
+</body>
+</html>`
+}
+
+/** Cartel A4 horizontal: una página por grupo, para imprimir y pegar. */
+export function printAnnualWallPoster(params: {
+  year: number
+  clubName: string
+  countingRounds: number
+  sheets: WallPosterSheet[]
+}) {
+  const html = wallPosterHtml(params)
+  const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }))
+  const w = window.open(url, '_blank')
+  if (!w) {
+    URL.revokeObjectURL(url)
+    throw new Error('El navegador bloqueó la ventana de impresión')
+  }
+  setTimeout(() => URL.revokeObjectURL(url), 60000)
 }

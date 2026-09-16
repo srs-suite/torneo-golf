@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, ChevronDown, Download, FileSpreadsheet, ListChecks, Lock, Trophy, Unlock, UserCog } from 'lucide-react'
+import { ArrowLeft, ChevronDown, Download, FileSpreadsheet, ListChecks, Lock, Printer, Trophy, Unlock, UserCog } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { tournamentService } from '@/services/tournamentService'
+import { useClub } from '@/hooks/useClubs'
 import { useTournaments } from '@/hooks/useTournaments'
 import { useUserPermissions } from '@/hooks/useUserPermissions'
 import {
   exportAnnualRankingsExcel,
+  printAnnualWallPoster,
   shareRankingImageForWhatsApp,
   exportTournamentRankingsExcel,
   type WhatsAppShareResult,
@@ -251,6 +253,7 @@ export default function Rankings() {
   const { clubId } = useParams<{ clubId: string }>()
   const navigate = useNavigate()
   const clubIdNum = clubId ? parseInt(clubId) : 0
+  const { data: club } = useClub(clubIdNum)
 
   const { data: tournaments = [] } = useTournaments(clubIdNum)
   const { permissions, isAdmin } = useUserPermissions(clubId)
@@ -470,6 +473,33 @@ export default function Rankings() {
       }
     } catch {
       toast.error('No se pudo exportar a Excel')
+    }
+  }
+
+  const handlePrintWallPoster = () => {
+    if (!isFinal) return
+    try {
+      printAnnualWallPoster({
+        year: annual?.year || year,
+        clubName: club?.course_name || 'Club',
+        countingRounds: rules.counting_rounds,
+        sheets: [
+          {
+            title: 'Scratch',
+            subtitle: `Mejores ${rules.counting_rounds} tarjetas por Gross. Primeros ${rules.scratch_cut}.`,
+            rows: scratchRows,
+            tournaments: rankingExcelTournaments,
+          },
+          {
+            title: 'Handicap',
+            subtitle: `Siguientes ${rules.handicap_cut} por Gross, ordenados por neto de las ${rules.counting_rounds} tarjetas que computan.`,
+            rows: handicapRows,
+            tournaments: rankingExcelTournaments,
+          },
+        ],
+      })
+    } catch {
+      toast.error('No se pudo abrir la impresión. Permití ventanas emergentes.')
     }
   }
 
@@ -927,6 +957,14 @@ export default function Rankings() {
                           >
                             <FileSpreadsheet className="h-4 w-4 text-green-700" />
                             Planilla por torneos
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handlePrintWallPoster}
+                            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
+                          >
+                            <Printer className="h-4 w-4 text-gray-700" />
+                            Imprimir cartel
                           </button>
                           <button
                             type="button"
