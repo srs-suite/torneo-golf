@@ -2073,10 +2073,17 @@ async function getAnnualRankings(clubId, year) {
                 s.front_nine,
                 s.back_nine
             FROM members m
-            INNER JOIN tournament_participants tp ON m.member_id = tp.member_id
-            INNER JOIN tournaments t ON tp.tournament_id = t.tournament_id
-                AND COALESCE(t.is_ranking_event, 0) = 1
+            INNER JOIN tournaments t ON COALESCE(t.is_ranking_event, 0) = 1
                 AND t.course_id = ?
+            INNER JOIN tournament_participants tp ON tp.participation_id = (
+                SELECT tp2.participation_id
+                FROM tournament_participants tp2
+                WHERE tp2.member_id = m.member_id
+                  AND tp2.tournament_id = t.tournament_id
+                  AND tp2.player_type IN ('member', 'visitor')
+                ORDER BY tp2.participation_id DESC
+                LIMIT 1
+            )
             INNER JOIN scorecards s ON s.tournament_id = tp.tournament_id
                 AND s.member_id = tp.member_id
                 AND s.total_gross > 0
@@ -8283,27 +8290,41 @@ async function getScorecardsByTournament(clubId, tournamentId, includeDidNotPres
         ? 'WHERE s.tournament_id = ?' 
         : 'WHERE s.tournament_id = ? AND (s.did_not_present = 0 OR s.did_not_present IS NULL)';
     
+    const sealedParticipantSql = `
+        tp2.tournament_id = s.tournament_id
+        AND (
+            (s.member_id IS NOT NULL AND tp2.member_id = s.member_id
+             AND tp2.player_type IN ('member', 'visitor'))
+            OR (s.external_player_id IS NOT NULL
+                AND tp2.external_player_id = s.external_player_id
+                AND tp2.player_type = 'external')
+        )`;
+    const latestHandicapUsedSql = `(SELECT tp2.handicap_used FROM tournament_participants tp2
+        WHERE ${sealedParticipantSql}
+        ORDER BY tp2.participation_id DESC LIMIT 1)`;
+    const latestIndexUsedSql = `(SELECT tp2.handicap_index_used FROM tournament_participants tp2
+        WHERE ${sealedParticipantSql}
+        ORDER BY tp2.participation_id DESC LIMIT 1)`;
     const query = `
         SELECT 
             s.*,
             COALESCE(CONCAT(m.first_name, ' ', m.last_name), ep.full_name) as player_name,
-            COALESCE(tp.handicap_index_used, m.handicap_index, ep.handicap_index) as handicap_index,
-            COALESCE(tp.handicap_used, m.handicap_local, ep.handicap_local) as handicap_local,
-            COALESCE(tp.handicap_index_used, m.handicap_index, ep.handicap_index) as handicap_index_used_for_net,
+            COALESCE(${latestIndexUsedSql}, m.handicap_index, ep.handicap_index) as handicap_index,
+            COALESCE(${latestHandicapUsedSql}, m.handicap_local, ep.handicap_local) as handicap_local,
+            COALESCE(${latestIndexUsedSql}, m.handicap_index, ep.handicap_index) as handicap_index_used_for_net,
             COALESCE(m.gender, ep.gender) as gender,
             m.member_number,
             t.tournament_name,
             gc.club_name as club_name,
-            tp.player_type,
-            tp.handicap_used AS participant_handicap_used
+            (SELECT tp2.player_type FROM tournament_participants tp2
+             WHERE ${sealedParticipantSql}
+             ORDER BY tp2.participation_id DESC LIMIT 1) as player_type,
+            ${latestHandicapUsedSql} AS participant_handicap_used
         FROM scorecards s
         LEFT JOIN members m ON s.member_id = m.member_id
         LEFT JOIN external_players ep ON s.external_player_id = ep.external_id
         LEFT JOIN tournaments t ON s.tournament_id = t.tournament_id
         LEFT JOIN clubs gc ON s.course_id = gc.club_id
-        LEFT JOIN tournament_participants tp ON tp.tournament_id = s.tournament_id 
-            AND ((tp.member_id = s.member_id AND s.member_id IS NOT NULL) 
-                OR (tp.external_player_id = s.external_player_id AND s.external_player_id IS NOT NULL))
         ${whereClause}
         ORDER BY s.total_gross ASC, s.created_at DESC
     `;

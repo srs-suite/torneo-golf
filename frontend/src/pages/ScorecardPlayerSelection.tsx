@@ -22,16 +22,18 @@ function firstHcpNumber(...values: unknown[]): number | null {
   return null
 }
 
-/** Handicap del torneo (sellado), no el de la ficha actual del socio. */
+/** Handicap del torneo (el de la tarjeta), no el de la ficha actual del socio. */
 function tournamentPlayingHcp(participant: any, scorecard?: any): number | null {
-  return (
-    firstHcpNumber(
-      scorecard?.participant_handicap_used,
-      scorecard?.handicap_used,
-      participant?.handicap_used,
-      scorecard?.handicap_local
-    ) ?? participantPlayingHcp(participant)
+  const sealed = firstHcpNumber(
+    scorecard?.participant_handicap_used,
+    participant?.handicap_used,
+    scorecard?.handicap_used
   )
+  if (sealed != null) return sealed
+  if (scorecard) {
+    return firstHcpNumber(scorecard.handicap_local)
+  }
+  return participantPlayingHcp(participant)
 }
 
 function tournamentWhIndex(participant: any, scorecard?: any): number | null {
