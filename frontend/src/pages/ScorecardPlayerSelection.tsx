@@ -13,6 +13,38 @@ import { scorecardPlayerUrlKey } from '@/utils/scorecardPlayerKey';
 // Score styling moved to shared utility
 
 /** Misma clave que al indexar scorecards por member_id / external_player_id (no usar participant_id para socios). */
+function firstHcpNumber(...values: unknown[]): number | null {
+  for (const raw of values) {
+    if (raw == null || raw === '') continue
+    const n = Number(raw)
+    if (Number.isFinite(n)) return n
+  }
+  return null
+}
+
+/** Handicap del torneo (sellado), no el de la ficha actual del socio. */
+function tournamentPlayingHcp(participant: any, scorecard?: any): number | null {
+  return (
+    firstHcpNumber(
+      scorecard?.participant_handicap_used,
+      scorecard?.handicap_used,
+      participant?.handicap_used,
+      scorecard?.handicap_local
+    ) ?? participantPlayingHcp(participant)
+  )
+}
+
+function tournamentWhIndex(participant: any, scorecard?: any): number | null {
+  return (
+    firstHcpNumber(
+      scorecard?.handicap_index_used_for_net,
+      scorecard?.handicap_index_used,
+      participant?.handicap_index_used,
+      scorecard?.handicap_index
+    ) ?? participantWhIndex(participant)
+  )
+}
+
 function participantToScorecardKey(participant: any): string | null {
   const pt = String(participant?.player_type || '').toLowerCase()
   if (pt === 'external') {
@@ -458,9 +490,17 @@ export default function ScorecardPlayerSelection() {
           player_type: participantData?.player_type || 'member',
           player_club: participantData?.player_club || 'Sin club',
           handicap_local:
-            (scRow.handicap_local as number | undefined) ?? participantPlayingHcp(participantData as any) ?? undefined,
+            (scRow.participant_handicap_used as number | undefined) ??
+            (scRow.handicap_used as number | undefined) ??
+            (scRow.handicap_local as number | undefined) ??
+            tournamentPlayingHcp(participantData) ??
+            undefined,
           handicap_index:
-            (scRow.handicap_index as number | undefined) ?? participantWhIndex(participantData as any) ?? undefined,
+            (scRow.handicap_index_used_for_net as number | undefined) ??
+            (scRow.handicap_index_used as number | undefined) ??
+            (scRow.handicap_index as number | undefined) ??
+            tournamentWhIndex(participantData) ??
+            undefined,
           scores: [] as any[],
         }
 
@@ -895,8 +935,8 @@ export default function ScorecardPlayerSelection() {
                               {participant.player_type === 'external' ? 'Externo' : 'Socio'}
                             </span>
                             {(() => {
-                              const wh = participantWhIndex(participant)
-                              const play = participantPlayingHcp(participant)
+                              const wh = tournamentWhIndex(participant, participantScorecard)
+                              const play = tournamentPlayingHcp(participant, participantScorecard)
                               if (play == null && wh == null) return null
                               return (
                                 <span>HCP: {formatHcpForDisplay(play, wh)}</span>
@@ -920,8 +960,9 @@ export default function ScorecardPlayerSelection() {
                             {/* Score Summary for players with loaded scorecards - inline */}
                             {hasScorecard && participantScorecard && (() => {
                               const totalGolpes = (participantScorecard as any).total_gross || 0;
-                              const wh = participantWhIndex(participant)
-                              const hcp = Math.round(participantPlayingHcp(participant) ?? wh ?? 0)
+                              const wh = tournamentWhIndex(participant, participantScorecard)
+                              const play = tournamentPlayingHcp(participant, participantScorecard)
+                              const hcp = Math.round(play ?? wh ?? 0)
                               const neto = computeNetScore(totalGolpes, hcp, wh)
                               
                               return (
@@ -935,7 +976,7 @@ export default function ScorecardPlayerSelection() {
                                   <div className="text-center">
                                     <span className="text-gray-500">HCP:</span>
                                     <span className="font-bold text-gray-900 ml-1">
-                                      {formatHcpForDisplay(participantPlayingHcp(participant), wh)}
+                                      {formatHcpForDisplay(play, wh)}
                                     </span>
                                   </div>
                                   <div className="text-center">
