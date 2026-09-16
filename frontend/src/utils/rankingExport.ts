@@ -696,6 +696,75 @@ function bracketRoundLabels(size: number): string[] {
   return ['Octavos de final', 'Cuartos de final', 'Semifinales', 'Final', 'Campeón']
 }
 
+function drawBracketSvg(size: number, rows: any[]): string {
+  const pairs = firstRoundPairs(size)
+  const slots = pairs.flatMap(([a, b]) => [a, b])
+  const W = 1080
+  const H = size <= 8 ? 520 : 640
+  const rounds = Math.round(Math.log2(size))
+  const cols = rounds + 1
+  const colW = (W - 16) / cols
+  const boxW = Math.min(size <= 8 ? 188 : 150, colW - 26)
+  const boxH = size <= 8 ? 32 : 20
+  const gap = size <= 8 ? 8 : 4
+  const font = size <= 8 ? 13 : 9
+  const top = 6
+  const bodyH = H - 12
+  const xs = Array.from({ length: cols }, (_, i) => 8 + i * colW)
+  const parts: string[] = []
+  const nameOf = (seed: number) => {
+    const raw = String(rows[seed - 1]?.player_name ?? '').trim()
+    return escXml(raw.length > (size <= 8 ? 22 : 18) ? `${raw.slice(0, size <= 8 ? 21 : 17)}…` : raw)
+  }
+  const drawBox = (x: number, cy: number, seed: number | null, name: string) => {
+    const y = cy - boxH / 2
+    parts.push(`<rect x="${x}" y="${y}" width="${boxW}" height="${boxH}" rx="3" fill="#ffffff" stroke="#d7e0ea"/>`)
+    if (seed != null) {
+      const s = boxH - 10
+      parts.push(`<rect x="${x + 5}" y="${y + 5}" width="${s}" height="${s}" rx="2" fill="#eef3f8"/>`)
+      parts.push(`<text x="${x + 5 + s / 2}" y="${cy}" text-anchor="middle" dominant-baseline="middle" font-size="${font - 1}" font-weight="700" fill="#16324f">${seed}</text>`)
+      parts.push(`<text x="${x + s + 12}" y="${cy}" dominant-baseline="middle" font-size="${font}" fill="#1e293b">${name}</text>`)
+    }
+  }
+  const link = (x1: number, y1: number, y2: number, x2: number) => {
+    const mid = x1 + (x2 - x1) * 0.55
+    parts.push(`<path d="M ${x1} ${y1} H ${mid} V ${y2} M ${x1} ${y2} H ${mid} M ${mid} ${(y1 + y2) / 2} H ${x2}" fill="none" stroke="#16324f" stroke-width="1.6"/>`)
+  }
+
+  let centers = slots.map((_, i) => top + (bodyH / slots.length) * i + bodyH / slots.length / 2)
+  slots.forEach((seed, i) => drawBox(xs[0], centers[i], seed, nameOf(seed)))
+
+  for (let round = 1; round < rounds; round++) {
+    const matchCount = centers.length / 2
+    const next: number[] = []
+    for (let m = 0; m < matchCount; m++) {
+      const y1 = centers[m * 2]
+      const y2 = centers[m * 2 + 1]
+      const mid = (y1 + y2) / 2
+      const a = mid - boxH / 2 - gap / 2
+      const b = mid + boxH / 2 + gap / 2
+      next.push(a, b)
+      link(xs[round - 1] + boxW, y1, y2, xs[round])
+      drawBox(xs[round], a, null, '')
+      drawBox(xs[round], b, null, '')
+    }
+    centers = next
+  }
+
+  const finalY = centers.length === 2 ? (centers[0] + centers[1]) / 2 : centers[0]
+  if (centers.length === 2) {
+    link(xs[rounds - 1] + boxW, centers[0], centers[1], xs[rounds])
+  }
+  const tagW = 92
+  const tagH = 30
+  const x = xs[rounds]
+  parts.push(`<rect x="${x}" y="${finalY - tagH / 2}" width="${tagW}" height="${tagH}" fill="#16324f"/>`)
+  parts.push(`<text x="${x + tagW / 2}" y="${finalY}" text-anchor="middle" dominant-baseline="middle" font-size="11" font-weight="800" fill="#ffffff" letter-spacing="0.5">CAMPEÓN</text>`)
+  parts.push(`<rect x="${x + tagW + 10}" y="${finalY - boxH / 2}" width="${Math.max(70, boxW - 50)}" height="${boxH}" rx="3" fill="#ffffff" stroke="#d7e0ea"/>`)
+
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${size <= 8 ? 150 : 156}mm" xmlns="http://www.w3.org/2000/svg" font-family="Calibri, Segoe UI, Arial, sans-serif">${parts.join('')}</svg>`
+}
+
 function bracketPageHtml(sheet: {
   title: string
   size: number
@@ -705,54 +774,21 @@ function bracketPageHtml(sheet: {
   throughLabel: string
 }): string {
   const size = sheet.size <= 8 ? 8 : 16
-  const pairs = firstRoundPairs(size)
-  const rounds = Math.log2(size)
   const labels = bracketRoundLabels(size)
-  const player = (seed: number) => {
-    const row = sheet.rows[seed - 1]
-    const name = String(row?.player_name ?? '').trim()
-    return { seed, name }
-  }
-  const firstRound = pairs
-    .map(([a, b]) => {
-      const pa = player(a)
-      const pb = player(b)
-      return `<div class="match">
-        <div class="slot">${pa.name ? `<span class="seed">${pa.seed}</span><span class="nm">${escXml(pa.name)}</span>` : `<span class="seed">${pa.seed}</span>`}</div>
-        <div class="slot">${pb.name ? `<span class="seed">${pb.seed}</span><span class="nm">${escXml(pb.name)}</span>` : `<span class="seed">${pb.seed}</span>`}</div>
-      </div>`
-    })
-    .join('')
-  const later = Array.from({ length: rounds - 1 }, (_, roundIndex) => {
-    const matchCount = size / 2 ** (roundIndex + 2)
-    const matches = Array.from({ length: matchCount }, () => `<div class="match empty"><div class="slot"></div><div class="slot"></div></div>`).join('')
-    return `<div class="round">${matches}</div>`
-  }).join('')
-  const compact = size > 8 ? ' compact' : ''
-  return `<section class="sheet${compact}">
+  return `<section class="sheet">
     <header class="banner">
       <div>
         <h1>TORNEO FINAL</h1>
-        <p>Llave de eliminación directa – ${size} jugadores</p>
+        <p>${escXml(sheet.title)} · Llave de eliminación directa – ${size} jugadores</p>
       </div>
       <div class="until">
         <span>HASTA EL</span>
-        <strong>${escXml(sheet.throughLabel)}</strong>
+        <strong>${escXml(sheet.throughLabel || '—')}</strong>
       </div>
     </header>
-    <p class="meta">${escXml(sheet.clubName || 'Club')} · ${escXml(sheet.title)} · Ranking ${sheet.year}</p>
-    <div class="labels">${labels.map((label) => `<span>${label}</span>`).join('')}</div>
-    <div class="bracket">
-      <div class="round">${firstRound}</div>
-      ${later}
-      <div class="round champ-col">
-        <div class="champ">
-          <div class="champ-tag">Campeón</div>
-          <div class="champ-name"></div>
-        </div>
-      </div>
-    </div>
-    <p class="foot">Completá los ganadores en los casilleros vacíos. Cruces: 1 vs ${size}, 4 vs 5 en el lado alto.</p>
+    <p class="meta">${escXml(sheet.clubName || 'Club')} · Ranking ${sheet.year}</p>
+    <div class="labels cols-${labels.length}">${labels.map((label) => `<span>${label}</span>`).join('')}</div>
+    ${drawBracketSvg(size, sheet.rows)}
   </section>`
 }
 
@@ -790,25 +826,10 @@ function bracketHtml(params: {
   .until span { display: block; font-size: 8pt; letter-spacing: 0.12em; }
   .until strong { font-size: 16pt; }
   .meta { margin: 2.5mm 0 1.5mm; font-size: 9pt; color: #475569; letter-spacing: 0.04em; text-transform: uppercase; }
-  .labels { display: flex; gap: 3mm; margin-bottom: 2mm; }
-  .labels span { flex: 1; text-align: center; background: #e8eef5; color: #334155; font-size: 8pt; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 1.4mm 1mm; border-radius: 2px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .labels span:last-child { flex: 0.7; }
-  .bracket { flex: 1; display: flex; min-height: 150mm; }
-  .round { flex: 1; display: flex; flex-direction: column; justify-content: space-around; }
-  .match { position: relative; display: flex; flex-direction: column; justify-content: center; margin: 1.2mm 8mm 1.2mm 0; }
-  .match::after { content: ""; position: absolute; right: -8mm; top: 22%; bottom: 22%; width: 8mm; border: 1.6px solid #16324f; border-left: 0; }
-  .champ-col { justify-content: center; flex: 0.85; }
-  .slot { display: flex; align-items: center; gap: 1.5mm; min-height: 8.5mm; margin: 0.8mm 0; padding: 0 1.5mm; border: 1px solid #d5dee8; border-radius: 2px; background: white; font-size: 9pt; }
-  .seed { flex: 0 0 5.5mm; height: 5.5mm; display: inline-flex; align-items: center; justify-content: center; background: #eef3f8; color: #16324f; font-size: 8pt; font-weight: 700; border-radius: 2px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .nm { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  .compact .slot { min-height: 5.6mm; font-size: 7.4pt; margin: 0.35mm 0; }
-  .compact .seed { flex-basis: 4.6mm; height: 4.6mm; font-size: 7pt; }
-  .compact .match { margin-right: 6mm; }
-  .compact .match::after { right: -6mm; width: 6mm; }
-  .champ { display: flex; align-items: center; gap: 2mm; }
-  .champ-tag { background: #16324f; color: white; font-weight: 800; font-size: 8pt; letter-spacing: 0.08em; text-transform: uppercase; padding: 2.2mm 3mm; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .champ-name { flex: 1; min-height: 9mm; border: 1px solid #d5dee8; border-radius: 2px; background: white; }
-  .foot { margin: 2mm 0 0; font-size: 7.5pt; color: #64748b; }
+  .labels { display: grid; gap: 2mm; margin: 0 0 2mm; }
+  .cols-4 { grid-template-columns: 1.15fr 1fr 1fr 1.05fr; }
+  .cols-5 { grid-template-columns: 1.15fr 1fr 1fr 1fr 1.05fr; }
+  .labels span { text-align: center; background: #e8eef5; color: #334155; font-size: 8pt; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; padding: 1.6mm 1mm; border-radius: 3px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   @media screen {
     body { background: #e5e7eb; padding: 12px; }
     .sheet { background: white; margin: 0 auto 12px; box-shadow: 0 1px 4px rgba(0,0,0,.12); }
