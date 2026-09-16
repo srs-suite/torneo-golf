@@ -1890,12 +1890,12 @@ async function setAnnualRankingYearFinalized(clubId, year, finalize, adminId = n
     return getAnnualRankingYearState(courseId, yearInt);
 }
 
-/** Neto por ronda (mismo criterio que el front / ranking por torneo). */
-function annualRoundNet(totalGross, handicapIndex, handicapLocal) {
+/** Neto = gross guardado − handicap de juego de ESA tarjeta (no el de la ficha de hoy). */
+function annualRoundNet(totalGross, handicapIndex, handicapPlay) {
     const gross = Number(totalGross) || 0;
     const hcp = Number(
-        handicapLocal != null && handicapLocal !== ''
-            ? handicapLocal
+        handicapPlay != null && handicapPlay !== ''
+            ? handicapPlay
             : handicapIndex != null && handicapIndex !== ''
               ? handicapIndex
               : 0
@@ -1906,6 +1906,17 @@ function annualRoundNet(totalGross, handicapIndex, handicapLocal) {
         return gross + Math.abs(rounded);
     }
     return gross - rounded;
+}
+
+function snapshotHandicapPlay(row) {
+    if (row.handicap_used != null && row.handicap_used !== '') return row.handicap_used;
+    if (row.handicap_index_used != null && row.handicap_index_used !== '') return row.handicap_index_used;
+    return null;
+}
+
+function snapshotHandicapIndex(row) {
+    if (row.handicap_index_used != null && row.handicap_index_used !== '') return row.handicap_index_used;
+    return row.member_handicap_index;
 }
 
 /**
@@ -2025,7 +2036,7 @@ async function setAnnualRankingTournamentPicks(clubId, year, tournamentIds) {
  * Ranking anual del club.
  *
  * - general_* : todos los socios con ≥1 tarjeta; suma de TODAS las rondas (como el acumulado previo).
- *   Neto general: quienes tienen índice WHS (incluye también a quienes van arriba en Gross).
+ *   Neto: gross guardado − handicap sellado de cada torneo (handicap_used), no el de la ficha de hoy.
  * - scratch / handicap : reglas finales (mín. N rondas, best-of-M por Gross, cortes Scratch/HCP).
  * - without_hcp / with_hcp : en provisorio = general; en final = scratch / handicap (compat. portal).
  */
@@ -2052,8 +2063,9 @@ async function getAnnualRankings(clubId, year) {
                 m.member_id,
                 CONCAT(m.first_name, ' ', m.last_name) AS player_name,
                 m.member_number,
-                m.handicap_index,
-                m.handicap_local,
+                m.handicap_index AS member_handicap_index,
+                tp.handicap_used,
+                tp.handicap_index_used,
                 t.tournament_id,
                 t.tournament_name,
                 t.tournament_date,
@@ -2082,8 +2094,7 @@ async function getAnnualRankings(clubId, year) {
                     member_id: mid,
                     player_name: row.player_name,
                     member_number: row.member_number,
-                    handicap_index: row.handicap_index,
-                    handicap_local: row.handicap_local,
+                    handicap_index: row.member_handicap_index,
                     rounds: []
                 });
             }
@@ -2094,7 +2105,7 @@ async function getAnnualRankings(clubId, year) {
                 tournament_name: row.tournament_name,
                 tournament_date: row.tournament_date,
                 total_gross: gross,
-                total_net: annualRoundNet(gross, row.handicap_index, row.handicap_local)
+                total_net: annualRoundNet(gross, snapshotHandicapIndex(row), snapshotHandicapPlay(row))
             });
         }
 
@@ -2340,10 +2351,10 @@ async function getTournamentRanking(clubId, tournamentId) {
                 : '';
 
         const tournamentNetRowExpr = `(CASE
-                WHEN COALESCE(m.handicap_index, ep.handicap_index) IS NOT NULL
-                    AND COALESCE(m.handicap_index, ep.handicap_index) < 0
-                THEN s.total_gross + ABS(ROUND(COALESCE(m.handicap_local, m.handicap_index, ep.handicap_local, ep.handicap_index, 0)))
-                ELSE s.total_gross - ROUND(COALESCE(m.handicap_local, m.handicap_index, ep.handicap_local, ep.handicap_index, 0))
+                WHEN COALESCE(tp.handicap_index_used, m.handicap_index, ep.handicap_index) IS NOT NULL
+                    AND COALESCE(tp.handicap_index_used, m.handicap_index, ep.handicap_index) < 0
+                THEN s.total_gross + ABS(ROUND(${playHcpExpr}))
+                ELSE s.total_gross - ROUND(${playHcpExpr})
             END)`;
 
         const withHcpQuery = `
@@ -4768,6 +4779,28 @@ async function finalizeTournamentHandicapsSnapshot(courseId, tournamentId) {
             WHERE tp.tournament_id = ?
         `;
         await executeQuery(snap, [tournamentId]);
+        await executeQuery(
+            `UPDATE scorecards s
+             INNER JOIN tournament_participants tp ON tp.tournament_id = s.tournament_id
+                AND (
+                    (s.member_id IS NOT NULL AND tp.member_id = s.member_id)
+                    OR (s.external_player_id IS NOT NULL AND tp.external_player_id = s.external_player_id)
+                )
+             LEFT JOIN members m ON m.member_id = tp.member_id
+             LEFT JOIN external_players ep ON ep.external_id = tp.external_player_id
+             SET s.total_net = CASE
+                WHEN COALESCE(tp.handicap_index_used, m.handicap_index, ep.handicap_index) IS NOT NULL
+                    AND COALESCE(tp.handicap_index_used, m.handicap_index, ep.handicap_index) < 0
+                THEN s.total_gross + ABS(ROUND(COALESCE(
+                    tp.handicap_used, m.handicap_local, m.handicap_index, ep.handicap_local, ep.handicap_index, 0
+                )))
+                ELSE s.total_gross - ROUND(COALESCE(
+                    tp.handicap_used, m.handicap_local, m.handicap_index, ep.handicap_local, ep.handicap_index, 0
+                ))
+             END
+             WHERE s.tournament_id = ? AND s.total_gross > 0`,
+            [tournamentId]
+        );
         await executeQuery(
             `UPDATE tournaments SET handicaps_sealed_at = COALESCE(handicaps_sealed_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP
              WHERE course_id = ? AND tournament_id = ?`,
@@ -8080,6 +8113,29 @@ async function saveScorecard(clubId, tournamentId, scorecardData) {
             .filter(([hole]) => parseInt(hole) > 9)
             .reduce((sum, [, score]) => sum + score, 0);
 
+        let totalNet = 0;
+        if (!did_not_present && totalGross > 0) {
+            const hcpQuery = safeMemberId
+                ? `SELECT tp.handicap_used, tp.handicap_index_used, m.handicap_index AS member_handicap_index
+                   FROM tournament_participants tp
+                   LEFT JOIN members m ON m.member_id = tp.member_id
+                   WHERE tp.tournament_id = ? AND tp.member_id = ?
+                   LIMIT 1`
+                : `SELECT tp.handicap_used, tp.handicap_index_used, ep.handicap_index AS member_handicap_index
+                   FROM tournament_participants tp
+                   LEFT JOIN external_players ep ON ep.external_id = tp.external_player_id
+                   WHERE tp.tournament_id = ? AND tp.external_player_id = ?
+                   LIMIT 1`;
+            const hcpId = safeMemberId || safeExternalPlayerId;
+            try {
+                const { rows: hcpRows } = await executeQuery(hcpQuery, [tournamentId, hcpId]);
+                const hcpRow = hcpRows && hcpRows[0] ? hcpRows[0] : {};
+                totalNet = annualRoundNet(totalGross, snapshotHandicapIndex(hcpRow), snapshotHandicapPlay(hcpRow));
+            } catch (e) {
+                if (!(e && e.code === 'ER_BAD_FIELD_ERROR')) throw e;
+            }
+        }
+
         // Check if scorecard already exists
         const checkQuery = `
             SELECT scorecard_id FROM scorecards 
@@ -8100,7 +8156,7 @@ async function saveScorecard(clubId, tournamentId, scorecardData) {
             
             const updateQuery = `
                 UPDATE scorecards SET
-                    total_gross = ?, front_nine = ?, back_nine = ?,
+                    total_gross = ?, total_net = ?, front_nine = ?, back_nine = ?,
                     holes_completed = ?, entry_method = ?, verified_card = ?,
                     original_archived = ?, entry_notes = ?, entered_by = ?,
                     did_not_present = ?,
@@ -8109,7 +8165,7 @@ async function saveScorecard(clubId, tournamentId, scorecardData) {
             `;
             
             await executeQuery(updateQuery, [
-                totalGross, front9, back9,
+                totalGross, totalNet, front9, back9,
                 holes.length, entry_method, verified_card,
                 original_archived, entry_notes, safeEnteredBy,
                 did_not_present,
@@ -8126,10 +8182,10 @@ async function saveScorecard(clubId, tournamentId, scorecardData) {
             const insertQuery = `
                 INSERT INTO scorecards (
                     tournament_id, member_id, external_player_id, course_id, 
-                    total_gross, front_nine, back_nine,
+                    total_gross, total_net, front_nine, back_nine,
                     holes_completed, entry_method, verified_card,
                     original_archived, entry_notes, entered_by, did_not_present
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
 
             console.log('🔍 SQL Parameters Debug:', {
@@ -8150,7 +8206,7 @@ async function saveScorecard(clubId, tournamentId, scorecardData) {
 
             const result = await executeQuery(insertQuery, [
                 tournamentId, safeMemberId, safeExternalPlayerId, clubId,
-                totalGross, front9, back9,
+                totalGross, totalNet, front9, back9,
                 holes.length, entry_method, verified_card,
                 original_archived, entry_notes, safeEnteredBy, did_not_present
             ]);
