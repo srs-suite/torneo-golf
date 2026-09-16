@@ -1,5 +1,11 @@
 import * as XLSX from 'xlsx'
 
+function cellNum(v: unknown): number | string {
+  if (v === null || v === undefined || v === '') return ''
+  const n = Number(v)
+  return Number.isFinite(n) ? n : String(v)
+}
+
 function countedTournamentsLabel(row: any): string {
   const details = Array.isArray(row?.round_details) ? row.round_details : []
   const counted = details.filter((d: any) => d?.counts !== false)
