@@ -6,10 +6,17 @@ function cellNum(v: unknown): number | string {
   return Number.isFinite(n) ? n : String(v)
 }
 
+function roundDetailsOf(row: any): any[] {
+  if (Array.isArray(row?.round_details) && row.round_details.length) return row.round_details
+  const kept = Array.isArray(row?.kept_tournaments) ? row.kept_tournaments.map((d: any) => ({ ...d, counts: true })) : []
+  const dropped = Array.isArray(row?.dropped_tournaments) ? row.dropped_tournaments.map((d: any) => ({ ...d, counts: false })) : []
+  return [...kept, ...dropped]
+}
+
 function countedTournamentsLabel(row: any): string {
-  const details = Array.isArray(row?.round_details) ? row.round_details : []
+  const details = roundDetailsOf(row)
   const counted = details.filter((d: any) => d?.counts !== false)
-  const source = counted.length ? counted : (Array.isArray(row?.kept_tournaments) ? row.kept_tournaments : [])
+  const source = counted.length ? counted : details
   return source
     .map((d: any) => {
       const date = fmtDate(d?.tournament_date)
@@ -34,7 +41,7 @@ function fmtDate(v: unknown): string {
 function detailRows(rows: any[], includeNet: boolean) {
   const out: Record<string, string | number>[] = []
   for (const r of rows || []) {
-    const details = Array.isArray(r?.round_details) ? [...r.round_details] : []
+    const details = [...roundDetailsOf(r)]
     details.sort((a, b) => {
       const ac = a?.counts === false ? 1 : 0
       const bc = b?.counts === false ? 1 : 0
