@@ -726,34 +726,44 @@ function drawBracketSvg(size: number, rows: any[]): string {
       parts.push(`<text x="${x + s + 12}" y="${cy}" dominant-baseline="middle" font-size="${font}" fill="#1e293b">${name}</text>`)
     }
   }
-  const link = (x1: number, y1: number, y2: number, x2: number) => {
-    const mid = x1 + (x2 - x1) * 0.55
-    parts.push(`<path d="M ${x1} ${y1} H ${mid} V ${y2} M ${x1} ${y2} H ${mid} M ${mid} ${(y1 + y2) / 2} H ${x2}" fill="none" stroke="#16324f" stroke-width="1.6"/>`)
+  const feed = (xRight: number, yTop: number, yBot: number, xDest: number, yDest: number) => {
+    const elbow = xRight + (xDest - xRight) * 0.42
+    const yMid = (yTop + yBot) / 2
+    const join = elbow + (xDest - elbow) * 0.55
+    parts.push(
+      `<path d="M ${xRight} ${yTop} H ${elbow} V ${yBot} M ${xRight} ${yBot} H ${elbow} M ${elbow} ${yMid} H ${join} V ${yDest} H ${xDest}" fill="none" stroke="#16324f" stroke-width="1.6"/>`
+    )
   }
 
-  let centers = slots.map((_, i) => top + (bodyH / slots.length) * i + bodyH / slots.length / 2)
-  slots.forEach((seed, i) => drawBox(xs[0], centers[i], seed, nameOf(seed)))
+  const centers0 = slots.map((_, i) => top + (bodyH / slots.length) * i + bodyH / slots.length / 2)
+  slots.forEach((seed, i) => drawBox(xs[0], centers0[i], seed, nameOf(seed)))
+
+  let matches: Array<{ y1: number; y2: number }> = []
+  for (let i = 0; i < centers0.length; i += 2) {
+    matches.push({ y1: centers0[i], y2: centers0[i + 1] })
+  }
 
   for (let round = 1; round < rounds; round++) {
-    const matchCount = centers.length / 2
-    const next: number[] = []
-    for (let m = 0; m < matchCount; m++) {
-      const y1 = centers[m * 2]
-      const y2 = centers[m * 2 + 1]
-      const mid = (y1 + y2) / 2
-      const a = mid - boxH / 2 - gap / 2
-      const b = mid + boxH / 2 + gap / 2
-      next.push(a, b)
-      link(xs[round - 1] + boxW, y1, y2, xs[round])
+    const next: Array<{ y1: number; y2: number }> = []
+    for (let m = 0; m < matches.length; m += 2) {
+      const upper = matches[m]
+      const lower = matches[m + 1]
+      const span = ((upper.y1 + upper.y2) / 2 + (lower.y1 + lower.y2) / 2) / 2
+      const a = span - boxH / 2 - gap / 2
+      const b = span + boxH / 2 + gap / 2
+      feed(xs[round - 1] + boxW, upper.y1, upper.y2, xs[round], a)
+      feed(xs[round - 1] + boxW, lower.y1, lower.y2, xs[round], b)
       drawBox(xs[round], a, null, '')
       drawBox(xs[round], b, null, '')
+      next.push({ y1: a, y2: b })
     }
-    centers = next
+    matches = next
   }
 
-  const finalY = centers.length === 2 ? (centers[0] + centers[1]) / 2 : centers[0]
-  if (centers.length === 2) {
-    link(xs[rounds - 1] + boxW, centers[0], centers[1], xs[rounds])
+  const last = matches[0]
+  const finalY = last ? (last.y1 + last.y2) / 2 : H / 2
+  if (last) {
+    feed(xs[rounds - 1] + boxW, last.y1, last.y2, xs[rounds], finalY)
   }
   const tagW = 92
   const tagH = 30
