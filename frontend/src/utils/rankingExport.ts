@@ -68,7 +68,7 @@ export function exportAnnualRankingsExcel(params: {
 
   const suffix =
     kind === 'net' ? '_neto' : kind === 'gross' ? '_gross' : hasFinalSheets ? '_final' : '_acumulado'
-  downloadWorkbookXml(`ranking_anual_${params.year}_club_${params.clubId}${suffix}.xls`, sheets)
+  downloadMatrixXlsx(`ranking_por_torneos_${params.year}_club_${params.clubId}${suffix}.xlsx`, sheets)
 }
 
 /**
@@ -305,8 +305,10 @@ function downloadBlob(blob: Blob, fileName: string) {
   a.download = fileName
   document.body.appendChild(a)
   a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
+  setTimeout(() => {
+    a.remove()
+    URL.revokeObjectURL(url)
+  }, 2500)
 }
 
 type ExcelTournamentCol = {
@@ -340,117 +342,237 @@ function collectTournamentCols(rows: any[], extra: ExcelTournamentCol[] = []): E
   return [...map.values()].sort((a, b) => String(a.tournament_date ?? '').localeCompare(String(b.tournament_date ?? '')))
 }
 
-function xmlCell(value: string | number | '', style: string, opts?: { index?: number; mergeAcross?: number; mergeDown?: number; number?: boolean }) {
-  const attrs = [
-    `ss:StyleID="${style}"`,
-    opts?.index ? `ss:Index="${opts.index}"` : '',
-    opts?.mergeAcross ? `ss:MergeAcross="${opts.mergeAcross}"` : '',
-    opts?.mergeDown ? `ss:MergeDown="${opts.mergeDown}"` : '',
-  ].filter(Boolean).join(' ')
-  if (value === '' || value == null) return `<Cell ${attrs}/>`
-  const type = opts?.number && value !== '' && Number.isFinite(Number(value)) ? 'Number' : 'String'
-  const data = type === 'Number' ? String(value) : escXml(value)
-  return `<Cell ${attrs}><Data ss:Type="${type}">${data}</Data></Cell>`
+function colLetter(n: number): string {
+  let s = ''
+  let x = n
+  while (x > 0) {
+    const m = (x - 1) % 26
+    s = String.fromCharCode(65 + m) + s
+    x = Math.floor((x - 1) / 26)
+  }
+  return s
 }
 
-/** Una fila por jugador. Cada torneo es un bloque; los que computan van resaltados. */
+function crc32(data: Uint8Array): number {
+  let c = 0xffffffff
+  for (let i = 0; i < data.length; i++) {
+    c ^= data[i]
+    for (let j = 0; j < 8; j++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1))
+  }
+  return (c ^ 0xffffffff) >>> 0
+}
+
+function zipStore(files: { name: string; data: Uint8Array }[]): Blob {
+  const enc = new TextEncoder()
+  const chunks: Uint8Array[] = []
+  const central: Uint8Array[] = []
+  let offset = 0
+  for (const f of files) {
+    const name = enc.encode(f.name)
+    const crc = crc32(f.data)
+    const local = new Uint8Array(30 + name.length)
+    const view = new DataView(local.buffer)
+    view.setUint32(0, 0x04034b50, true)
+    view.setUint16(4, 20, true)
+    view.setUint16(6, 20, true)
+    view.setUint32(14, crc, true)
+    view.setUint32(18, f.data.length, true)
+    view.setUint32(22, f.data.length, true)
+    view.setUint16(26, name.length, true)
+    local.set(name, 30)
+    chunks.push(local, f.data)
+    const cen = new Uint8Array(46 + name.length)
+    const cv = new DataView(cen.buffer)
+    cv.setUint32(0, 0x02014b50, true)
+    cv.setUint16(4, 20, true)
+    cv.setUint16(6, 20, true)
+    cv.setUint32(16, crc, true)
+    cv.setUint32(20, f.data.length, true)
+    cv.setUint32(24, f.data.length, true)
+    cv.setUint16(28, name.length, true)
+    cv.setUint32(42, offset, true)
+    cen.set(name, 46)
+    central.push(cen)
+    offset += local.length + f.data.length
+  }
+  let centralSize = 0
+  for (const c of central) centralSize += c.length
+  const eocd = new Uint8Array(22)
+  const ev = new DataView(eocd.buffer)
+  ev.setUint32(0, 0x06054b50, true)
+  ev.setUint16(8, files.length, true)
+  ev.setUint16(10, files.length, true)
+  ev.setUint32(12, centralSize, true)
+  ev.setUint32(16, offset, true)
+  const all = [...chunks, ...central, eocd]
+  const total = all.reduce((n, p) => n + p.length, 0)
+  const out = new Uint8Array(total)
+  let p = 0
+  for (const part of all) {
+    out.set(part, p)
+    p += part.length
+  }
+  return new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+}
+
+function xlsxCell(col: number, row: number, value: string | number | '', style: number): string {
+  const ref = `${colLetter(col)}${row}`
+  if (value === '' || value == null) return `<c r="${ref}" s="${style}"/>`
+  if (typeof value === 'number' && Number.isFinite(value)) return `<c r="${ref}" s="${style}"><v>${value}</v></c>`
+  return `<c r="${ref}" s="${style}" t="inlineStr"><is><t>${escXml(value)}</t></is></c>`
+}
+
 function matrixSheetXml(rows: any[], tournaments: ExcelTournamentCol[]): string {
   const cols = collectTournamentCols(rows, tournaments)
   const sub = ['HCP', 'Ida', 'Vuelta', 'Gross', 'Neto']
-  const colXml = [
-    '<Column ss:Width="55"/>',
-    '<Column ss:Width="180"/>',
-    '<Column ss:Width="80"/>',
-    ...cols.flatMap(() => [
-      '<Column ss:Width="42"/>',
-      '<Column ss:Width="42"/>',
-      '<Column ss:Width="52"/>',
-      '<Column ss:Width="52"/>',
-      '<Column ss:Width="48"/>',
-    ]),
-  ].join('')
-
-  const titleCells = [
-    xmlCell('Posicion', 'head', { mergeDown: 1 }),
-    xmlCell('Jugador', 'head', { mergeDown: 1 }),
-    xmlCell('Matricula', 'head', { mergeDown: 1 }),
+  const merges = ['A1:A2', 'B1:B2', 'C1:C2']
+  const widths = [
+    '<col min="1" max="1" width="12" customWidth="1"/>',
+    '<col min="2" max="2" width="28" customWidth="1"/>',
+    '<col min="3" max="3" width="14" customWidth="1"/>',
   ]
-  cols.forEach((t, i) => {
-    const date = fmtDate(t.tournament_date)
-    const title = [date, t.tournament_name].filter(Boolean).join(' — ')
-    titleCells.push(xmlCell(title || `Torneo ${i + 1}`, 'title', {
-      index: 4 + i * 5,
-      mergeAcross: 4,
-    }))
-  })
-
-  const subCells: string[] = []
   cols.forEach((_, i) => {
-    sub.forEach((label, j) => {
-      subCells.push(xmlCell(label, 'sub', j === 0 ? { index: 4 + i * 5 } : undefined))
-    })
+    const start = 4 + i * 5
+    merges.push(`${colLetter(start)}1:${colLetter(start + 4)}1`)
+    for (let j = 0; j < 5; j++) widths.push(`<col min="${start + j}" max="${start + j}" width="11" customWidth="1"/>`)
   })
 
-  const dataRows = (rows || []).map((r, idx) => {
+  const row1 = [
+    xlsxCell(1, 1, 'Posicion', 1),
+    xlsxCell(2, 1, 'Jugador', 1),
+    xlsxCell(3, 1, 'Matricula', 1),
+  ]
+  const row2: string[] = []
+  cols.forEach((t, i) => {
+    const start = 4 + i * 5
+    const title = [fmtDate(t.tournament_date), t.tournament_name].filter(Boolean).join(' — ')
+    row1.push(xlsxCell(start, 1, title || `Torneo ${i + 1}`, 2))
+    sub.forEach((label, j) => row2.push(xlsxCell(start + j, 2, label, 3)))
+  })
+
+  const data = (rows || []).map((r, idx) => {
     const details = roundDetailsOf(r)
     const byId = new Map<number, any>()
     for (const d of details) byId.set(Number(d.tournament_id), d)
+    const excelRow = idx + 3
     const cells = [
-      xmlCell(r.position ?? idx + 1, 'cell', { number: true }),
-      xmlCell(String(r.player_name ?? ''), 'name'),
-      xmlCell(String(r.member_number ?? ''), 'cell'),
+      xlsxCell(1, excelRow, Number(r.position ?? idx + 1), 5),
+      xlsxCell(2, excelRow, String(r.player_name ?? ''), 4),
+      xlsxCell(3, excelRow, String(r.member_number ?? ''), 5),
     ]
     cols.forEach((t, i) => {
       const d = byId.get(t.tournament_id)
       const played = d && (d.total_gross != null || d.total_net != null || d.front_nine != null)
       const counts = played && d.counts !== false
-      const style = counts ? 'hl' : 'cell'
+      const style = counts ? 6 : 5
       const start = 4 + i * 5
       const values: Array<string | number | ''> = played
-        ? [
-            d.handicap_used ?? '',
-            d.front_nine ?? '',
-            d.back_nine ?? '',
-            d.total_gross ?? '',
-            d.total_net ?? '',
-          ]
+        ? [d.handicap_used ?? '', d.front_nine ?? '', d.back_nine ?? '', d.total_gross ?? '', d.total_net ?? '']
         : ['', '', '', '', '']
       values.forEach((v, j) => {
         const empty = v === '' || v == null
-        cells.push(xmlCell(empty ? '' : v, played ? style : 'cell', {
-          index: j === 0 ? start : undefined,
-          number: !empty,
-        }))
+        const num = !empty && Number.isFinite(Number(v)) ? Number(v) : ''
+        cells.push(xlsxCell(start + j, excelRow, empty ? '' : num === '' ? String(v) : num, played ? style : 5))
       })
     })
-    return `<Row>${cells.join('')}</Row>`
+    return `<row r="${excelRow}">${cells.join('')}</row>`
   })
 
-  return `<Table>${colXml}<Row ss:Height="36">${titleCells.join('')}</Row><Row>${subCells.join('')}</Row>${dataRows.join('')}</Table>`
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<cols>${widths.join('')}</cols>
+<sheetData>
+<row r="1" ht="32" customHeight="1">${row1.join('')}</row>
+<row r="2">${row2.join('')}</row>
+${data.join('')}
+</sheetData>
+<mergeCells count="${merges.length}">${merges.map((ref) => `<mergeCell ref="${ref}"/>`).join('')}</mergeCells>
+</worksheet>`
 }
 
-function downloadWorkbookXml(fileName: string, sheets: { name: string; rows: any[]; tournaments: ExcelTournamentCol[] }[]) {
-  const xmlSheets = sheets
-    .filter((s) => (s.rows || []).length)
-    .map((s) => {
-      const name = s.name.replace(/[\\/?*[\]:]/g, ' ').slice(0, 31)
-      return `<Worksheet ss:Name="${escXml(name)}">${matrixSheetXml(s.rows, s.tournaments)}</Worksheet>`
+const XLSX_STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<fonts count="2">
+<font><sz val="11"/><name val="Calibri"/></font>
+<font><b/><sz val="11"/><name val="Calibri"/></font>
+</fonts>
+<fills count="5">
+<fill><patternFill patternType="none"/></fill>
+<fill><patternFill patternType="gray125"/></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFF3F4F6"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFE5E7EB"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFD6EAF8"/></patternFill></fill>
+</fills>
+<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="7">
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="1" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center"/></xf>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="left"/></xf>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="center"/></xf>
+<xf numFmtId="0" fontId="0" fillId="4" borderId="0" xfId="0" applyFill="1" applyAlignment="1"><alignment horizontal="center"/></xf>
+</cellXfs>
+</styleSheet>`
+
+function downloadMatrixXlsx(fileName: string, sheets: { name: string; rows: any[]; tournaments: ExcelTournamentCol[] }[]) {
+  const usable = sheets.filter((s) => (s.rows || []).length)
+  if (!usable.length) throw new Error('No hay filas para exportar')
+  const enc = new TextEncoder()
+  const sheetFiles = usable.map((s, i) => ({
+    name: `xl/worksheets/sheet${i + 1}.xml`,
+    data: enc.encode(matrixSheetXml(s.rows, s.tournaments)),
+  }))
+  const sheetRels = usable
+    .map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`)
+    .join('')
+  const sheetTags = usable
+    .map((s, i) => {
+      const name = s.name.replace(/[\\/?*[\]:]/g, ' ').slice(0, 31) || `Hoja${i + 1}`
+      return `<sheet name="${escXml(name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`
     })
     .join('')
-  const xml = `<?xml version="1.0"?>
-<?mso-application progid="Excel.Sheet"?>
-<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
-<Styles>
-<Style ss:ID="head"><Alignment ss:Horizontal="Center" ss:Vertical="Center"/><Font ss:Bold="1"/><Interior ss:Color="#F3F4F6" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D1D5DB"/></Borders></Style>
-<Style ss:ID="title"><Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/><Font ss:Bold="1"/><Interior ss:Color="#E5E7EB" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D1D5DB"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D1D5DB"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D1D5DB"/></Borders></Style>
-<Style ss:ID="sub"><Alignment ss:Horizontal="Center"/><Font ss:Bold="1" ss:Size="9"/><Interior ss:Color="#F9FAFB" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E5E7EB"/></Borders></Style>
-<Style ss:ID="cell"><Alignment ss:Horizontal="Center"/></Style>
-<Style ss:ID="name"><Alignment ss:Horizontal="Left"/></Style>
-<Style ss:ID="hl"><Alignment ss:Horizontal="Center"/><Interior ss:Color="#D6EAF8" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BFDBFE"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BFDBFE"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BFDBFE"/></Borders></Style>
-</Styles>
-${xmlSheets}
-</Workbook>`
-  downloadBlob(new Blob([xml], { type: 'application/vnd.ms-excel' }), fileName.endsWith('.xls') ? fileName : `${fileName}.xls`)
+  const stylesRid = usable.length + 1
+  const files = [
+    {
+      name: '[Content_Types].xml',
+      data: enc.encode(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+<Default Extension="xml" ContentType="application/xml"/>
+<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+${usable.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}
+</Types>`),
+    },
+    {
+      name: '_rels/.rels',
+      data: enc.encode(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`),
+    },
+    {
+      name: 'xl/workbook.xml',
+      data: enc.encode(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheets>${sheetTags}</sheets>
+</workbook>`),
+    },
+    {
+      name: 'xl/_rels/workbook.xml.rels',
+      data: enc.encode(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+${sheetRels}
+<Relationship Id="rId${stylesRid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>`),
+    },
+    { name: 'xl/styles.xml', data: enc.encode(XLSX_STYLES) },
+    ...sheetFiles,
+  ]
+  const outName = fileName.endsWith('.xlsx') ? fileName : `${fileName}.xlsx`
+  downloadBlob(zipStore(files), outName)
 }
 
 /** Abre WhatsApp Desktop o WhatsApp Web (elige contacto y envía). */

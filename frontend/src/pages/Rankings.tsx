@@ -456,7 +456,7 @@ export default function Rankings() {
           general_without_hcp: generalGross,
           tournaments: rankingExcelTournaments,
         })
-        toast.success('Excel descargado (Scratch + Handicap + General)')
+        toast.success('Planilla por torneos descargada (.xlsx)')
       } else {
         exportAnnualRankingsExcel({
           year: annual.year,
@@ -466,7 +466,7 @@ export default function Rankings() {
           without_hcp: generalGross,
           tournaments: rankingExcelTournaments,
         })
-        toast.success(showWithHcp ? 'Excel Neto descargado' : 'Excel Gross descargado')
+        toast.success(showWithHcp ? 'Planilla Neto descargada (.xlsx)' : 'Planilla Gross descargada (.xlsx)')
       }
     } catch {
       toast.error('No se pudo exportar a Excel')
@@ -879,7 +879,7 @@ export default function Rankings() {
                           className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
                         >
                           <FileSpreadsheet className="h-4 w-4 text-green-700" />
-                          {showWithHcp ? 'Exportar Excel (Neto)' : 'Exportar Excel (Gross)'}
+                          {showWithHcp ? 'Planilla por torneos (Neto)' : 'Planilla por torneos (Gross)'}
                         </button>
                         <button
                           type="button"
@@ -926,7 +926,7 @@ export default function Rankings() {
                             className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
                           >
                             <FileSpreadsheet className="h-4 w-4 text-green-700" />
-                            Exportar Excel
+                            Planilla por torneos
                           </button>
                           <button
                             type="button"
