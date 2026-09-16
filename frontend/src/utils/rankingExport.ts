@@ -1,9 +1,65 @@
 import * as XLSX from 'xlsx'
 
-function cellNum(v: unknown): number | string {
-  if (v === null || v === undefined || v === '') return ''
-  const n = Number(v)
-  return Number.isFinite(n) ? n : String(v)
+function countedTournamentsLabel(row: any): string {
+  const details = Array.isArray(row?.round_details) ? row.round_details : []
+  const counted = details.filter((d: any) => d?.counts !== false)
+  const source = counted.length ? counted : (Array.isArray(row?.kept_tournaments) ? row.kept_tournaments : [])
+  return source
+    .map((d: any) => {
+      const date = fmtDate(d?.tournament_date)
+      const name = String(d?.tournament_name ?? '').trim()
+      return [date, name].filter(Boolean).join(' ')
+    })
+    .join(' | ')
+}
+
+function fmtDate(v: unknown): string {
+  const s = String(v ?? '')
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (iso) return `${iso[3]}/${iso[2]}/${iso[1]}`
+  const d = new Date(s)
+  if (Number.isNaN(d.getTime())) return s.slice(0, 10)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${day}/${m}/${y}`
+}
+
+function detailRows(rows: any[], includeNet: boolean) {
+  const out: Record<string, string | number>[] = []
+  for (const r of rows || []) {
+    const details = Array.isArray(r?.round_details) ? [...r.round_details] : []
+    details.sort((a, b) => {
+      const ac = a?.counts === false ? 1 : 0
+      const bc = b?.counts === false ? 1 : 0
+      if (ac !== bc) return ac - bc
+      return String(a?.tournament_date ?? '').localeCompare(String(b?.tournament_date ?? ''))
+    })
+    for (const d of details) {
+      const row: Record<string, string | number> = {
+        Pos: r.position ?? '',
+        Jugador: String(r.player_name ?? ''),
+        Matricula: String(r.member_number ?? ''),
+        Torneo: String(d.tournament_name ?? ''),
+        Fecha: fmtDate(d.tournament_date),
+        Computa: d.counts === false ? 'NO' : 'SI',
+        Handicap: cellNum(d.handicap_used),
+        Ida: cellNum(d.front_nine),
+        Vuelta: cellNum(d.back_nine),
+        Gross: cellNum(d.total_gross),
+      }
+      if (includeNet) row.Neto = cellNum(d.total_net)
+      out.push(row)
+    }
+  }
+  return out
+}
+
+function appendDetailSheet(wb: XLSX.WorkBook, name: string, rows: any[], includeNet: boolean) {
+  const detail = detailRows(rows, includeNet)
+  if (!detail.length) return
+  const safe = name.slice(0, 31)
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detail), safe)
 }
 
 export type RankingExportKind = 'net' | 'gross' | 'both'
@@ -32,6 +88,7 @@ export function exportAnnualRankingsExcel(params: {
       Matricula: String(r.member_number ?? ''),
       Jugadas: cellNum(r.rounds),
       Computan: cellNum(r.rounds_counted ?? ''),
+      'Torneos que computan': countedTournamentsLabel(r),
       'Total gross': cellNum(r.total_gross),
       'Total neto': cellNum(r.total_net),
     }))
@@ -40,6 +97,7 @@ export function exportAnnualRankingsExcel(params: {
       XLSX.utils.json_to_sheet(netJson),
       hasFinalSheets ? 'Handicap' : 'Neto'
     )
+    appendDetailSheet(wb, hasFinalSheets ? 'Handicap detalle' : 'Neto detalle', netRows, true)
   }
 
   if (kind === 'gross' || kind === 'both') {
@@ -50,6 +108,7 @@ export function exportAnnualRankingsExcel(params: {
       Matricula: String(r.member_number ?? ''),
       Jugadas: cellNum(r.rounds),
       Computan: cellNum(r.rounds_counted ?? ''),
+      'Torneos que computan': countedTournamentsLabel(r),
       'Total Gross': cellNum(r.total_gross),
     }))
     XLSX.utils.book_append_sheet(
@@ -57,6 +116,7 @@ export function exportAnnualRankingsExcel(params: {
       XLSX.utils.json_to_sheet(grossJson),
       hasFinalSheets ? 'Scratch' : 'Gross'
     )
+    appendDetailSheet(wb, hasFinalSheets ? 'Scratch detalle' : 'Gross detalle', grossRows, true)
   }
 
   if (params.general_without_hcp?.length) {
@@ -65,9 +125,11 @@ export function exportAnnualRankingsExcel(params: {
       Jugador: String(r.player_name ?? ''),
       Matricula: String(r.member_number ?? ''),
       Jugadas: cellNum(r.rounds),
+      'Torneos que computan': countedTournamentsLabel(r),
       'Total Gross': cellNum(r.total_gross),
     }))
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(g), 'General Gross')
+    appendDetailSheet(wb, 'General Gross detalle', params.general_without_hcp, true)
   }
   if (params.general_with_hcp?.length) {
     const g = params.general_with_hcp.map((r, i) => ({
@@ -75,10 +137,12 @@ export function exportAnnualRankingsExcel(params: {
       Jugador: String(r.player_name ?? ''),
       Matricula: String(r.member_number ?? ''),
       Jugadas: cellNum(r.rounds),
+      'Torneos que computan': countedTournamentsLabel(r),
       'Total gross': cellNum(r.total_gross),
       'Total neto': cellNum(r.total_net),
     }))
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(g), 'General Neto')
+    appendDetailSheet(wb, 'General Neto detalle', params.general_with_hcp, true)
   }
 
   const suffix =

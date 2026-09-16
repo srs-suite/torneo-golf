@@ -2069,7 +2069,9 @@ async function getAnnualRankings(clubId, year) {
                 t.tournament_id,
                 t.tournament_name,
                 t.tournament_date,
-                s.total_gross
+                s.total_gross,
+                s.front_nine,
+                s.back_nine
             FROM members m
             INNER JOIN tournament_participants tp ON m.member_id = tp.member_id
             INNER JOIN tournaments t ON tp.tournament_id = t.tournament_id
@@ -2100,12 +2102,16 @@ async function getAnnualRankings(clubId, year) {
             }
             const entry = byMember.get(mid);
             const gross = Number(row.total_gross) || 0;
+            const playHcp = snapshotHandicapPlay(row);
             entry.rounds.push({
                 tournament_id: row.tournament_id,
                 tournament_name: row.tournament_name,
                 tournament_date: row.tournament_date,
+                handicap_used: playHcp == null || playHcp === '' ? null : Number(playHcp),
+                front_nine: row.front_nine == null ? null : Number(row.front_nine),
+                back_nine: row.back_nine == null ? null : Number(row.back_nine),
                 total_gross: gross,
-                total_net: annualRoundNet(gross, snapshotHandicapIndex(row), snapshotHandicapPlay(row))
+                total_net: annualRoundNet(gross, snapshotHandicapIndex(row), playHcp)
             });
         }
 
@@ -2130,6 +2136,19 @@ async function getAnnualRankings(clubId, year) {
             const allNet = uniqueRounds.reduce((s, r) => s + r.total_net, 0);
             const hasIndex = entry.handicap_index != null && entry.handicap_index !== '';
 
+            const mapRound = (r, counts) => ({
+                tournament_id: r.tournament_id,
+                tournament_name: r.tournament_name,
+                tournament_date: r.tournament_date,
+                handicap_used: r.handicap_used,
+                front_nine: r.front_nine,
+                back_nine: r.back_nine,
+                total_gross: r.total_gross,
+                total_net: r.total_net,
+                counts: !!counts
+            });
+            const allDetails = uniqueRounds.map((r) => mapRound(r, true));
+
             generalAll.push({
                 member_id: entry.member_id,
                 player_name: entry.player_name,
@@ -2138,7 +2157,8 @@ async function getAnnualRankings(clubId, year) {
                 rounds_counted: roundsPlayed,
                 total_gross: allGross,
                 total_net: allNet,
-                has_index: hasIndex
+                has_index: hasIndex,
+                round_details: allDetails
             });
 
             if (roundsPlayed < minRounds) {
@@ -2164,18 +2184,12 @@ async function getAnnualRankings(clubId, year) {
                 rounds_counted: kept.length,
                 total_gross: kept.reduce((s, r) => s + r.total_gross, 0),
                 total_net: kept.reduce((s, r) => s + r.total_net, 0),
-                kept_tournaments: kept.map((r) => ({
-                    tournament_id: r.tournament_id,
-                    tournament_name: r.tournament_name,
-                    total_gross: r.total_gross,
-                    total_net: r.total_net
-                })),
-                dropped_tournaments: dropped.map((r) => ({
-                    tournament_id: r.tournament_id,
-                    tournament_name: r.tournament_name,
-                    total_gross: r.total_gross,
-                    total_net: r.total_net
-                }))
+                kept_tournaments: kept.map((r) => mapRound(r, true)),
+                dropped_tournaments: dropped.map((r) => mapRound(r, false)),
+                round_details: [
+                    ...kept.map((r) => mapRound(r, true)),
+                    ...dropped.map((r) => mapRound(r, false))
+                ]
             });
         }
 
@@ -2193,6 +2207,7 @@ async function getAnnualRankings(clubId, year) {
                 rounds: r.rounds,
                 rounds_counted: r.rounds,
                 total_gross: r.total_gross,
+                round_details: r.round_details || [],
                 position: i + 1,
                 ranking_list: 'general_gross'
             }));
@@ -2214,6 +2229,7 @@ async function getAnnualRankings(clubId, year) {
                 rounds_counted: r.rounds,
                 total_gross: r.total_gross,
                 total_net: r.total_net,
+                round_details: r.round_details || [],
                 position: i + 1,
                 ranking_list: 'general_net'
             }));
