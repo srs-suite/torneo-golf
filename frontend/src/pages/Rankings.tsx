@@ -1477,7 +1477,7 @@ export default function Rankings() {
           onClick={handleCloseBracketModal}
         >
           <div
-            className="bg-white rounded-lg shadow-xl w-full max-w-5xl max-h-[90vh] flex flex-col"
+            className="bg-white rounded-lg shadow-xl w-full max-w-6xl max-h-[92vh] flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="px-4 sm:px-6 py-4 border-b flex flex-wrap items-center justify-between gap-3 shrink-0">
