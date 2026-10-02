@@ -277,14 +277,14 @@ export default function Rankings() {
   const [finalizing, setFinalizing] = useState(false)
   /** Panel de torneos del acumulado: cerrado por defecto; el ranking usa todos hasta abrir y guardar selección. */
   const [annualPicksOpen, setAnnualPicksOpen] = useState(false)
-  const [bracketOpen, setBracketOpen] = useState(false)
+  const [bracketModalType, setBracketModalType] = useState<'scratch' | 'handicap' | null>(null)
   const [bracket, setBracket] = useState<any>(null)
   const [bracketLoading, setBracketLoading] = useState(false)
   const [bracketSavingKey, setBracketSavingKey] = useState<string | null>(null)
 
   useEffect(() => {
     setBracket(null)
-    setBracketOpen(false)
+    setBracketModalType(null)
   }, [year, clubIdNum])
 
   /** Orden visible de cada tabla (para WhatsApp). */
@@ -515,40 +515,48 @@ export default function Rankings() {
     }
   }
 
-  const handleOpenBracket = async () => {
+  const handleOpenBracket = async (type: 'scratch' | 'handicap') => {
     if (!isFinal) return
-    setBracketOpen(true)
+    setBracketModalType(type)
     await loadBracket()
   }
 
-  const handlePrintBracket = async () => {
+  const handleCloseBracketModal = () => setBracketModalType(null)
+
+  const handlePrintBracket = async (type?: 'scratch' | 'handicap') => {
     if (!isFinal) return
+    const side = type || bracketModalType || 'scratch'
     try {
       let data = bracket
       if (!data) {
         data = await tournamentService.getAnnualRankingBracket(clubIdNum, year)
         setBracket(data)
       }
+      const sheets =
+        side === 'handicap'
+          ? [
+              {
+                title: 'Handicap',
+                size: 16,
+                rows: handicapRows.slice(0, 16),
+                seeds: data?.handicap?.seeds,
+                winners: data?.handicap?.winners || {},
+              },
+            ]
+          : [
+              {
+                title: 'Scratch',
+                size: 8,
+                rows: scratchRows.slice(0, 8),
+                seeds: data?.scratch?.seeds,
+                winners: data?.scratch?.winners || {},
+              },
+            ]
       printAnnualBracket({
         year: annual?.year || year,
         clubName: club?.course_name || 'Club',
         throughLabel: throughLabelForBracket(),
-        sheets: [
-          {
-            title: 'Scratch',
-            size: 8,
-            rows: scratchRows.slice(0, 8),
-            seeds: data?.scratch?.seeds,
-            winners: data?.scratch?.winners || {},
-          },
-          {
-            title: 'Handicap',
-            size: 16,
-            rows: handicapRows.slice(0, 16),
-            seeds: data?.handicap?.seeds,
-            winners: data?.handicap?.winners || {},
-          },
-        ],
+        sheets,
       })
     } catch {
       toast.error('No se pudo abrir la impresión. Permití ventanas emergentes.')
@@ -589,8 +597,10 @@ export default function Rankings() {
       list.push(m)
       byRound.set(m.round, list)
     }
+    const colClass =
+      size <= 8 ? 'grid gap-4 sm:grid-cols-2 lg:grid-cols-3' : 'grid gap-4 sm:grid-cols-2 lg:grid-cols-4'
     return (
-      <div className="border rounded-lg p-4 space-y-4">
+      <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-base font-semibold text-gray-900">
             {title} — {size} jugadores
@@ -599,7 +609,8 @@ export default function Rankings() {
             <p className="text-sm text-green-800 font-medium">Campeón: {sanitizeAscii(side.champion.player_name)}</p>
           )}
         </div>
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <p className="text-xs text-gray-500">Tocá al ganador de cada partido. Volvé a tocar para desmarcar.</p>
+        <div className={colClass}>
           {labels.map((label, round) => (
             <div key={`${bracketType}-${round}`} className="space-y-2">
               <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</p>
@@ -610,7 +621,7 @@ export default function Rankings() {
                 const b = m.player_b
                 const wid = m.winner_member_id != null ? Number(m.winner_member_id) : null
                 return (
-                  <div key={m.key} className="rounded-md border border-gray-200 bg-white p-2 space-y-1">
+                  <div key={m.key} className="rounded-md border border-gray-200 bg-gray-50 p-2 space-y-1">
                     {[a, b].map((p: any, idx: number) => {
                       const mid = p?.member_id != null ? Number(p.member_id) : null
                       const selected = mid != null && wid === mid
@@ -631,7 +642,7 @@ export default function Rankings() {
                           className={`w-full text-left px-2 py-1.5 rounded text-sm border ${
                             selected
                               ? 'border-green-600 bg-green-50 text-green-900 font-medium'
-                              : 'border-gray-200 hover:bg-gray-50 text-gray-800'
+                              : 'border-gray-200 bg-white hover:bg-gray-50 text-gray-800'
                           } disabled:opacity-50 disabled:cursor-not-allowed`}
                         >
                           <span className="inline-block w-6 text-xs text-gray-500">{p?.seed ?? '—'}</span>
@@ -1108,19 +1119,11 @@ export default function Rankings() {
                           </button>
                           <button
                             type="button"
-                            onClick={handleOpenBracket}
+                            onClick={() => handleOpenBracket('scratch')}
                             className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
                           >
                             <Trophy className="h-4 w-4 text-amber-600" />
                             Llave / Torneo final
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handlePrintBracket}
-                            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
-                          >
-                            <Printer className="h-4 w-4 text-gray-700" />
-                            Imprimir llave
                           </button>
                           <button
                             type="button"
@@ -1151,11 +1154,21 @@ export default function Rankings() {
                     </div>
 
                     <div className="bg-white rounded-lg border">
-                      <div className="px-6 py-4 border-b">
-                        <h2 className="text-lg font-semibold">Handicap — top {rules.handicap_cut} (Neto)</h2>
-                        <p className="text-xs text-gray-500">
-                          Mejores {rules.counting_rounds} tarjetas por Neto (HCP del torneo). Sin los del Scratch. Orden por neto.
-                        </p>
+                      <div className="px-6 py-4 border-b flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <h2 className="text-lg font-semibold">Handicap — top {rules.handicap_cut} (Neto)</h2>
+                          <p className="text-xs text-gray-500">
+                            Mejores {rules.counting_rounds} tarjetas por Neto (HCP del torneo). Sin los del Scratch. Orden por neto.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenBracket('handicap')}
+                          className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
+                        >
+                          <Trophy className="h-4 w-4 text-amber-600" />
+                          Llave / Torneo final
+                        </button>
                       </div>
                       <div className="p-6">
                         {handicapRows.length ? (
@@ -1172,54 +1185,6 @@ export default function Rankings() {
                         )}
                       </div>
                     </div>
-
-                    {bracketOpen && (
-                      <div className="bg-white rounded-lg border">
-                        <div className="px-6 py-4 border-b flex flex-wrap items-center justify-between gap-3">
-                          <div>
-                            <h2 className="text-lg font-semibold">Llave — Torneo final</h2>
-                            <p className="text-xs text-gray-500">
-                              Tocá al ganador de cada partido. Podés reimprimir la llave con los resultados cargados.
-                            </p>
-                          </div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={loadBracket}
-                              disabled={bracketLoading}
-                              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50"
-                            >
-                              Actualizar
-                            </button>
-                            <button
-                              type="button"
-                              onClick={handlePrintBracket}
-                              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
-                            >
-                              <Printer className="h-4 w-4 text-gray-700" />
-                              Imprimir llave
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setBracketOpen(false)}
-                              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
-                            >
-                              Cerrar
-                            </button>
-                          </div>
-                        </div>
-                        <div className="p-6 space-y-6">
-                          {bracketLoading && !bracket ? (
-                            <p className="text-sm text-gray-600">Cargando llave…</p>
-                          ) : (
-                            <>
-                              {renderBracketSide('Scratch', bracket?.scratch, 'scratch')}
-                              {renderBracketSide('Handicap', bracket?.handicap, 'handicap')}
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    )}
 
                     <div className="bg-white rounded-lg border">
                       <div className="px-6 py-4 border-b flex flex-wrap items-center justify-between gap-3">
@@ -1338,6 +1303,63 @@ export default function Rankings() {
           </>
         )}
       </div>
+
+      {bracketModalType && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3 sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          onClick={handleCloseBracketModal}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl w-full max-w-5xl max-h-[90vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 sm:px-6 py-4 border-b flex flex-wrap items-center justify-between gap-3 shrink-0">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">
+                  Llave / Torneo final — {bracketModalType === 'handicap' ? 'Handicap' : 'Scratch'}
+                </h2>
+                <p className="text-xs text-gray-500">Cargá los ganadores e imprimí la llave desde acá.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={loadBracket}
+                  disabled={bracketLoading}
+                  className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Actualizar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePrintBracket(bracketModalType)}
+                  className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
+                >
+                  <Printer className="h-4 w-4 text-gray-700" />
+                  Imprimir llave
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCloseBracketModal}
+                  className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+            <div className="p-4 sm:p-6 overflow-y-auto">
+              {bracketLoading && !bracket ? (
+                <p className="text-sm text-gray-600">Cargando llave…</p>
+              ) : bracketModalType === 'handicap' ? (
+                renderBracketSide('Handicap', bracket?.handicap, 'handicap')
+              ) : (
+                renderBracketSide('Scratch', bracket?.scratch, 'scratch')
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
