@@ -6,18 +6,31 @@ function cellNum(v: unknown): number | string {
   return Number.isFinite(n) ? n : String(v)
 }
 
-function countedTournamentIds(details: any[], limit: number): Set<number> {
+function countedTournamentIds(
+  details: any[],
+  limit: number,
+  by: 'gross' | 'net' = 'gross'
+): Set<number> {
   const played = (details || []).filter(
     (d) => d && (d.total_gross != null || d.total_net != null || d.front_nine != null)
   )
   const explicit = played.filter((d) => d.counts === true)
   const hasDropped = played.some((d) => d.counts === false)
-  const pool = hasDropped && explicit.length ? explicit : played
-  const best = [...pool].sort((a, b) => {
-    const byGross = (Number(a.total_gross) || 0) - (Number(b.total_gross) || 0)
-    if (byGross !== 0) return byGross
-    return Number(a.tournament_id) - Number(b.tournament_id)
-  }).slice(0, Math.max(1, limit))
+  // Si el backend ya marcó qué computan, respetar eso (Scratch=Gross, Handicap=Neto).
+  if (hasDropped && explicit.length) {
+    return new Set(explicit.map((d) => Number(d.tournament_id)))
+  }
+  const best = [...played]
+    .sort((a, b) => {
+      if (by === 'net') {
+        const byNet = (Number(a.total_net) || 0) - (Number(b.total_net) || 0)
+        if (byNet !== 0) return byNet
+      }
+      const byGross = (Number(a.total_gross) || 0) - (Number(b.total_gross) || 0)
+      if (byGross !== 0) return byGross
+      return Number(a.tournament_id) - Number(b.tournament_id)
+    })
+    .slice(0, Math.max(1, limit))
   return new Set(best.map((d) => Number(d.tournament_id)))
 }
 
@@ -59,13 +72,14 @@ export function exportAnnualRankingsExcel(params: {
   const kind = params.kind || 'both'
   const hasFinalSheets = (params.general_with_hcp || params.general_without_hcp) != null
   const tournaments = params.tournaments || []
-  const sheets: { name: string; rows: any[]; tournaments: ExcelTournamentCol[] }[] = []
+  const sheets: { name: string; rows: any[]; tournaments: ExcelTournamentCol[]; countBy?: 'gross' | 'net' }[] = []
 
   if (kind === 'net' || kind === 'both') {
     sheets.push({
       name: hasFinalSheets ? 'Handicap' : 'Neto',
       rows: params.with_hcp || [],
       tournaments,
+      countBy: 'net',
     })
   }
   if (kind === 'gross' || kind === 'both') {
@@ -73,13 +87,14 @@ export function exportAnnualRankingsExcel(params: {
       name: hasFinalSheets ? 'Scratch' : 'Gross',
       rows: params.without_hcp || [],
       tournaments,
+      countBy: 'gross',
     })
   }
   if (params.general_without_hcp?.length) {
-    sheets.push({ name: 'General Gross', rows: params.general_without_hcp, tournaments })
+    sheets.push({ name: 'General Gross', rows: params.general_without_hcp, tournaments, countBy: 'gross' })
   }
   if (params.general_with_hcp?.length) {
-    sheets.push({ name: 'General Neto', rows: params.general_with_hcp, tournaments })
+    sheets.push({ name: 'General Neto', rows: params.general_with_hcp, tournaments, countBy: 'net' })
   }
 
   const suffix =
@@ -442,7 +457,12 @@ function xlsxCell(col: number, row: number, value: string | number | '', style: 
   return `<c r="${ref}" s="${style}" t="inlineStr"><is><t>${escXml(value)}</t></is></c>`
 }
 
-function matrixSheetXml(rows: any[], tournaments: ExcelTournamentCol[], countingRounds = 3): string {
+function matrixSheetXml(
+  rows: any[],
+  tournaments: ExcelTournamentCol[],
+  countingRounds = 3,
+  countBy: 'gross' | 'net' = 'gross'
+): string {
   const cols = collectTournamentCols(rows, tournaments)
   const sub = ['HCP', 'Ida', 'Vuelta', 'Gross', 'Neto']
   const merges = ['A1:A2', 'B1:B2', 'C1:C2']
@@ -472,7 +492,7 @@ function matrixSheetXml(rows: any[], tournaments: ExcelTournamentCol[], counting
 
   const data = (rows || []).map((r, idx) => {
     const details = roundDetailsOf(r)
-    const counted = countedTournamentIds(details, countingRounds)
+    const counted = countedTournamentIds(details, countingRounds, countBy)
     const byId = new Map<number, any>()
     for (const d of details) byId.set(Number(d.tournament_id), d)
     const excelRow = idx + 3
@@ -547,7 +567,7 @@ const XLSX_STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 
 function downloadMatrixXlsx(
   fileName: string,
-  sheets: { name: string; rows: any[]; tournaments: ExcelTournamentCol[] }[],
+  sheets: { name: string; rows: any[]; tournaments: ExcelTournamentCol[]; countBy?: 'gross' | 'net' }[],
   countingRounds = 3
 ) {
   const usable = sheets.filter((s) => (s.rows || []).length)
@@ -555,7 +575,7 @@ function downloadMatrixXlsx(
   const enc = new TextEncoder()
   const sheetFiles = usable.map((s, i) => ({
     name: `xl/worksheets/sheet${i + 1}.xml`,
-    data: enc.encode(matrixSheetXml(s.rows, s.tournaments, countingRounds)),
+    data: enc.encode(matrixSheetXml(s.rows, s.tournaments, countingRounds, s.countBy || 'gross')),
   }))
   const sheetRels = usable
     .map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`)

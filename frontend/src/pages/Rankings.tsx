@@ -425,7 +425,7 @@ export default function Rankings() {
   const handleFinalize = async (finalize: boolean) => {
     if (!clubIdNum || !canConfigureAnnualPicks) return
     const msg = finalize
-      ? `¿Cerrar el ranking final ${year}? Se bloqueará el cambio de torneos. Reglas: mín. ${rules.min_rounds} rondas, mejores ${rules.counting_rounds} por Gross, Scratch top ${rules.scratch_cut}, Handicap siguientes ${rules.handicap_cut}.`
+      ? `¿Cerrar el ranking final ${year}? Se bloqueará el cambio de torneos. Reglas: mín. ${rules.min_rounds} rondas; Scratch: mejores ${rules.counting_rounds} por Gross (top ${rules.scratch_cut}); Handicap: mejores ${rules.counting_rounds} por Neto (top ${rules.handicap_cut}, sin Scratch).`
       : `¿Reabrir el ranking ${year}? Volverá a modo provisorio y podrás editar torneos.`
     if (!window.confirm(msg)) return
     setFinalizing(true)
@@ -545,7 +545,7 @@ export default function Rankings() {
           subtitle: 'Scratch + Handicap + General',
           sections: [
             { title: `Scratch — top ${rules.scratch_cut} (Gross)`, withHcp: false, rows: scratchOrdered, showRounds: true },
-            { title: `Handicap — siguientes ${rules.handicap_cut} (Neto)`, withHcp: true, rows: handicapOrdered, showRounds: true },
+            { title: `Handicap — top ${rules.handicap_cut} (Neto)`, withHcp: true, rows: handicapOrdered, showRounds: true },
             {
               title: showWithHcp ? 'General Neto' : 'General Gross',
               withHcp: showWithHcp,
@@ -712,9 +712,10 @@ export default function Rankings() {
                   <p className="text-sm text-gray-600 mt-1">
                     {isFinal ? (
                       <>
-                        Ranking final: mín. {rules.min_rounds} torneos, mejores {rules.counting_rounds} por Gross → Scratch top{' '}
-                        {rules.scratch_cut} + Handicap siguientes {rules.handicap_cut}. El <strong>ranking general</strong> sigue
-                        mostrando a todos los que jugaron (todas sus rondas).
+                        Ranking final: mín. {rules.min_rounds} torneos. Scratch: mejores {rules.counting_rounds} por Gross
+                        (top {rules.scratch_cut}). Handicap: mejores {rules.counting_rounds} por Neto (top {rules.handicap_cut},
+                        sin Scratch). El <strong>ranking general</strong> sigue mostrando a todos los que jugaron (todas sus
+                        rondas).
                       </>
                     ) : (
                       <>
@@ -995,9 +996,9 @@ export default function Rankings() {
 
                     <div className="bg-white rounded-lg border">
                       <div className="px-6 py-4 border-b">
-                        <h2 className="text-lg font-semibold">Handicap — siguientes {rules.handicap_cut} (Neto)</h2>
+                        <h2 className="text-lg font-semibold">Handicap — top {rules.handicap_cut} (Neto)</h2>
                         <p className="text-xs text-gray-500">
-                          Siguientes al Scratch por Gross; orden por neto de las {rules.counting_rounds} tarjetas computables.
+                          Mejores {rules.counting_rounds} tarjetas por Neto (HCP del torneo). Sin los del Scratch. Orden por neto.
                         </p>
                       </div>
                       <div className="p-6">

@@ -2037,7 +2037,8 @@ async function setAnnualRankingTournamentPicks(clubId, year, tournamentIds) {
  *
  * - general_* : todos los socios con ≥1 tarjeta; suma de TODAS las rondas (como el acumulado previo).
  *   Neto: gross guardado − handicap sellado de cada torneo (handicap_used), no el de la ficha de hoy.
- * - scratch / handicap : reglas finales (mín. N rondas, best-of-M por Gross, cortes Scratch/HCP).
+ * - scratch : mín. N rondas, best-of-M por Gross, top Scratch por Gross.
+ * - handicap : best-of-M por Neto (HCP del torneo), top Handicap por Neto, excluyendo Scratch.
  * - without_hcp / with_hcp : en provisorio = general; en final = scratch / handicap (compat. portal).
  */
 async function getAnnualRankings(clubId, year) {
@@ -2123,8 +2124,48 @@ async function getAnnualRankings(clubId, year) {
         }
 
         const generalAll = [];
-        const eligible = [];
+        const eligibleScratch = [];
+        const eligibleHandicap = [];
         const notEligible = [];
+
+        const mapRound = (r, counts) => ({
+            tournament_id: r.tournament_id,
+            tournament_name: r.tournament_name,
+            tournament_date: r.tournament_date,
+            handicap_used: r.handicap_used,
+            front_nine: r.front_nine,
+            back_nine: r.back_nine,
+            total_gross: r.total_gross,
+            total_net: r.total_net,
+            counts: !!counts
+        });
+
+        const buildBestOf = (uniqueRounds, mode) => {
+            const sorted = [...uniqueRounds].sort((a, b) => {
+                if (mode === 'net') {
+                    return (
+                        a.total_net - b.total_net ||
+                        a.total_gross - b.total_gross ||
+                        a.tournament_id - b.tournament_id
+                    );
+                }
+                return a.total_gross - b.total_gross || a.tournament_id - b.tournament_id;
+            });
+            const kept = sorted.slice(0, countingRounds);
+            const dropped = sorted.slice(countingRounds);
+            return {
+                rounds: uniqueRounds.length,
+                rounds_counted: kept.length,
+                total_gross: kept.reduce((s, r) => s + r.total_gross, 0),
+                total_net: kept.reduce((s, r) => s + r.total_net, 0),
+                kept_tournaments: kept.map((r) => mapRound(r, true)),
+                dropped_tournaments: dropped.map((r) => mapRound(r, false)),
+                round_details: [
+                    ...kept.map((r) => mapRound(r, true)),
+                    ...dropped.map((r) => mapRound(r, false))
+                ]
+            };
+        };
 
         for (const entry of byMember.values()) {
             const byTournament = new Map();
@@ -2133,27 +2174,13 @@ async function getAnnualRankings(clubId, year) {
                 const prev = byTournament.get(tid);
                 if (!prev || r.total_gross < prev.total_gross) byTournament.set(tid, r);
             }
-            const uniqueRounds = Array.from(byTournament.values()).sort(
-                (a, b) => a.total_gross - b.total_gross || a.tournament_id - b.tournament_id
-            );
+            const uniqueRounds = Array.from(byTournament.values());
             const roundsPlayed = uniqueRounds.length;
             if (roundsPlayed === 0) continue;
 
             const allGross = uniqueRounds.reduce((s, r) => s + r.total_gross, 0);
             const allNet = uniqueRounds.reduce((s, r) => s + r.total_net, 0);
             const hasIndex = entry.handicap_index != null && entry.handicap_index !== '';
-
-            const mapRound = (r, counts) => ({
-                tournament_id: r.tournament_id,
-                tournament_name: r.tournament_name,
-                tournament_date: r.tournament_date,
-                handicap_used: r.handicap_used,
-                front_nine: r.front_nine,
-                back_nine: r.back_nine,
-                total_gross: r.total_gross,
-                total_net: r.total_net,
-                counts: !!counts
-            });
             const allDetails = uniqueRounds.map((r) => mapRound(r, true));
 
             generalAll.push({
@@ -2181,23 +2208,13 @@ async function getAnnualRankings(clubId, year) {
                 continue;
             }
 
-            const kept = uniqueRounds.slice(0, countingRounds);
-            const dropped = uniqueRounds.slice(countingRounds);
-            eligible.push({
+            const base = {
                 member_id: entry.member_id,
                 player_name: entry.player_name,
-                member_number: entry.member_number,
-                rounds: roundsPlayed,
-                rounds_counted: kept.length,
-                total_gross: kept.reduce((s, r) => s + r.total_gross, 0),
-                total_net: kept.reduce((s, r) => s + r.total_net, 0),
-                kept_tournaments: kept.map((r) => mapRound(r, true)),
-                dropped_tournaments: dropped.map((r) => mapRound(r, false)),
-                round_details: [
-                    ...kept.map((r) => mapRound(r, true)),
-                    ...dropped.map((r) => mapRound(r, false))
-                ]
-            });
+                member_number: entry.member_number
+            };
+            eligibleScratch.push({ ...base, ...buildBestOf(uniqueRounds, 'gross') });
+            eligibleHandicap.push({ ...base, ...buildBestOf(uniqueRounds, 'net') });
         }
 
         // General Gross: todos, orden por suma de todas las rondas
@@ -2241,27 +2258,30 @@ async function getAnnualRankings(clubId, year) {
                 ranking_list: 'general_net'
             }));
 
-        eligible.sort(
+        eligibleScratch.sort(
             (a, b) =>
                 a.total_gross - b.total_gross ||
                 a.total_net - b.total_net ||
                 a.member_id - b.member_id
         );
 
-        const scratch = eligible.slice(0, scratchCut).map((r, i) => ({
+        const scratch = eligibleScratch.slice(0, scratchCut).map((r, i) => ({
             ...r,
             position: i + 1,
             ranking_list: 'scratch'
         }));
+        const scratchIds = new Set(scratch.map((r) => Number(r.member_id)));
 
-        const handicapPool = eligible.slice(scratchCut, scratchCut + handicapCut);
-        const handicap = [...handicapPool]
+        // Handicap: mejores N por Neto, excluyendo Scratch; cupo por Neto (no por Gross).
+        const handicap = eligibleHandicap
+            .filter((r) => !scratchIds.has(Number(r.member_id)))
             .sort(
                 (a, b) =>
                     a.total_net - b.total_net ||
                     a.total_gross - b.total_gross ||
                     a.member_id - b.member_id
             )
+            .slice(0, handicapCut)
             .map((r, i) => ({
                 ...r,
                 position: i + 1,
@@ -2280,8 +2300,10 @@ async function getAnnualRankings(clubId, year) {
                 scratch_cut: scratchCut,
                 handicap_cut: handicapCut,
                 drop_worst_by: 'gross',
+                drop_worst_handicap_by: 'net',
                 scratch_ordered_by: 'gross',
-                handicap_ordered_by: 'net'
+                handicap_ordered_by: 'net',
+                handicap_selected_by: 'net'
             },
             // Ranking general (todos, todas las rondas)
             general_without_hcp: generalGross,
@@ -2299,7 +2321,7 @@ async function getAnnualRankings(clubId, year) {
             not_eligible: notEligible.sort(
                 (a, b) => b.rounds - a.rounds || a.player_name.localeCompare(b.player_name, 'es')
             ),
-            eligible_count: eligible.length,
+            eligible_count: eligibleScratch.length,
             annual_selection: {
                 uses_explicit_selection: pickIds.length > 0,
                 tournament_ids: pickIds
