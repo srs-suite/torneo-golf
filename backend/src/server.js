@@ -49,6 +49,7 @@ import {
     getAnnualRankings, getTournamentRanking,
     getAnnualRankingCandidates, getAnnualRankingTournamentPicks, setAnnualRankingTournamentPicks,
     getAnnualRankingYearState, setAnnualRankingYearFinalized,
+    getAnnualRankingBracket, setAnnualRankingBracketWinner,
     
     // Payments and accounting functions
     getPaymentsSummary, getExpenses, addExpense, updateExpense, deleteExpense,
@@ -1338,6 +1339,30 @@ async function handleClubAPI(req, res, pathParts) {
                 if (rankingSub === 'status' && method === 'GET') {
                     const state = await getAnnualRankingYearState(parseInt(clubId, 10), year);
                     sendJSON(res, { success: true, data: state });
+                    return;
+                }
+                if (rankingSub === 'bracket' && method === 'GET') {
+                    try {
+                        const bracket = await getAnnualRankingBracket(parseInt(clubId, 10), year);
+                        sendJSON(res, { success: true, data: bracket });
+                    } catch (e) {
+                        sendError(res, e.message || 'Error al obtener la llave', 400);
+                    }
+                    return;
+                }
+                if (rankingSub === 'bracket' && method === 'PUT') {
+                    const auth = validateAdminBearer(req, clubId);
+                    if (!auth.ok) {
+                        sendError(res, auth.message || 'No autorizado', 401);
+                        return;
+                    }
+                    const body = await parseBody(req);
+                    try {
+                        const bracket = await setAnnualRankingBracketWinner(parseInt(clubId, 10), year, body);
+                        sendJSON(res, { success: true, data: bracket });
+                    } catch (e) {
+                        sendError(res, e.message || 'Error al guardar el ganador', 400);
+                    }
                     return;
                 }
                 if (!rankingSub && method === 'GET') {

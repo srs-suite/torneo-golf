@@ -15,6 +15,11 @@ import {
 } from '@/utils/rankingExport'
 import { permFlag } from '@/lib/permissionFlags'
 
+const BRACKET_ROUND_LABELS: Record<number, string[]> = {
+  8: ['Cuartos', 'Semifinales', 'Final'],
+  16: ['Octavos', 'Cuartos', 'Semifinales', 'Final'],
+}
+
 function isRankingTournament(t: { is_ranking_event?: unknown }): boolean {
   return permFlag(t?.is_ranking_event)
 }
@@ -272,6 +277,15 @@ export default function Rankings() {
   const [finalizing, setFinalizing] = useState(false)
   /** Panel de torneos del acumulado: cerrado por defecto; el ranking usa todos hasta abrir y guardar selección. */
   const [annualPicksOpen, setAnnualPicksOpen] = useState(false)
+  const [bracketOpen, setBracketOpen] = useState(false)
+  const [bracket, setBracket] = useState<any>(null)
+  const [bracketLoading, setBracketLoading] = useState(false)
+  const [bracketSavingKey, setBracketSavingKey] = useState<string | null>(null)
+
+  useEffect(() => {
+    setBracket(null)
+    setBracketOpen(false)
+  }, [year, clubIdNum])
 
   /** Orden visible de cada tabla (para WhatsApp). */
   const orderedGeneralRef = useRef<any[]>([])
@@ -478,28 +492,162 @@ export default function Rankings() {
     }
   }
 
-  const handlePrintBracket = () => {
+  const throughLabelForBracket = () => {
+    const sortedDates = [...rankingExcelTournaments].sort((a, b) =>
+      String(a.tournament_date ?? '').localeCompare(String(b.tournament_date ?? ''))
+    )
+    const last = sortedDates[sortedDates.length - 1]
+    const raw = String(last?.tournament_date ?? '')
+    const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/)
+    return iso ? `${iso[3]}/${iso[2]}` : ''
+  }
+
+  const loadBracket = async () => {
+    if (!clubIdNum || !isFinal) return
+    setBracketLoading(true)
+    try {
+      const data = await tournamentService.getAnnualRankingBracket(clubIdNum, year)
+      setBracket(data)
+    } catch {
+      toast.error('No se pudo cargar la llave')
+    } finally {
+      setBracketLoading(false)
+    }
+  }
+
+  const handleOpenBracket = async () => {
+    if (!isFinal) return
+    setBracketOpen(true)
+    await loadBracket()
+  }
+
+  const handlePrintBracket = async () => {
     if (!isFinal) return
     try {
-      const sortedDates = [...rankingExcelTournaments].sort((a, b) =>
-        String(a.tournament_date ?? '').localeCompare(String(b.tournament_date ?? ''))
-      )
-      const last = sortedDates[sortedDates.length - 1]
-      const raw = String(last?.tournament_date ?? '')
-      const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/)
-      const throughLabel = iso ? `${iso[3]}/${iso[2]}` : ''
+      let data = bracket
+      if (!data) {
+        data = await tournamentService.getAnnualRankingBracket(clubIdNum, year)
+        setBracket(data)
+      }
       printAnnualBracket({
         year: annual?.year || year,
         clubName: club?.course_name || 'Club',
-        throughLabel,
+        throughLabel: throughLabelForBracket(),
         sheets: [
-          { title: 'Scratch', size: 8, rows: scratchRows.slice(0, 8) },
-          { title: 'Handicap', size: 16, rows: handicapRows.slice(0, 16) },
+          {
+            title: 'Scratch',
+            size: 8,
+            rows: scratchRows.slice(0, 8),
+            seeds: data?.scratch?.seeds,
+            winners: data?.scratch?.winners || {},
+          },
+          {
+            title: 'Handicap',
+            size: 16,
+            rows: handicapRows.slice(0, 16),
+            seeds: data?.handicap?.seeds,
+            winners: data?.handicap?.winners || {},
+          },
         ],
       })
     } catch {
       toast.error('No se pudo abrir la impresión. Permití ventanas emergentes.')
     }
+  }
+
+  const handleSetBracketWinner = async (
+    bracketType: 'scratch' | 'handicap',
+    round: number,
+    match: number,
+    winnerMemberId: number | null
+  ) => {
+    if (!clubIdNum || !canConfigureAnnualPicks) return
+    const key = `${bracketType}-${round}-${match}`
+    setBracketSavingKey(key)
+    try {
+      const data = await tournamentService.setAnnualRankingBracketWinner(clubIdNum, year, {
+        bracket_type: bracketType,
+        round,
+        match,
+        winner_member_id: winnerMemberId,
+      })
+      setBracket(data)
+    } catch {
+      toast.error('No se pudo guardar el ganador')
+    } finally {
+      setBracketSavingKey(null)
+    }
+  }
+
+  const renderBracketSide = (title: string, side: any, bracketType: 'scratch' | 'handicap') => {
+    if (!side) return null
+    const size = Number(side.size) || 8
+    const labels = BRACKET_ROUND_LABELS[size] || BRACKET_ROUND_LABELS[8]
+    const byRound = new Map<number, any[]>()
+    for (const m of side.matches || []) {
+      const list = byRound.get(m.round) || []
+      list.push(m)
+      byRound.set(m.round, list)
+    }
+    return (
+      <div className="border rounded-lg p-4 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-base font-semibold text-gray-900">
+            {title} — {size} jugadores
+          </h3>
+          {side.champion?.player_name && (
+            <p className="text-sm text-green-800 font-medium">Campeón: {sanitizeAscii(side.champion.player_name)}</p>
+          )}
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {labels.map((label, round) => (
+            <div key={`${bracketType}-${round}`} className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</p>
+              {(byRound.get(round) || []).map((m: any) => {
+                const saveKey = `${bracketType}-${m.round}-${m.match}`
+                const busy = bracketSavingKey === saveKey
+                const a = m.player_a
+                const b = m.player_b
+                const wid = m.winner_member_id != null ? Number(m.winner_member_id) : null
+                return (
+                  <div key={m.key} className="rounded-md border border-gray-200 bg-white p-2 space-y-1">
+                    {[a, b].map((p: any, idx: number) => {
+                      const mid = p?.member_id != null ? Number(p.member_id) : null
+                      const selected = mid != null && wid === mid
+                      const disabled = !canConfigureAnnualPicks || !m.can_set || busy || mid == null
+                      return (
+                        <button
+                          key={`${m.key}-${idx}`}
+                          type="button"
+                          disabled={disabled}
+                          onClick={() =>
+                            handleSetBracketWinner(
+                              bracketType,
+                              m.round,
+                              m.match,
+                              selected ? null : mid
+                            )
+                          }
+                          className={`w-full text-left px-2 py-1.5 rounded text-sm border ${
+                            selected
+                              ? 'border-green-600 bg-green-50 text-green-900 font-medium'
+                              : 'border-gray-200 hover:bg-gray-50 text-gray-800'
+                          } disabled:opacity-50 disabled:cursor-not-allowed`}
+                        >
+                          <span className="inline-block w-6 text-xs text-gray-500">{p?.seed ?? '—'}</span>
+                          {sanitizeAscii(p?.player_name) || 'Por definir'}
+                          {selected ? ' ✓' : ''}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+    )
   }
 
   const handleExportTournamentExcel = () => {
@@ -960,6 +1108,14 @@ export default function Rankings() {
                           </button>
                           <button
                             type="button"
+                            onClick={handleOpenBracket}
+                            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
+                          >
+                            <Trophy className="h-4 w-4 text-amber-600" />
+                            Llave / Torneo final
+                          </button>
+                          <button
+                            type="button"
                             onClick={handlePrintBracket}
                             className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
                           >
@@ -1016,6 +1172,54 @@ export default function Rankings() {
                         )}
                       </div>
                     </div>
+
+                    {bracketOpen && (
+                      <div className="bg-white rounded-lg border">
+                        <div className="px-6 py-4 border-b flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <h2 className="text-lg font-semibold">Llave — Torneo final</h2>
+                            <p className="text-xs text-gray-500">
+                              Tocá al ganador de cada partido. Podés reimprimir la llave con los resultados cargados.
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={loadBracket}
+                              disabled={bracketLoading}
+                              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50"
+                            >
+                              Actualizar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handlePrintBracket}
+                              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
+                            >
+                              <Printer className="h-4 w-4 text-gray-700" />
+                              Imprimir llave
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setBracketOpen(false)}
+                              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50"
+                            >
+                              Cerrar
+                            </button>
+                          </div>
+                        </div>
+                        <div className="p-6 space-y-6">
+                          {bracketLoading && !bracket ? (
+                            <p className="text-sm text-gray-600">Cargando llave…</p>
+                          ) : (
+                            <>
+                              {renderBracketSide('Scratch', bracket?.scratch, 'scratch')}
+                              {renderBracketSide('Handicap', bracket?.handicap, 'handicap')}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )}
 
                     <div className="bg-white rounded-lg border">
                       <div className="px-6 py-4 border-b flex flex-wrap items-center justify-between gap-3">

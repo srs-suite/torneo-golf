@@ -699,7 +699,7 @@ export async function exportRankingImageForWhatsApp(params: {
   downloadBlob(blob, params.fileName)
 }
 
-function firstRoundPairs(size: number): Array<[number, number]> {
+export function firstRoundPairs(size: number): Array<[number, number]> {
   const slotOrder = [1, 8, 4, 5, 3, 6, 2, 7]
   if (size <= 8) {
     const pairs: Array<[number, number]> = []
@@ -716,9 +716,70 @@ function bracketRoundLabels(size: number): string[] {
   return ['Octavos de final', 'Cuartos de final', 'Semifinales', 'Final', 'Campeón']
 }
 
-function drawBracketSvg(size: number, rows: any[]): string {
+export type BracketSeed = {
+  seed: number
+  member_id?: number | null
+  player_name?: string
+}
+
+/** Resuelve casilleros por ronda a partir de semillas + ganadores { "r-m": member_id }. */
+export function resolveBracketRoundSlots(
+  size: number,
+  seeds: BracketSeed[],
+  winners: Record<string, number | string> = {}
+): Array<Array<BracketSeed | null>> {
+  const bySeed = new Map(seeds.map((s) => [Number(s.seed), s]))
   const pairs = firstRoundPairs(size)
-  const slots = pairs.flatMap(([a, b]) => [a, b])
+  const rounds = Math.round(Math.log2(size))
+  const roundSlots: Array<Array<BracketSeed | null>> = []
+  roundSlots.push(
+    pairs.flatMap(([a, b]) => [
+      bySeed.get(a) || { seed: a, member_id: null, player_name: '' },
+      bySeed.get(b) || { seed: b, member_id: null, player_name: '' },
+    ])
+  )
+  for (let r = 0; r < rounds; r++) {
+    const prev = roundSlots[r]
+    const next: Array<BracketSeed | null> = []
+    const matchCount = prev.length / 2
+    for (let m = 0; m < matchCount; m++) {
+      const widRaw = winners[`${r}-${m}`]
+      const wid = widRaw != null && widRaw !== '' ? Number(widRaw) : null
+      const pa = prev[m * 2]
+      const pb = prev[m * 2 + 1]
+      let winner: BracketSeed | null = null
+      if (wid != null && Number.isFinite(wid)) {
+        if (pa && Number(pa.member_id) === wid) winner = pa
+        else if (pb && Number(pb.member_id) === wid) winner = pb
+      }
+      next.push(winner)
+    }
+    roundSlots.push(next)
+  }
+  return roundSlots
+}
+
+function clipName(raw: string, size: number): string {
+  const max = size <= 8 ? 22 : 18
+  const t = raw.trim()
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t
+}
+
+function drawBracketSvg(
+  size: number,
+  rows: any[],
+  winners: Record<string, number | string> = {},
+  seedsIn?: BracketSeed[]
+): string {
+  const seeds =
+    seedsIn && seedsIn.length
+      ? seedsIn
+      : Array.from({ length: size }, (_, i) => ({
+          seed: i + 1,
+          member_id: rows[i]?.member_id != null ? Number(rows[i].member_id) : null,
+          player_name: String(rows[i]?.player_name ?? ''),
+        }))
+  const roundSlots = resolveBracketRoundSlots(size, seeds, winners)
   const W = 1080
   const H = size <= 8 ? 520 : 640
   const rounds = Math.round(Math.log2(size))
@@ -732,18 +793,24 @@ function drawBracketSvg(size: number, rows: any[]): string {
   const bodyH = H - 12
   const xs = Array.from({ length: cols }, (_, i) => 8 + i * colW)
   const parts: string[] = []
-  const nameOf = (seed: number) => {
-    const raw = String(rows[seed - 1]?.player_name ?? '').trim()
-    return escXml(raw.length > (size <= 8 ? 22 : 18) ? `${raw.slice(0, size <= 8 ? 21 : 17)}…` : raw)
-  }
   const drawBox = (x: number, cy: number, seed: number | null, name: string) => {
     const y = cy - boxH / 2
     parts.push(`<rect x="${x}" y="${y}" width="${boxW}" height="${boxH}" rx="3" fill="#ffffff" stroke="#d7e0ea"/>`)
-    if (seed != null) {
-      const s = boxH - 10
-      parts.push(`<rect x="${x + 5}" y="${y + 5}" width="${s}" height="${s}" rx="2" fill="#eef3f8"/>`)
-      parts.push(`<text x="${x + 5 + s / 2}" y="${cy}" text-anchor="middle" dominant-baseline="middle" font-size="${font - 1}" font-weight="700" fill="#16324f">${seed}</text>`)
-      parts.push(`<text x="${x + s + 12}" y="${cy}" dominant-baseline="middle" font-size="${font}" fill="#1e293b">${name}</text>`)
+    if (name || seed != null) {
+      if (seed != null) {
+        const s = boxH - 10
+        parts.push(`<rect x="${x + 5}" y="${y + 5}" width="${s}" height="${s}" rx="2" fill="#eef3f8"/>`)
+        parts.push(
+          `<text x="${x + 5 + s / 2}" y="${cy}" text-anchor="middle" dominant-baseline="middle" font-size="${font - 1}" font-weight="700" fill="#16324f">${seed}</text>`
+        )
+        parts.push(
+          `<text x="${x + s + 12}" y="${cy}" dominant-baseline="middle" font-size="${font}" fill="#1e293b">${escXml(name)}</text>`
+        )
+      } else if (name) {
+        parts.push(
+          `<text x="${x + 8}" y="${cy}" dominant-baseline="middle" font-size="${font}" fill="#1e293b">${escXml(name)}</text>`
+        )
+      }
     }
   }
   const feed = (xRight: number, yTop: number, yBot: number, xDest: number, yDest: number) => {
@@ -755,42 +822,57 @@ function drawBracketSvg(size: number, rows: any[]): string {
     )
   }
 
-  const centers0 = slots.map((_, i) => top + (bodyH / slots.length) * i + bodyH / slots.length / 2)
-  slots.forEach((seed, i) => drawBox(xs[0], centers0[i], seed, nameOf(seed)))
+  const centers0 = roundSlots[0].map((_, i) => top + (bodyH / roundSlots[0].length) * i + bodyH / roundSlots[0].length / 2)
+  roundSlots[0].forEach((p, i) => {
+    drawBox(xs[0], centers0[i], p?.seed ?? null, clipName(String(p?.player_name || ''), size))
+  })
 
-  let matches: Array<{ y1: number; y2: number }> = []
+  let matchCenters: Array<{ y1: number; y2: number }> = []
   for (let i = 0; i < centers0.length; i += 2) {
-    matches.push({ y1: centers0[i], y2: centers0[i + 1] })
+    matchCenters.push({ y1: centers0[i], y2: centers0[i + 1] })
   }
 
   for (let round = 1; round < rounds; round++) {
     const next: Array<{ y1: number; y2: number }> = []
-    for (let m = 0; m < matches.length; m += 2) {
-      const upper = matches[m]
-      const lower = matches[m + 1]
+    const slots = roundSlots[round] || []
+    for (let m = 0; m < matchCenters.length; m += 2) {
+      const upper = matchCenters[m]
+      const lower = matchCenters[m + 1]
       const span = ((upper.y1 + upper.y2) / 2 + (lower.y1 + lower.y2) / 2) / 2
       const a = span - boxH / 2 - gap / 2
       const b = span + boxH / 2 + gap / 2
       feed(xs[round - 1] + boxW, upper.y1, upper.y2, xs[round], a)
       feed(xs[round - 1] + boxW, lower.y1, lower.y2, xs[round], b)
-      drawBox(xs[round], a, null, '')
-      drawBox(xs[round], b, null, '')
+      const pa = slots[m] || null
+      const pb = slots[m + 1] || null
+      drawBox(xs[round], a, pa?.seed ?? null, clipName(String(pa?.player_name || ''), size))
+      drawBox(xs[round], b, pb?.seed ?? null, clipName(String(pb?.player_name || ''), size))
       next.push({ y1: a, y2: b })
     }
-    matches = next
+    matchCenters = next
   }
 
-  const last = matches[0]
+  const last = matchCenters[0]
   const finalY = last ? (last.y1 + last.y2) / 2 : H / 2
   if (last) {
     feed(xs[rounds - 1] + boxW, last.y1, last.y2, xs[rounds], finalY)
   }
+  const champ = roundSlots[rounds]?.[0] || null
   const tagW = 92
   const tagH = 30
   const x = xs[rounds]
   parts.push(`<rect x="${x}" y="${finalY - tagH / 2}" width="${tagW}" height="${tagH}" fill="#16324f"/>`)
-  parts.push(`<text x="${x + tagW / 2}" y="${finalY}" text-anchor="middle" dominant-baseline="middle" font-size="11" font-weight="800" fill="#ffffff" letter-spacing="0.5">CAMPEÓN</text>`)
-  parts.push(`<rect x="${x + tagW + 10}" y="${finalY - boxH / 2}" width="${Math.max(70, boxW - 50)}" height="${boxH}" rx="3" fill="#ffffff" stroke="#d7e0ea"/>`)
+  parts.push(
+    `<text x="${x + tagW / 2}" y="${finalY}" text-anchor="middle" dominant-baseline="middle" font-size="11" font-weight="800" fill="#ffffff" letter-spacing="0.5">CAMPEÓN</text>`
+  )
+  parts.push(
+    `<rect x="${x + tagW + 10}" y="${finalY - boxH / 2}" width="${Math.max(70, boxW - 50)}" height="${boxH}" rx="3" fill="#ffffff" stroke="#d7e0ea"/>`
+  )
+  if (champ?.player_name) {
+    parts.push(
+      `<text x="${x + tagW + 18}" y="${finalY}" dominant-baseline="middle" font-size="${font}" fill="#1e293b">${escXml(clipName(String(champ.player_name), size))}</text>`
+    )
+  }
 
   return `<svg class="bracket-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" font-family="Calibri, Segoe UI, Arial, sans-serif">${parts.join('')}</svg>`
 }
@@ -799,6 +881,8 @@ function bracketPageHtml(sheet: {
   title: string
   size: number
   rows: any[]
+  winners?: Record<string, number | string>
+  seeds?: BracketSeed[]
   clubName: string
   year: number
   throughLabel: string
@@ -818,7 +902,7 @@ function bracketPageHtml(sheet: {
     </header>
     <p class="meta">${escXml(sheet.clubName || 'Club')} · Ranking ${sheet.year}</p>
     <div class="labels cols-${labels.length}">${labels.map((label) => `<span>${label}</span>`).join('')}</div>
-    <div class="bracket-fit">${drawBracketSvg(size, sheet.rows)}</div>
+    <div class="bracket-fit">${drawBracketSvg(size, sheet.rows, sheet.winners || {}, sheet.seeds)}</div>
   </section>`
 }
 
@@ -826,7 +910,7 @@ function bracketHtml(params: {
   year: number
   clubName: string
   throughLabel: string
-  sheets: { title: string; size: number; rows: any[] }[]
+  sheets: { title: string; size: number; rows: any[]; winners?: Record<string, number | string>; seeds?: BracketSeed[] }[]
 }): string {
   const pages = params.sheets
     .map((sheet) =>
@@ -885,7 +969,7 @@ export function printAnnualBracket(params: {
   year: number
   clubName: string
   throughLabel: string
-  sheets: { title: string; size: number; rows: any[] }[]
+  sheets: { title: string; size: number; rows: any[]; winners?: Record<string, number | string>; seeds?: BracketSeed[] }[]
 }) {
   const html = bracketHtml(params)
   const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }))

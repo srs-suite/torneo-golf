@@ -1890,6 +1890,220 @@ async function setAnnualRankingYearFinalized(clubId, year, finalize, adminId = n
     return getAnnualRankingYearState(courseId, yearInt);
 }
 
+async function ensureAnnualRankingBracketTable() {
+    await executeQuery(`
+        CREATE TABLE IF NOT EXISTS annual_ranking_bracket (
+            course_id INT NOT NULL,
+            calendar_year SMALLINT NOT NULL,
+            bracket_type ENUM('scratch', 'handicap') NOT NULL,
+            seeds_json LONGTEXT NOT NULL,
+            winners_json LONGTEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (course_id, calendar_year, bracket_type)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+}
+
+function bracketFirstRoundPairs(size) {
+    const slotOrder = [1, 8, 4, 5, 3, 6, 2, 7];
+    if (size <= 8) {
+        const pairs = [];
+        for (let i = 0; i < slotOrder.length; i += 2) {
+            pairs.push([slotOrder[i], slotOrder[i + 1]]);
+        }
+        return pairs;
+    }
+    return slotOrder.map((seed) => [seed, size + 1 - seed]);
+}
+
+function parseBracketJson(raw, fallback) {
+    if (raw == null || raw === '') return fallback;
+    try {
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        return parsed && typeof parsed === 'object' ? parsed : fallback;
+    } catch {
+        return fallback;
+    }
+}
+
+function seedsFromRankingRows(rows, size) {
+    return Array.from({ length: size }, (_, i) => {
+        const r = rows[i] || null;
+        return {
+            seed: i + 1,
+            member_id: r?.member_id != null ? Number(r.member_id) : null,
+            player_name: String(r?.player_name || '').trim()
+        };
+    });
+}
+
+function buildBracketView(seeds, winners, size) {
+    const list = Array.isArray(seeds) ? seeds : [];
+    const bySeed = new Map(list.map((s) => [Number(s.seed), s]));
+    const winMap = winners && typeof winners === 'object' ? winners : {};
+    const pairs = bracketFirstRoundPairs(size);
+    const rounds = Math.round(Math.log2(size));
+    const roundSlots = [];
+
+    const firstSlots = pairs.flatMap(([a, b]) => [
+        bySeed.get(a) || { seed: a, member_id: null, player_name: '' },
+        bySeed.get(b) || { seed: b, member_id: null, player_name: '' }
+    ]);
+    roundSlots.push(firstSlots);
+
+    for (let r = 0; r < rounds; r++) {
+        const prev = roundSlots[r];
+        const next = [];
+        const matchCount = prev.length / 2;
+        for (let m = 0; m < matchCount; m++) {
+            const key = `${r}-${m}`;
+            const wid = winMap[key] != null && winMap[key] !== '' ? Number(winMap[key]) : null;
+            const pa = prev[m * 2] || null;
+            const pb = prev[m * 2 + 1] || null;
+            let winner = null;
+            if (wid != null && Number.isFinite(wid)) {
+                if (pa && Number(pa.member_id) === wid) winner = pa;
+                else if (pb && Number(pb.member_id) === wid) winner = pb;
+            }
+            next.push(winner);
+        }
+        roundSlots.push(next);
+    }
+
+    const matches = [];
+    for (let r = 0; r < rounds; r++) {
+        const slots = roundSlots[r];
+        const matchCount = slots.length / 2;
+        for (let m = 0; m < matchCount; m++) {
+            const key = `${r}-${m}`;
+            const pa = slots[m * 2] || null;
+            const pb = slots[m * 2 + 1] || null;
+            const wid = winMap[key] != null && winMap[key] !== '' ? Number(winMap[key]) : null;
+            matches.push({
+                round: r,
+                match: m,
+                key,
+                player_a: pa,
+                player_b: pb,
+                winner_member_id: wid,
+                can_set: !!(pa?.member_id && pb?.member_id)
+            });
+        }
+    }
+
+    const champion = roundSlots[rounds]?.[0] || null;
+    return { size, seeds: list, winners: winMap, round_slots: roundSlots, matches, champion };
+}
+
+async function loadBracketRow(courseId, yearInt, bracketType) {
+    await ensureAnnualRankingBracketTable();
+    const { rows } = await executeQuery(
+        `SELECT seeds_json, winners_json FROM annual_ranking_bracket
+         WHERE course_id = ? AND calendar_year = ? AND bracket_type = ?
+         LIMIT 1`,
+        [courseId, yearInt, bracketType]
+    );
+    return rows && rows[0] ? rows[0] : null;
+}
+
+async function saveBracketRow(courseId, yearInt, bracketType, seeds, winners) {
+    await ensureAnnualRankingBracketTable();
+    await executeQuery(
+        `INSERT INTO annual_ranking_bracket (course_id, calendar_year, bracket_type, seeds_json, winners_json)
+         VALUES (?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE seeds_json = VALUES(seeds_json), winners_json = VALUES(winners_json)`,
+        [courseId, yearInt, bracketType, JSON.stringify(seeds || []), JSON.stringify(winners || {})]
+    );
+}
+
+/**
+ * Llave del torneo final (Scratch 8 / Handicap 16). Si no hay semillas guardadas, usa el ranking actual.
+ */
+async function getAnnualRankingBracket(clubId, year) {
+    const courseId = parseInt(clubId, 10);
+    const yearInt = parseInt(year, 10);
+    const rankings = await getAnnualRankings(courseId, yearInt);
+    const scratchRows = rankings.scratch || [];
+    const handicapRows = rankings.handicap || [];
+
+    const buildSide = async (type, rows, size) => {
+        const saved = await loadBracketRow(courseId, yearInt, type);
+        let seeds = parseBracketJson(saved?.seeds_json, null);
+        const winners = parseBracketJson(saved?.winners_json, {});
+        const fromRanking = seedsFromRankingRows(rows, size);
+        const needsSeed =
+            !Array.isArray(seeds) ||
+            !seeds.length ||
+            !seeds.some((s) => s && s.member_id != null);
+        if (needsSeed) {
+            seeds = fromRanking;
+            await saveBracketRow(courseId, yearInt, type, seeds, winners);
+        }
+        return buildBracketView(seeds, winners, size);
+    };
+
+    return {
+        year: yearInt,
+        club_id: courseId,
+        status: rankings.status,
+        scratch: await buildSide('scratch', scratchRows, 8),
+        handicap: await buildSide('handicap', handicapRows, 16)
+    };
+}
+
+/**
+ * Guarda el ganador de un partido. winner_member_id null = borrar resultado.
+ * Limpia rondas siguientes afectadas.
+ */
+async function setAnnualRankingBracketWinner(clubId, year, payload) {
+    const courseId = parseInt(clubId, 10);
+    const yearInt = parseInt(year, 10);
+    const bracketType = payload?.bracket_type === 'handicap' ? 'handicap' : 'scratch';
+    const round = Number(payload?.round);
+    const match = Number(payload?.match);
+    if (!Number.isInteger(round) || round < 0 || !Number.isInteger(match) || match < 0) {
+        throw new Error('Partido inválido');
+    }
+
+    const data = await getAnnualRankingBracket(courseId, yearInt);
+    const side = bracketType === 'handicap' ? data.handicap : data.scratch;
+    const key = `${round}-${match}`;
+    const current = side.matches.find((m) => m.key === key);
+    if (!current) throw new Error('Partido no encontrado');
+
+    const winners = { ...(side.winners || {}) };
+    const wid =
+        payload?.winner_member_id == null || payload?.winner_member_id === ''
+            ? null
+            : Number(payload.winner_member_id);
+
+    if (wid == null) {
+        delete winners[key];
+    } else {
+        if (!current.can_set) throw new Error('Faltan jugadores en este partido');
+        const ok =
+            Number(current.player_a?.member_id) === wid || Number(current.player_b?.member_id) === wid;
+        if (!ok) throw new Error('El ganador debe ser uno de los dos jugadores del partido');
+        winners[key] = wid;
+    }
+
+    // Limpiar partidos posteriores que dependen de este resultado
+    const size = side.size;
+    const rounds = Math.round(Math.log2(size));
+    let r = round;
+    let m = match;
+    while (r + 1 < rounds) {
+        const nextRound = r + 1;
+        const nextMatch = Math.floor(m / 2);
+        delete winners[`${nextRound}-${nextMatch}`];
+        r = nextRound;
+        m = nextMatch;
+    }
+
+    await saveBracketRow(courseId, yearInt, bracketType, side.seeds, winners);
+    return getAnnualRankingBracket(courseId, yearInt);
+}
+
 /** Neto = gross guardado − handicap de juego de ESA tarjeta (no el de la ficha de hoy). */
 function annualRoundNet(totalGross, handicapIndex, handicapPlay) {
     const gross = Number(totalGross) || 0;
@@ -9716,6 +9930,7 @@ export {
     getAnnualRankings, getTournamentRanking,
     getAnnualRankingCandidates, getAnnualRankingTournamentPicks, setAnnualRankingTournamentPicks,
     getAnnualRankingYearState, setAnnualRankingYearFinalized,
+    getAnnualRankingBracket, setAnnualRankingBracketWinner,
     
     // Payments and accounting functions
     getPaymentsSummary, getExpenses, addExpense, updateExpense, deleteExpense,

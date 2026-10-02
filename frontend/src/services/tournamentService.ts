@@ -289,6 +289,27 @@ export const tournamentService = {
     return response.data.data || response.data
   },
 
+  /** Llave del torneo final (Scratch / Handicap) con ganadores cargados. */
+  async getAnnualRankingBracket(clubId: number, year: number): Promise<any> {
+    const response = await api.get(`/club/${clubId}/rankings/annual/${year}/bracket`)
+    return response.data.data || response.data
+  },
+
+  /** Guarda o borra el ganador de un partido de la llave. */
+  async setAnnualRankingBracketWinner(
+    clubId: number,
+    year: number,
+    payload: {
+      bracket_type: 'scratch' | 'handicap'
+      round: number
+      match: number
+      winner_member_id: number | null
+    }
+  ): Promise<any> {
+    const response = await api.put(`/club/${clubId}/rankings/annual/${year}/bracket`, payload)
+    return response.data.data || response.data
+  },
+
   // Obtener ranking de un torneo específico
   async getTournamentRanking(clubId: number, tournamentId: number): Promise<any> {
     console.log(`🏆 API: GET /club/${clubId}/rankings/tournament/${tournamentId}`)
