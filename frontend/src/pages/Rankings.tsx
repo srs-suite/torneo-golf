@@ -9,15 +9,17 @@ import { useUserPermissions } from '@/hooks/useUserPermissions'
 import {
   exportAnnualRankingsExcel,
   printAnnualBracket,
+  resolveBracketRoundSlots,
   shareRankingImageForWhatsApp,
   exportTournamentRankingsExcel,
+  type BracketSeed,
   type WhatsAppShareResult,
 } from '@/utils/rankingExport'
 import { permFlag } from '@/lib/permissionFlags'
 
 const BRACKET_ROUND_LABELS: Record<number, string[]> = {
-  8: ['Cuartos', 'Semifinales', 'Final'],
-  16: ['Octavos', 'Cuartos', 'Semifinales', 'Final'],
+  8: ['Cuartos', 'Semifinales', 'Final', 'Campeón'],
+  16: ['Octavos', 'Cuartos', 'Semifinales', 'Final', 'Campeón'],
 }
 
 function isRankingTournament(t: { is_ranking_event?: unknown }): boolean {
@@ -27,6 +29,12 @@ function isRankingTournament(t: { is_ranking_event?: unknown }): boolean {
 function sanitizeAscii(text: string | undefined | null) {
   const base = (text ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7E]/g, '')
   return base.replace(/\s+/g, ' ').trim()
+}
+
+function clipBracketName(raw: string, size: number) {
+  const max = size <= 8 ? 22 : 16
+  const t = sanitizeAscii(raw)
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t
 }
 
 function fmtScoreCell(v: unknown) {
@@ -591,71 +599,228 @@ export default function Rankings() {
     if (!side) return null
     const size = Number(side.size) || 8
     const labels = BRACKET_ROUND_LABELS[size] || BRACKET_ROUND_LABELS[8]
-    const byRound = new Map<number, any[]>()
-    for (const m of side.matches || []) {
-      const list = byRound.get(m.round) || []
-      list.push(m)
-      byRound.set(m.round, list)
+    const seeds: BracketSeed[] = Array.isArray(side.seeds) ? side.seeds : []
+    const winners = (side.winners && typeof side.winners === 'object' ? side.winners : {}) as Record<
+      string,
+      number | string
+    >
+    const roundSlots = resolveBracketRoundSlots(size, seeds, winners)
+    const matchByKey = new Map<string, any>((side.matches || []).map((m: any) => [m.key, m]))
+    const rounds = Math.round(Math.log2(size))
+    const cols = rounds + 1
+    const W = size <= 8 ? 960 : 1100
+    const H = size <= 8 ? 460 : 600
+    const labelH = 28
+    const colW = (W - 16) / cols
+    const boxW = Math.min(size <= 8 ? 176 : 140, colW - 28)
+    const boxH = size <= 8 ? 34 : 24
+    const gap = size <= 8 ? 8 : 4
+    const fontPx = size <= 8 ? 12 : 10
+    const top = labelH + 8
+    const bodyH = H - top - 8
+    const xs = Array.from({ length: cols }, (_, i) => 8 + i * colW)
+
+    const centers: number[][] = []
+    centers[0] = roundSlots[0].map(
+      (_, i) => top + (bodyH / roundSlots[0].length) * i + bodyH / roundSlots[0].length / 2
+    )
+    let matchCenters: Array<{ y1: number; y2: number }> = []
+    for (let i = 0; i < centers[0].length; i += 2) {
+      matchCenters.push({ y1: centers[0][i], y2: centers[0][i + 1] })
     }
-    const colClass =
-      size <= 8 ? 'grid gap-4 sm:grid-cols-2 lg:grid-cols-3' : 'grid gap-4 sm:grid-cols-2 lg:grid-cols-4'
+    for (let round = 1; round < rounds; round++) {
+      const nextCenters: number[] = []
+      const nextMatches: Array<{ y1: number; y2: number }> = []
+      for (let m = 0; m < matchCenters.length; m += 2) {
+        const upper = matchCenters[m]
+        const lower = matchCenters[m + 1]
+        const span = ((upper.y1 + upper.y2) / 2 + (lower.y1 + lower.y2) / 2) / 2
+        const a = span - boxH / 2 - gap / 2
+        const b = span + boxH / 2 + gap / 2
+        nextCenters.push(a, b)
+        nextMatches.push({ y1: a, y2: b })
+      }
+      centers[round] = nextCenters
+      matchCenters = nextMatches
+    }
+    const last = matchCenters[0]
+    const finalY = last ? (last.y1 + last.y2) / 2 : H / 2
+    centers[rounds] = [finalY]
+
+    const feedPath = (xRight: number, yTop: number, yBot: number, xDest: number, yDest: number) => {
+      const elbow = xRight + (xDest - xRight) * 0.42
+      const yMid = (yTop + yBot) / 2
+      const join = elbow + (xDest - elbow) * 0.55
+      return `M ${xRight} ${yTop} H ${elbow} V ${yBot} M ${xRight} ${yBot} H ${elbow} M ${elbow} ${yMid} H ${join} V ${yDest} H ${xDest}`
+    }
+
+    const connectorPaths: string[] = []
+    let mc: Array<{ y1: number; y2: number }> = []
+    for (let i = 0; i < centers[0].length; i += 2) {
+      mc.push({ y1: centers[0][i], y2: centers[0][i + 1] })
+    }
+    for (let round = 1; round < rounds; round++) {
+      const next: Array<{ y1: number; y2: number }> = []
+      for (let m = 0; m < mc.length; m += 2) {
+        const upper = mc[m]
+        const lower = mc[m + 1]
+        const a = centers[round][m]
+        const b = centers[round][m + 1]
+        connectorPaths.push(feedPath(xs[round - 1] + boxW, upper.y1, upper.y2, xs[round], a))
+        connectorPaths.push(feedPath(xs[round - 1] + boxW, lower.y1, lower.y2, xs[round], b))
+        next.push({ y1: a, y2: b })
+      }
+      mc = next
+    }
+    if (mc[0]) {
+      connectorPaths.push(feedPath(xs[rounds - 1] + boxW, mc[0].y1, mc[0].y2, xs[rounds], finalY))
+    }
+
+    const renderSlotButton = (
+      round: number,
+      slotIndex: number,
+      x: number,
+      cy: number,
+      player: BracketSeed | null
+    ) => {
+      const matchIndex = Math.floor(slotIndex / 2)
+      const match = matchByKey.get(`${round}-${matchIndex}`)
+      const mid = player?.member_id != null ? Number(player.member_id) : null
+      const wid = match?.winner_member_id != null ? Number(match.winner_member_id) : null
+      const selected = mid != null && wid === mid
+      const busy = bracketSavingKey === `${bracketType}-${round}-${matchIndex}`
+      const canClick =
+        !!canConfigureAnnualPicks && !!match?.can_set && !busy && mid != null && Number.isFinite(mid)
+      const name = clipBracketName(String(player?.player_name || ''), size) || 'Por definir'
+      const seed = player?.seed
+      return (
+        <button
+          key={`${bracketType}-${round}-${slotIndex}`}
+          type="button"
+          disabled={!canClick}
+          title={
+            canClick
+              ? selected
+                ? 'Tocá de nuevo para desmarcar'
+                : 'Marcar ganador'
+              : mid == null
+                ? 'Por definir'
+                : 'Falta el rival para poder marcar'
+          }
+          onClick={() =>
+            handleSetBracketWinner(bracketType, round, matchIndex, selected ? null : mid)
+          }
+          className={`absolute text-left rounded border shadow-sm px-1.5 flex items-center gap-1 overflow-hidden ${
+            selected
+              ? 'border-green-600 bg-green-50 text-green-900 font-semibold'
+              : mid != null
+                ? 'border-slate-300 bg-white text-slate-800 hover:bg-slate-50'
+                : 'border-slate-200 bg-slate-50 text-slate-400'
+          } disabled:cursor-not-allowed`}
+          style={{
+            left: x,
+            top: cy - boxH / 2,
+            width: boxW,
+            height: boxH,
+            fontSize: fontPx,
+          }}
+        >
+          {seed != null ? (
+            <span
+              className="inline-flex items-center justify-center rounded shrink-0 bg-slate-100 text-slate-600 font-bold"
+              style={{ width: boxH - 10, height: boxH - 10, fontSize: fontPx - 1 }}
+            >
+              {seed}
+            </span>
+          ) : null}
+          <span className="truncate">{name}</span>
+          {selected ? <span className="ml-auto shrink-0 text-green-700">✓</span> : null}
+        </button>
+      )
+    }
+
     return (
-      <div className="space-y-4">
+      <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-base font-semibold text-gray-900">
             {title} — {size} jugadores
           </h3>
           {side.champion?.player_name && (
-            <p className="text-sm text-green-800 font-medium">Campeón: {sanitizeAscii(side.champion.player_name)}</p>
+            <p className="text-sm text-green-800 font-medium">
+              Campeón: {sanitizeAscii(side.champion.player_name)}
+            </p>
           )}
         </div>
-        <p className="text-xs text-gray-500">Tocá al ganador de cada partido. Volvé a tocar para desmarcar.</p>
-        <div className={colClass}>
-          {labels.map((label, round) => (
-            <div key={`${bracketType}-${round}`} className="space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</p>
-              {(byRound.get(round) || []).map((m: any) => {
-                const saveKey = `${bracketType}-${m.round}-${m.match}`
-                const busy = bracketSavingKey === saveKey
-                const a = m.player_a
-                const b = m.player_b
-                const wid = m.winner_member_id != null ? Number(m.winner_member_id) : null
-                return (
-                  <div key={m.key} className="rounded-md border border-gray-200 bg-gray-50 p-2 space-y-1">
-                    {[a, b].map((p: any, idx: number) => {
-                      const mid = p?.member_id != null ? Number(p.member_id) : null
-                      const selected = mid != null && wid === mid
-                      const disabled = !canConfigureAnnualPicks || !m.can_set || busy || mid == null
-                      return (
-                        <button
-                          key={`${m.key}-${idx}`}
-                          type="button"
-                          disabled={disabled}
-                          onClick={() =>
-                            handleSetBracketWinner(
-                              bracketType,
-                              m.round,
-                              m.match,
-                              selected ? null : mid
-                            )
-                          }
-                          className={`w-full text-left px-2 py-1.5 rounded text-sm border ${
-                            selected
-                              ? 'border-green-600 bg-green-50 text-green-900 font-medium'
-                              : 'border-gray-200 bg-white hover:bg-gray-50 text-gray-800'
-                          } disabled:opacity-50 disabled:cursor-not-allowed`}
-                        >
-                          <span className="inline-block w-6 text-xs text-gray-500">{p?.seed ?? '—'}</span>
-                          {sanitizeAscii(p?.player_name) || 'Por definir'}
-                          {selected ? ' ✓' : ''}
-                        </button>
-                      )
-                    })}
-                  </div>
-                )
-              })}
+        <p className="text-xs text-gray-500">
+          Tocá al ganador de cada partido (las líneas muestran de qué cruce avanza). Volvé a tocar para
+          desmarcar.
+        </p>
+        <div className="overflow-x-auto border rounded-lg bg-[#f4f7fb]">
+          <div className="relative" style={{ width: W, height: H, minWidth: W }}>
+            <svg
+              className="absolute inset-0 pointer-events-none"
+              width={W}
+              height={H}
+              viewBox={`0 0 ${W} ${H}`}
+            >
+              {connectorPaths.map((d, i) => (
+                <path key={i} d={d} fill="none" stroke="#16324f" strokeWidth="1.6" />
+              ))}
+              <rect
+                x={xs[rounds]}
+                y={finalY - 15}
+                width={88}
+                height={30}
+                fill="#16324f"
+              />
+              <text
+                x={xs[rounds] + 44}
+                y={finalY}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                fill="#ffffff"
+                fontSize="11"
+                fontWeight="800"
+              >
+                CAMPEÓN
+              </text>
+            </svg>
+            {labels.map((label, i) => (
+              <div
+                key={`${bracketType}-lab-${i}`}
+                className="absolute text-center text-[10px] font-bold uppercase tracking-wide text-slate-600 bg-slate-200/80 rounded px-1 py-0.5 truncate"
+                style={{ left: xs[i], top: 4, width: i === rounds ? boxW + 40 : boxW }}
+              >
+                {label}
+              </div>
+            ))}
+            {roundSlots.slice(0, rounds).map((slots, round) =>
+              slots.map((player, slotIndex) =>
+                renderSlotButton(round, slotIndex, xs[round], centers[round][slotIndex], player)
+              )
+            )}
+            {/* Casilla del campeón (solo lectura; se marca ganando la final) */}
+            <div
+              className={`absolute rounded border px-2 flex items-center overflow-hidden ${
+                side.champion?.player_name
+                  ? 'border-green-600 bg-green-50 text-green-900 font-semibold'
+                  : 'border-slate-200 bg-white text-slate-400'
+              }`}
+              style={{
+                left: xs[rounds] + 96,
+                top: finalY - boxH / 2,
+                width: Math.max(90, boxW - 40),
+                height: boxH,
+                fontSize: fontPx,
+              }}
+            >
+              <span className="truncate">
+                {side.champion?.player_name
+                  ? clipBracketName(String(side.champion.player_name), size)
+                  : '—'}
+              </span>
             </div>
-          ))}
+          </div>
         </div>
       </div>
     )
