@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { handleClubAuthExpiry } from '@/lib/api'
 import { Tournament, CreateTournamentData, TournamentParticipant, TournamentGroup, TournamentStats } from '@/types/tournament'
 
 const api = axios.create({
@@ -18,6 +19,17 @@ api.interceptors.request.use(
     return config
   },
   (error) => {
+    return Promise.reject(error)
+  }
+)
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error?.response?.status === 401) {
+      const url = String(error?.config?.url || '')
+      handleClubAuthExpiry(url.includes('/api/') ? url : `/api${url.startsWith('/') ? url : `/${url}`}`)
+    }
     return Promise.reject(error)
   }
 )

@@ -14,6 +14,7 @@ export function useMembers(clubId: number) {
     queryFn: () => memberService.getMembers(clubId),
     staleTime: 0,
     refetchOnWindowFocus: true,
+    enabled: Number.isFinite(clubId) && clubId > 0,
   });
 }
 

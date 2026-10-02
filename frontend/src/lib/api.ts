@@ -61,14 +61,60 @@ export async function authFetch(input: RequestInfo | URL, init?: RequestInit): P
       headers.set('Authorization', `Bearer ${token}`)
     }
   }
-  return fetch(input, { ...init, headers })
+  const res = await fetch(input, { ...init, headers })
+  if (res.status === 401) {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : String((input as Request).url || '')
+    handleClubAuthExpiry(url)
+  }
+  return res
+}
+
+let handlingAuthExpiry = false
+
+/** Sesión de club inválida/vencida (p. ej. reinicio PM2 o worker distinto): volver a login. */
+export function handleClubAuthExpiry(requestUrl?: string) {
+  if (typeof window === 'undefined' || handlingAuthExpiry) return
+  const path = String(requestUrl || '')
+  if (path.includes('/auth/login') || path.includes('/public/')) return
+  if (!localStorage.getItem('clubToken')) return
+  if (window.location.pathname.startsWith('/login')) return
+
+  handlingAuthExpiry = true
+  try {
+    localStorage.removeItem('clubToken')
+    localStorage.removeItem('clubId')
+    localStorage.removeItem('userPermissions')
+    localStorage.removeItem('isPrimaryAdmin')
+  } catch {
+    /* ignore */
+  }
+  const redirect = `${window.location.pathname}${window.location.search}`
+  window.location.assign(`/login?redirect=${encodeURIComponent(redirect)}`)
+}
+
+function isClubApiUnauthorized(error: any): boolean {
+  if (error?.response?.status !== 401) return false
+  const url = resolveRequestPath(error?.config || {})
+  return url.includes('/club/') || url.includes('/api/club/')
 }
 
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    // Global error handling
     console.error('API Error:', error)
+    if (isClubApiUnauthorized(error)) {
+      handleClubAuthExpiry(resolveRequestPath(error?.config || {}))
+    }
+    return Promise.reject(error)
+  }
+)
+
+axios.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (isClubApiUnauthorized(error)) {
+      handleClubAuthExpiry(resolveRequestPath(error?.config || {}))
+    }
     return Promise.reject(error)
   }
 )

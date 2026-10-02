@@ -3,8 +3,9 @@ module.exports = {
     name: 'teetracker-backend',
     script: './backend/src/server.js',
     cwd: process.env.PWD || '/var/www/teetracker-pro',
-    instances: 2,
-    exec_mode: 'cluster',
+    // 1 instancia: los Bearer de admin viven en memoria (Map). Con cluster se pierden entre workers.
+    instances: 1,
+    exec_mode: 'fork',
     env: {
       NODE_ENV: 'production',
       PORT: 8000

@@ -166,7 +166,7 @@ export function ClubAdmin() {
   useEffect(() => {
     if (!clubId) return
     const id = parseInt(clubId, 10)
-    if (!Number.isFinite(id)) return
+    if (!Number.isFinite(id) || id <= 0) return
 
     const role = String(localStorage.getItem('adminRole') || '').trim()
     if (role === 'system_admin') {
@@ -180,12 +180,25 @@ export function ClubAdmin() {
       return
     }
 
-    queryClient.invalidateQueries({ queryKey: ['members', id] })
-    queryClient.invalidateQueries({ queryKey: ['tournaments', id] })
+    let force = false
+    try {
+      force = !!sessionStorage.getItem('forceClubRefetch')
+      if (force) sessionStorage.removeItem('forceClubRefetch')
+    } catch {
+      /* ignore */
+    }
+
+    if (force) {
+      queryClient.removeQueries({ queryKey: ['members', id] })
+      queryClient.removeQueries({ queryKey: ['tournaments', id] })
+    } else {
+      queryClient.invalidateQueries({ queryKey: ['members', id] })
+      queryClient.invalidateQueries({ queryKey: ['tournaments', id] })
+    }
     queryClient.invalidateQueries({ queryKey: ['clubs'] })
     void refetchMembers()
     void refetchTournaments()
-  }, [clubId])
+  }, [clubId, navigate, queryClient, refetchMembers, refetchTournaments])
 
   useEffect(() => {
     if (!clubId) return
@@ -222,8 +235,11 @@ export function ClubAdmin() {
           email: club.email || '',
           website: club.website || ''
         })
-      } catch (e) {
+      } catch (e: any) {
         console.error('No se pudo cargar datos del club:', e)
+        if (e?.response?.status === 401) {
+          toast.error('Sesión vencida. Iniciá sesión de nuevo.')
+        }
       }
     })()
     return () => {
