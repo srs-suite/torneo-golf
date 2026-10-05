@@ -310,6 +310,18 @@ export const tournamentService = {
     return response.data.data || response.data
   },
 
+  /** Guarda la fecha "Hasta el" de la llave impresa (DD/MM). */
+  async setAnnualRankingBracketThroughLabel(
+    clubId: number,
+    year: number,
+    throughLabel: string
+  ): Promise<any> {
+    const response = await api.put(`/club/${clubId}/rankings/annual/${year}/bracket`, {
+      through_label: throughLabel,
+    })
+    return response.data.data || response.data
+  },
+
   // Obtener ranking de un torneo específico
   async getTournamentRanking(clubId: number, tournamentId: number): Promise<any> {
     console.log(`🏆 API: GET /club/${clubId}/rankings/tournament/${tournamentId}`)

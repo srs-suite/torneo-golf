@@ -289,10 +289,14 @@ export default function Rankings() {
   const [bracket, setBracket] = useState<any>(null)
   const [bracketLoading, setBracketLoading] = useState(false)
   const [bracketSavingKey, setBracketSavingKey] = useState<string | null>(null)
+  const [bracketThroughLabel, setBracketThroughLabel] = useState('')
+  const [bracketPaperSize, setBracketPaperSize] = useState<'auto' | 'a4' | 'oficio'>('auto')
+  const [savingThroughLabel, setSavingThroughLabel] = useState(false)
 
   useEffect(() => {
     setBracket(null)
     setBracketModalType(null)
+    setBracketThroughLabel('')
   }, [year, clubIdNum])
 
   /** Orden visible de cada tabla (para WhatsApp). */
@@ -516,6 +520,8 @@ export default function Rankings() {
     try {
       const data = await tournamentService.getAnnualRankingBracket(clubIdNum, year)
       setBracket(data)
+      const saved = String(data?.through_label || '').trim()
+      setBracketThroughLabel(saved || throughLabelForBracket() || '')
     } catch {
       toast.error('No se pudo cargar la llave')
     } finally {
@@ -526,10 +532,31 @@ export default function Rankings() {
   const handleOpenBracket = async (type: 'scratch' | 'handicap') => {
     if (!isFinal) return
     setBracketModalType(type)
+    if (!bracketThroughLabel) setBracketThroughLabel(throughLabelForBracket() || '')
     await loadBracket()
   }
 
   const handleCloseBracketModal = () => setBracketModalType(null)
+
+  const handleSaveThroughLabel = async () => {
+    if (!clubIdNum || !canConfigureAnnualPicks) return
+    const label = bracketThroughLabel.trim()
+    if (!/^\d{1,2}\/\d{1,2}$/.test(label)) {
+      toast.error('Usá el formato DD/MM (ej. 12/10)')
+      return
+    }
+    setSavingThroughLabel(true)
+    try {
+      const data = await tournamentService.setAnnualRankingBracketThroughLabel(clubIdNum, year, label)
+      setBracket(data)
+      setBracketThroughLabel(String(data?.through_label || label).trim())
+      toast.success('Fecha "Hasta el" guardada')
+    } catch {
+      toast.error('No se pudo guardar la fecha')
+    } finally {
+      setSavingThroughLabel(false)
+    }
+  }
 
   const handlePrintBracket = async (type?: 'scratch' | 'handicap') => {
     if (!isFinal) return
@@ -539,6 +566,23 @@ export default function Rankings() {
       if (!data) {
         data = await tournamentService.getAnnualRankingBracket(clubIdNum, year)
         setBracket(data)
+      }
+      const label =
+        bracketThroughLabel.trim() ||
+        String(data?.through_label || '').trim() ||
+        throughLabelForBracket() ||
+        '—'
+      if (canConfigureAnnualPicks && /^\d{1,2}\/\d{1,2}$/.test(bracketThroughLabel.trim())) {
+        try {
+          data = await tournamentService.setAnnualRankingBracketThroughLabel(
+            clubIdNum,
+            year,
+            bracketThroughLabel.trim()
+          )
+          setBracket(data)
+        } catch {
+          /* si falla el guardado igual imprimimos con la fecha del input */
+        }
       }
       const sheets =
         side === 'handicap'
@@ -563,7 +607,8 @@ export default function Rankings() {
       printAnnualBracket({
         year: annual?.year || year,
         clubName: club?.course_name || 'Club',
-        throughLabel: throughLabelForBracket(),
+        throughLabel: label,
+        paperSize: bracketPaperSize,
         sheets,
       })
     } catch {
@@ -1488,6 +1533,48 @@ export default function Rankings() {
                 <p className="text-xs text-gray-500">Cargá los ganadores e imprimí la llave desde acá.</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                <label className="inline-flex items-center gap-1.5 text-sm text-gray-700">
+                  <span className="whitespace-nowrap">Hasta el</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="12/10"
+                    value={bracketThroughLabel}
+                    onChange={(e) => setBracketThroughLabel(e.target.value)}
+                    onBlur={() => {
+                      if (
+                        canConfigureAnnualPicks &&
+                        /^\d{1,2}\/\d{1,2}$/.test(bracketThroughLabel.trim()) &&
+                        bracketThroughLabel.trim() !== String(bracket?.through_label || '').trim()
+                      ) {
+                        void handleSaveThroughLabel()
+                      }
+                    }}
+                    className="w-[5.5rem] px-2 py-1.5 border border-gray-300 rounded-md text-sm"
+                  />
+                </label>
+                {canConfigureAnnualPicks && (
+                  <button
+                    type="button"
+                    onClick={handleSaveThroughLabel}
+                    disabled={savingThroughLabel}
+                    className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Guardar fecha
+                  </button>
+                )}
+                <label className="inline-flex items-center gap-1.5 text-sm text-gray-700">
+                  <span className="whitespace-nowrap">Papel</span>
+                  <select
+                    value={bracketPaperSize}
+                    onChange={(e) => setBracketPaperSize(e.target.value as 'auto' | 'a4' | 'oficio')}
+                    className="px-2 py-1.5 border border-gray-300 rounded-md text-sm"
+                  >
+                    <option value="auto">Auto</option>
+                    <option value="a4">A4</option>
+                    <option value="oficio">Oficio</option>
+                  </select>
+                </label>
                 <button
                   type="button"
                   onClick={loadBracket}

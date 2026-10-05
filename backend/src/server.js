@@ -49,7 +49,7 @@ import {
     getAnnualRankings, getTournamentRanking,
     getAnnualRankingCandidates, getAnnualRankingTournamentPicks, setAnnualRankingTournamentPicks,
     getAnnualRankingYearState, setAnnualRankingYearFinalized,
-    getAnnualRankingBracket, setAnnualRankingBracketWinner,
+    getAnnualRankingBracket, setAnnualRankingBracketWinner, setAnnualRankingBracketThroughLabel,
     
     // Payments and accounting functions
     getPaymentsSummary, getExpenses, addExpense, updateExpense, deleteExpense,
@@ -1358,10 +1358,17 @@ async function handleClubAPI(req, res, pathParts) {
                     }
                     const body = await parseBody(req);
                     try {
-                        const bracket = await setAnnualRankingBracketWinner(parseInt(clubId, 10), year, body);
+                        const bracket =
+                            body && body.through_label != null && body.round == null && body.match == null
+                                ? await setAnnualRankingBracketThroughLabel(
+                                      parseInt(clubId, 10),
+                                      year,
+                                      body.through_label
+                                  )
+                                : await setAnnualRankingBracketWinner(parseInt(clubId, 10), year, body);
                         sendJSON(res, { success: true, data: bracket });
                     } catch (e) {
-                        sendError(res, e.message || 'Error al guardar el ganador', 400);
+                        sendError(res, e.message || 'Error al guardar la llave', 400);
                     }
                     return;
                 }

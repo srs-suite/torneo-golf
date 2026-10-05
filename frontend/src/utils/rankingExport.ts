@@ -906,12 +906,20 @@ function bracketPageHtml(sheet: {
   </section>`
 }
 
+function pageSizeCss(paper: 'auto' | 'a4' | 'oficio'): string {
+  if (paper === 'a4') return 'A4 landscape'
+  if (paper === 'oficio') return '330mm 216mm' // Oficio horizontal ( Latam )
+  return 'landscape'
+}
+
 function bracketHtml(params: {
   year: number
   clubName: string
   throughLabel: string
+  paperSize?: 'auto' | 'a4' | 'oficio'
   sheets: { title: string; size: number; rows: any[]; winners?: Record<string, number | string>; seeds?: BracketSeed[] }[]
 }): string {
+  const paper = params.paperSize || 'auto'
   const pages = params.sheets
     .map((sheet) =>
       bracketPageHtml({
@@ -928,32 +936,48 @@ function bracketHtml(params: {
 <meta charset="utf-8"/>
 <title>Llave ranking ${params.year}</title>
 <style>
-  @page { size: A4 landscape; margin: 6mm; }
+  @page { size: ${pageSizeCss(paper)}; margin: 6mm; }
   * { box-sizing: border-box; }
   html, body { margin: 0; color: #1e293b; font-family: Calibri, "Segoe UI", Arial, sans-serif; }
-  .sheet { width: 285mm; height: 176mm; max-height: 176mm; overflow: hidden; page-break-after: always; page-break-inside: avoid; break-inside: avoid; display: flex; flex-direction: column; }
+  .sheet {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    page-break-after: always;
+    page-break-inside: avoid;
+    break-inside: avoid;
+    display: flex;
+    flex-direction: column;
+  }
   .sheet:last-child { page-break-after: auto; }
-  .banner { display: flex; justify-content: space-between; align-items: center; background: #16324f; color: white; padding: 3mm 4mm; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .banner h1 { margin: 0; font-size: 16pt; letter-spacing: 0.04em; font-weight: 800; }
-  .banner p { margin: 0.6mm 0 0; font-size: 9pt; opacity: 0.9; }
-  .until { text-align: right; border-left: 1px solid rgba(255,255,255,.45); padding-left: 4mm; }
+  .banner { display: flex; justify-content: space-between; align-items: center; background: #16324f; color: white; padding: 2.5mm 3.5mm; -webkit-print-color-adjust: exact; print-color-adjust: exact; flex-shrink: 0; }
+  .banner h1 { margin: 0; font-size: clamp(12pt, 2.2vw, 16pt); letter-spacing: 0.04em; font-weight: 800; }
+  .banner p { margin: 0.5mm 0 0; font-size: clamp(7pt, 1.2vw, 9pt); opacity: 0.9; }
+  .until { text-align: right; border-left: 1px solid rgba(255,255,255,.45); padding-left: 3.5mm; }
   .until span { display: block; font-size: 7pt; letter-spacing: 0.12em; }
-  .until strong { font-size: 13pt; }
-  .meta { margin: 1.4mm 0 1mm; font-size: 8pt; color: #475569; letter-spacing: 0.04em; text-transform: uppercase; }
-  .labels { display: grid; gap: 1.5mm; margin: 0 0 1mm; }
+  .until strong { font-size: clamp(11pt, 1.8vw, 13pt); }
+  .meta { margin: 1mm 0 0.8mm; font-size: clamp(7pt, 1.1vw, 8pt); color: #475569; letter-spacing: 0.04em; text-transform: uppercase; flex-shrink: 0; }
+  .labels { display: grid; gap: 1.2mm; margin: 0 0 0.8mm; flex-shrink: 0; }
   .cols-4 { grid-template-columns: 1.15fr 1fr 1fr 1.05fr; }
   .cols-5 { grid-template-columns: 1.15fr 1fr 1fr 1fr 1.05fr; }
-  .labels span { text-align: center; background: #e8eef5; color: #334155; font-size: 7.5pt; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; padding: 1mm 1mm; border-radius: 3px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .bracket-fit { flex: 1; min-height: 0; }
+  .labels span { text-align: center; background: #e8eef5; color: #334155; font-size: clamp(6.5pt, 1vw, 7.5pt); font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; padding: 0.8mm 1mm; border-radius: 3px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .bracket-fit { flex: 1 1 auto; min-height: 0; }
   .bracket-svg { width: 100%; height: 100%; display: block; }
-  .sheet-16 .banner { padding: 2mm 3.5mm; }
-  .sheet-16 .banner h1 { font-size: 14pt; }
-  .sheet-16 .banner p { font-size: 8pt; }
-  .sheet-16 .until strong { font-size: 12pt; }
-  .sheet-16 .meta { margin: 1mm 0 0.6mm; font-size: 7.5pt; }
+  .sheet-16 .banner { padding: 2mm 3mm; }
+  @media print {
+    html, body { width: 100%; height: 100%; }
+    .sheet { width: 100%; height: 100%; max-height: none; }
+  }
   @media screen {
     body { background: #e5e7eb; padding: 12px; }
-    .sheet { background: white; margin: 0 auto 12px; box-shadow: 0 1px 4px rgba(0,0,0,.12); }
+    .sheet {
+      width: ${paper === 'oficio' ? '318mm' : '285mm'};
+      height: ${paper === 'oficio' ? '204mm' : '176mm'};
+      background: white;
+      margin: 0 auto 12px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.12);
+    }
   }
 </style>
 </head>
@@ -964,11 +988,12 @@ ${pages}
 </html>`
 }
 
-/** Llave A4 horizontal: Scratch (8) y Handicap (16). */
+/** Llave horizontal adaptable (A4 / Oficio / auto): Scratch (8) y Handicap (16). */
 export function printAnnualBracket(params: {
   year: number
   clubName: string
   throughLabel: string
+  paperSize?: 'auto' | 'a4' | 'oficio'
   sheets: { title: string; size: number; rows: any[]; winners?: Record<string, number | string>; seeds?: BracketSeed[] }[]
 }) {
   const html = bracketHtml(params)

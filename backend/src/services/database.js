@@ -1772,6 +1772,7 @@ async function ensureAnnualRankingYearStateTable() {
             counting_rounds SMALLINT NOT NULL DEFAULT 3,
             scratch_cut SMALLINT NOT NULL DEFAULT 8,
             handicap_cut SMALLINT NOT NULL DEFAULT 16,
+            through_label VARCHAR(20) NULL,
             finalized_at TIMESTAMP NULL DEFAULT NULL,
             finalized_by INT NULL DEFAULT NULL,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -1779,6 +1780,13 @@ async function ensureAnnualRankingYearStateTable() {
             KEY idx_arys_club_year (course_id, calendar_year)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
+    try {
+        await executeQuery(
+            `ALTER TABLE annual_ranking_year_state ADD COLUMN through_label VARCHAR(20) NULL`
+        );
+    } catch {
+        /* columna ya existe */
+    }
 }
 
 /**
@@ -1791,7 +1799,7 @@ async function getAnnualRankingYearState(clubId, year) {
     const { rows } = await executeQuery(
         `SELECT course_id, calendar_year, status,
                 expected_tournaments, min_rounds, counting_rounds, scratch_cut, handicap_cut,
-                finalized_at, finalized_by, updated_at
+                through_label, finalized_at, finalized_by, updated_at
          FROM annual_ranking_year_state
          WHERE course_id = ? AND calendar_year = ?
          LIMIT 1`,
@@ -1808,6 +1816,7 @@ async function getAnnualRankingYearState(clubId, year) {
             counting_rounds: Number(r.counting_rounds) || DEFAULT_ANNUAL_RANKING_RULES.counting_rounds,
             scratch_cut: Number(r.scratch_cut) || DEFAULT_ANNUAL_RANKING_RULES.scratch_cut,
             handicap_cut: Number(r.handicap_cut) || DEFAULT_ANNUAL_RANKING_RULES.handicap_cut,
+            through_label: r.through_label ? String(r.through_label).trim() : null,
             finalized_at: r.finalized_at || null,
             finalized_by: r.finalized_by || null,
             updated_at: r.updated_at || null
@@ -1818,6 +1827,7 @@ async function getAnnualRankingYearState(clubId, year) {
         year: yearInt,
         status: 'provisional',
         ...DEFAULT_ANNUAL_RANKING_RULES,
+        through_label: null,
         finalized_at: null,
         finalized_by: null,
         updated_at: null
@@ -2042,13 +2052,50 @@ async function getAnnualRankingBracket(clubId, year) {
         return buildBracketView(seeds, winners, size);
     };
 
+    const yearState = await getAnnualRankingYearState(courseId, yearInt);
     return {
         year: yearInt,
         club_id: courseId,
         status: rankings.status,
+        through_label: yearState.through_label || null,
         scratch: await buildSide('scratch', scratchRows, 8),
         handicap: await buildSide('handicap', handicapRows, 16)
     };
+}
+
+/**
+ * Guarda la fecha "Hasta el" de la llave impresa (ej. 12/10).
+ */
+async function setAnnualRankingBracketThroughLabel(clubId, year, throughLabel) {
+    const courseId = parseInt(clubId, 10);
+    const yearInt = parseInt(year, 10);
+    const label = String(throughLabel ?? '').trim().slice(0, 20);
+    if (!label) throw new Error('Indicá la fecha (ej. 12/10)');
+    if (!/^\d{1,2}\/\d{1,2}$/.test(label)) {
+        throw new Error('Usá el formato DD/MM (ej. 12/10)');
+    }
+    await ensureAnnualRankingYearStateTable();
+    const current = await getAnnualRankingYearState(courseId, yearInt);
+    await executeQuery(
+        `INSERT INTO annual_ranking_year_state (
+            course_id, calendar_year, status,
+            expected_tournaments, min_rounds, counting_rounds, scratch_cut, handicap_cut,
+            through_label
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE through_label = VALUES(through_label)`,
+        [
+            courseId,
+            yearInt,
+            current.status === 'final' ? 'final' : 'provisional',
+            current.expected_tournaments,
+            current.min_rounds,
+            current.counting_rounds,
+            current.scratch_cut,
+            current.handicap_cut,
+            label
+        ]
+    );
+    return getAnnualRankingBracket(courseId, yearInt);
 }
 
 /**
@@ -9930,7 +9977,7 @@ export {
     getAnnualRankings, getTournamentRanking,
     getAnnualRankingCandidates, getAnnualRankingTournamentPicks, setAnnualRankingTournamentPicks,
     getAnnualRankingYearState, setAnnualRankingYearFinalized,
-    getAnnualRankingBracket, setAnnualRankingBracketWinner,
+    getAnnualRankingBracket, setAnnualRankingBracketWinner, setAnnualRankingBracketThroughLabel,
     
     // Payments and accounting functions
     getPaymentsSummary, getExpenses, addExpense, updateExpense, deleteExpense,
