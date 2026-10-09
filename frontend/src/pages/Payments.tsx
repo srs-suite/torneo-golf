@@ -98,8 +98,7 @@ function printExpenseReceipt(absoluteUrl: string, relativePath: string) {
   w.document.close()
 }
 
-async function downloadExpenseReceiptFile(relativePath: string, expenseId: number, expenseDate: string) {
-  const absoluteUrl = expenseReceiptAbsoluteUrl(relativePath)
+async function downloadExpenseReceiptFile(relativePath: string, expenseId: number, expenseDate: string, clubId: number) {
   const ext = relativePath.includes('.') ? relativePath.split('.').pop() || 'jpg' : 'jpg'
   let datePart: string
   if (typeof expenseDate === 'string' && expenseDate.includes('T')) datePart = expenseDate.split('T')[0]
@@ -108,11 +107,8 @@ async function downloadExpenseReceiptFile(relativePath: string, expenseId: numbe
   const idPart = expenseId > 0 ? String(expenseId) : 'archivo'
   const filename = `recibo_gasto_${idPart}_${datePart}.${ext}`
   try {
-    const res = await fetch(absoluteUrl)
-    if (!res.ok) throw new Error('fetch failed')
-    const blob = await res.blob()
+    const blob = await paymentsService.getExpenseReceiptBlob(clubId, expenseId)
 
-    /** PDF: no usar <a download> (fuerza guardar). Abrimos el visor del navegador para imprimir o guardar desde ahí. */
     if (isPdfReceiptPath(relativePath)) {
       const pdfBlob =
         blob.type === 'application/pdf' ? blob : new Blob([blob], { type: 'application/pdf' })
@@ -2437,29 +2433,20 @@ export default function Payments() {
                               }
                               setPhotoModalMeta(meta)
                               revokePhotoModalBlobUrl()
-                              if (isPdfReceiptPath(path)) {
-                                try {
-                                  const res = await fetch(expenseReceiptAbsoluteUrl(path), {
-                                    credentials: 'include',
-                                  })
-                                  if (!res.ok) throw new Error('fetch failed')
-                                  const blob = await res.blob()
-                                  const pdf =
-                                    blob.type === 'application/pdf'
-                                      ? blob
-                                      : new Blob([blob], { type: 'application/pdf' })
-                                  const blobUrl = URL.createObjectURL(pdf)
-                                  photoModalObjectUrlRef.current = blobUrl
-                                  setPhotoModalUrl(blobUrl)
-                                } catch {
-                                  toast.error('No se pudo abrir el PDF.')
-                                  setPhotoModalMeta(null)
-                                  return
-                                }
-                              } else {
-                                setPhotoModalUrl(`/uploads/${path}`)
+                              try {
+                                const blob = await paymentsService.getExpenseReceiptBlob(clubIdNum, e.expense_id)
+                                const typed =
+                                  isPdfReceiptPath(path) && blob.type !== 'application/pdf'
+                                    ? new Blob([blob], { type: 'application/pdf' })
+                                    : blob
+                                const blobUrl = URL.createObjectURL(typed)
+                                photoModalObjectUrlRef.current = blobUrl
+                                setPhotoModalUrl(blobUrl)
+                                setShowPhotoModal(true)
+                              } catch {
+                                toast.error('No se pudo abrir el comprobante.')
+                                setPhotoModalMeta(null)
                               }
-                              setShowPhotoModal(true)
                             }}
                             className="text-blue-600 hover:text-blue-900"
                             title="Ver adjunto del recibo"
@@ -2488,7 +2475,20 @@ export default function Payments() {
                                     receipt_photo_base64: '',
                                     receipt_photo_path: (e as any).receipt_photo_path || ''
                                   })
-                                  setExpensePhotoPreview((e as any).receipt_photo_path ? `/uploads/${(e as any).receipt_photo_path}` : null)
+                                  setExpensePhotoPreview(null)
+                                  if ((e as any).receipt_photo_path) {
+                                    const photoPath = String((e as any).receipt_photo_path)
+                                    paymentsService
+                                      .getExpenseReceiptBlob(clubIdNum, e.expense_id)
+                                      .then((blob) => {
+                                        const typed =
+                                          isPdfReceiptPath(photoPath) && blob.type !== 'application/pdf'
+                                            ? new Blob([blob], { type: 'application/pdf' })
+                                            : blob
+                                        setExpensePhotoPreview(URL.createObjectURL(typed))
+                                      })
+                                      .catch(() => setExpensePhotoPreview(null))
+                                  }
                                   const rp = (e as any).receipt_photo_path as string | undefined
                                   setExpenseReceiptChosenLabel(
                                     rp ? (String(rp).split('/').pop() || 'Archivo guardado') : ''
@@ -4694,8 +4694,8 @@ export default function Payments() {
                       onClick={(e) => {
                         e.stopPropagation()
                         const m = expenseReceiptEffectiveMeta
-                        const abs = expenseReceiptAbsoluteUrl(m.path)
-                        printExpenseReceipt(abs, m.path)
+                        if (photoModalUrl) printExpenseReceipt(photoModalUrl, m.path)
+                        else printExpenseReceipt(expenseReceiptAbsoluteUrl(m.path), m.path)
                       }}
                       className="bg-white hover:bg-gray-100 text-gray-900 rounded-lg px-3 py-2 text-sm font-medium flex items-center gap-1.5 shadow"
                       title="Imprimir recibo (PDF: otra pestaña, imprimir desde el visor)"
@@ -4708,7 +4708,7 @@ export default function Payments() {
                       onClick={(e) => {
                         e.stopPropagation()
                         const m = expenseReceiptEffectiveMeta
-                        void downloadExpenseReceiptFile(m.path, m.expenseId, m.expenseDate)
+                        void downloadExpenseReceiptFile(m.path, m.expenseId, m.expenseDate, clubIdNum)
                       }}
                       className="bg-white hover:bg-gray-100 text-gray-900 rounded-lg px-3 py-2 text-sm font-medium flex items-center gap-1.5 shadow"
                       title={

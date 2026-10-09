@@ -21,6 +21,13 @@ export const paymentsService = {
     const response = await axios.delete(`/api/club/${clubId}/accounting/expenses?id=${id}`)
     return response.data
   },
+  async getExpenseReceiptBlob(clubId: number, expenseId: number): Promise<Blob> {
+    const response = await axios.get(`/api/club/${clubId}/accounting/expenses/file?id=${expenseId}`, {
+      responseType: 'blob',
+      timeout: 60000,
+    })
+    return response.data as Blob
+  },
   async getOtherIncomes(clubId: number, params: { from?: string; to?: string } = {}) {
     const response = await axios.get(`/api/club/${clubId}/accounting/incomes`, { params })
     return response.data.data || []

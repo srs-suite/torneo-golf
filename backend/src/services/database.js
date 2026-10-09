@@ -2818,9 +2818,9 @@ async function saveExpensePhoto(clubId, base64Data, expenseId) {
             throw new Error('Formato no soportado. Usá imagen (JPG, PNG, etc.) o PDF.');
         }
 
-        const uploadsDir = path.join(__dirname, '..', 'uploads', 'expenses');
+        const uploadsDir = expenseUploadsRoot();
         if (!fs.existsSync(uploadsDir)) {
-            fs.mkdirSync(uploadsDir, { recursive: true });
+            fs.mkdirSync(uploadsDir, { recursive: true, mode: 0o775 });
         }
 
         const filename = `expense_${clubId}_${expenseId || Date.now()}_${crypto.randomBytes(8).toString('hex')}.${ext}`;
@@ -2833,6 +2833,55 @@ async function saveExpensePhoto(clubId, base64Data, expenseId) {
         console.error('❌ Error saving expense photo:', error);
         throw error;
     }
+}
+
+/** Carpeta canónica: backend/src/uploads/expenses (la misma que sirve server.js). */
+function expenseUploadsRoot() {
+    return path.join(__dirname, '..', 'uploads', 'expenses');
+}
+
+/**
+ * Busca el archivo del comprobante.
+ * relativePath es `expenses/archivo.jpg` o solo el nombre.
+ * También revisa backend/uploads por si un deploy viejo lo guardó ahí.
+ */
+function findExpenseReceiptAbsolute(relativePath) {
+    const rel = String(relativePath || '').replace(/\\/g, '/').replace(/^\/+/, '');
+    if (!rel || rel.split('/').some((p) => p === '..' || p === '')) return null;
+    const fileName = rel.startsWith('expenses/') ? rel.slice('expenses/'.length) : rel;
+    if (!fileName || fileName.includes('/') || fileName.includes('..')) return null;
+    const candidates = [
+        path.join(__dirname, '..', 'uploads', 'expenses', fileName),
+        path.join(__dirname, '..', '..', 'uploads', 'expenses', fileName),
+    ];
+    for (const full of candidates) {
+        if (fs.existsSync(full) && fs.statSync(full).isFile()) return full;
+    }
+    return null;
+}
+
+function expenseReceiptContentType(filePath) {
+    const ext = path.extname(filePath).toLowerCase();
+    return {
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.jfif': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.bmp': 'image/bmp',
+        '.svg': 'image/svg+xml',
+        '.pdf': 'application/pdf',
+    }[ext] || 'application/octet-stream';
+}
+
+async function getExpenseById(clubId, expenseId) {
+    const { rows } = await executeQuery(
+        `SELECT expense_id, club_id, receipt_photo_path, expense_date
+         FROM club_expenses WHERE club_id = ? AND expense_id = ? LIMIT 1`,
+        [clubId, expenseId]
+    );
+    return rows && rows[0] ? rows[0] : null;
 }
 
 /**
@@ -3020,8 +3069,8 @@ async function updateExpense(clubId, expenseId, expenseData) {
             // Si hay una foto anterior, eliminarla
             if (receiptPhotoPath) {
                 try {
-                    const oldFilePath = path.join(__dirname, '..', 'uploads', receiptPhotoPath);
-                    if (fs.existsSync(oldFilePath)) {
+                    const oldFilePath = findExpenseReceiptAbsolute(receiptPhotoPath);
+                    if (oldFilePath && fs.existsSync(oldFilePath)) {
                         fs.unlinkSync(oldFilePath);
                     }
                 } catch (error) {
@@ -9981,6 +10030,7 @@ export {
     
     // Payments and accounting functions
     getPaymentsSummary, getExpenses, addExpense, updateExpense, deleteExpense,
+    getExpenseById, findExpenseReceiptAbsolute, expenseReceiptContentType,
     getOtherIncomes, addOtherIncome, updateOtherIncome, deleteOtherIncome,
     getCurrencyExchanges, addCurrencyExchange, updateCurrencyExchange, deleteCurrencyExchange,
     getCurrencyBalance, getCustodians,

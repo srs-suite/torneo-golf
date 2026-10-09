@@ -53,6 +53,7 @@ import {
     
     // Payments and accounting functions
     getPaymentsSummary, getExpenses, addExpense, updateExpense, deleteExpense,
+    getExpenseById, findExpenseReceiptAbsolute, expenseReceiptContentType,
     getOtherIncomes, addOtherIncome, updateOtherIncome, deleteOtherIncome,
     getCurrencyExchanges, addCurrencyExchange, updateCurrencyExchange, deleteCurrencyExchange,
     getCurrencyBalance, getCustodians,
@@ -1473,6 +1474,30 @@ async function handleClubAPI(req, res, pathParts) {
             console.log('🔍 Accounting action:', { action, pathParts, url: req.url });
             
             if (action === 'expenses') {
+                if (pathParts[5] === 'file' && method === 'GET') {
+                    const url = new URL(req.url, `http://${req.headers.host}`);
+                    const expenseId = parseInt(url.searchParams.get('id'), 10);
+                    if (!expenseId) {
+                        sendError(res, 'Gasto inválido', 400);
+                        return;
+                    }
+                    const expense = await getExpenseById(parseInt(clubId, 10), expenseId);
+                    const rel = expense?.receipt_photo_path;
+                    const filePath = rel ? findExpenseReceiptAbsolute(rel) : null;
+                    if (!filePath) {
+                        sendError(res, 'No se encontró el comprobante', 404);
+                        return;
+                    }
+                    const contentType = expenseReceiptContentType(filePath);
+                    res.writeHead(200, {
+                        'Content-Type': contentType,
+                        'Content-Disposition': 'inline',
+                        'Cache-Control': 'private, max-age=3600',
+                        ...corsHeaders,
+                    });
+                    fs.createReadStream(filePath).pipe(res);
+                    return;
+                }
                 if (method === 'GET') {
                     const url = new URL(req.url, `http://${req.headers.host}`);
                     const from = url.searchParams.get('from');
@@ -2513,26 +2538,18 @@ const server = http.createServer(async (req, res) => {
 
     // Serve uploaded expense photos
     if (pathname.startsWith('/uploads/expenses/')) {
-        const fileName = pathname.substring(18); // Remove '/uploads/expenses/'
-        const filePath = path.join(__dirname, 'uploads', 'expenses', fileName);
-        
-        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+        const fileName = decodeURIComponent(pathname.substring(18));
+        const filePath = findExpenseReceiptAbsolute(fileName);
+
+        if (filePath) {
+            const contentType = expenseReceiptContentType(filePath);
             const ext = path.extname(filePath).toLowerCase();
-            const contentType = {
-                '.png': 'image/png',
-                '.jpg': 'image/jpeg',
-                '.jpeg': 'image/jpeg',
-                '.gif': 'image/gif',
-                '.webp': 'image/webp',
-                '.svg': 'image/svg+xml',
-                '.pdf': 'application/pdf',
-            }[ext] || 'application/octet-stream';
 
             const headers = {
                 'Content-Type': contentType,
-                'Cache-Control': 'public, max-age=31536000', // Cache 1 year
+                'Cache-Control': 'public, max-age=3600',
+                ...corsHeaders,
             };
-            /** Evitar que el navegador descargue el PDF al abrir en visor / iframe. */
             if (ext === '.pdf') {
                 headers['Content-Disposition'] = 'inline';
             }
