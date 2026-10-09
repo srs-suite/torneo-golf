@@ -911,9 +911,9 @@ export function TournamentParticipantsModal({
 
   return (
     <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-7xl h-[90vh] flex flex-col">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-7xl h-[90vh] max-h-[90vh] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="bg-black text-white p-4 flex justify-between items-center rounded-t-lg">
+        <div className="bg-black text-white p-4 flex justify-between items-center rounded-t-lg shrink-0">
           <div>
             <h2 className="text-xl font-bold">Participantes del Torneo</h2>
             <p className="text-gray-300 text-sm">{tournament.tournament_name}</p>
@@ -924,9 +924,9 @@ export function TournamentParticipantsModal({
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-4 pb-6 rounded-b-lg">
+        <div className="flex-1 min-h-0 overflow-hidden p-4 pb-4 rounded-b-lg flex flex-col">
           {/* Stats: más compactos */}
-          <div className="grid grid-cols-3 gap-2 mb-4">
+          <div className="grid grid-cols-3 gap-2 mb-4 shrink-0">
             <div
               className="bg-blue-50 p-3 rounded-lg cursor-pointer hover:bg-blue-100 transition-colors"
               onClick={() => {
@@ -974,7 +974,7 @@ export function TournamentParticipantsModal({
           </div>
 
           {/* Controls: una sola fila compacta */}
-          <div className="flex flex-wrap items-center gap-2 mb-4">
+          <div className="flex flex-wrap items-center gap-2 mb-4 shrink-0">
               {allowGroups && (
                 <div className="flex items-center gap-1.5">
                   <span className="text-xs font-medium text-gray-600">Turno:</span>
@@ -1607,7 +1607,7 @@ export function TournamentParticipantsModal({
 
           {/* Participants List */}
           {!showMembersList && !showExternalPlayersList && (
-          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden mt-8">
+          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden mt-4 flex-1 min-h-0 flex flex-col">
             {physicalPlanchaSelectedIds.size > 0 && (
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 bg-slate-50 px-3 py-2 text-sm">
                 <span className="text-gray-700">
@@ -1633,9 +1633,9 @@ export function TournamentParticipantsModal({
               </div>
             )}
             {filteredParticipants.length > 0 ? (
-              <div className="overflow-x-auto">
+              <div className="flex-1 min-h-0 overflow-auto">
                 <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
+                  <thead className="bg-gray-50 sticky top-0 z-10">
                     <tr>
                       <th className="w-10 px-2 py-3 text-center align-middle" title="Selección para imprimir varias planchas">
                         <input

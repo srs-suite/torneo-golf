@@ -69,9 +69,23 @@ function isPdfExpenseAttachmentPreview(src: string): boolean {
   return s.startsWith('data:application/pdf') || s.split('?')[0].endsWith('.pdf')
 }
 
-function expenseReceiptAbsoluteUrl(relativePath: string): string {
-  const clean = relativePath.replace(/^\//, '')
-  return `${window.location.origin}/uploads/${clean}`
+async function loadExpenseReceiptUrl(clubId: number, expenseId: number, relativePath: string): Promise<string> {
+  const cleanPath = String(relativePath || '').replace(/^\/+/, '')
+  try {
+    const blob = await paymentsService.getExpenseReceiptBlob(clubId, expenseId)
+    const type = String(blob.type || '').toLowerCase()
+    const unusable = !blob || blob.size < 32 || type.includes('json') || type.includes('html') || type.includes('text/plain')
+    if (!unusable) {
+      const typed =
+        isPdfReceiptPath(cleanPath) && !type.includes('pdf')
+          ? new Blob([blob], { type: 'application/pdf' })
+          : blob
+      return URL.createObjectURL(typed)
+    }
+  } catch {
+    /* el archivo puede estar solo en /uploads */
+  }
+  return `/uploads/${cleanPath}`
 }
 
 /** Imagen: ventana con el archivo para imprimir. PDF: abre en nueva pestaña (el visor del navegador permite imprimir). */
@@ -2434,13 +2448,8 @@ export default function Payments() {
                               setPhotoModalMeta(meta)
                               revokePhotoModalBlobUrl()
                               try {
-                                const blob = await paymentsService.getExpenseReceiptBlob(clubIdNum, e.expense_id)
-                                const typed =
-                                  isPdfReceiptPath(path) && blob.type !== 'application/pdf'
-                                    ? new Blob([blob], { type: 'application/pdf' })
-                                    : blob
-                                const blobUrl = URL.createObjectURL(typed)
-                                photoModalObjectUrlRef.current = blobUrl
+                                const blobUrl = await loadExpenseReceiptUrl(clubIdNum, e.expense_id, path)
+                                if (blobUrl.startsWith('blob:')) photoModalObjectUrlRef.current = blobUrl
                                 setPhotoModalUrl(blobUrl)
                                 setShowPhotoModal(true)
                               } catch {
@@ -2478,15 +2487,8 @@ export default function Payments() {
                                   setExpensePhotoPreview(null)
                                   if ((e as any).receipt_photo_path) {
                                     const photoPath = String((e as any).receipt_photo_path)
-                                    paymentsService
-                                      .getExpenseReceiptBlob(clubIdNum, e.expense_id)
-                                      .then((blob) => {
-                                        const typed =
-                                          isPdfReceiptPath(photoPath) && blob.type !== 'application/pdf'
-                                            ? new Blob([blob], { type: 'application/pdf' })
-                                            : blob
-                                        setExpensePhotoPreview(URL.createObjectURL(typed))
-                                      })
+                                    loadExpenseReceiptUrl(clubIdNum, e.expense_id, photoPath)
+                                      .then((url) => setExpensePhotoPreview(url))
                                       .catch(() => setExpensePhotoPreview(null))
                                   }
                                   const rp = (e as any).receipt_photo_path as string | undefined
@@ -4695,7 +4697,6 @@ export default function Payments() {
                         e.stopPropagation()
                         const m = expenseReceiptEffectiveMeta
                         if (photoModalUrl) printExpenseReceipt(photoModalUrl, m.path)
-                        else printExpenseReceipt(expenseReceiptAbsoluteUrl(m.path), m.path)
                       }}
                       className="bg-white hover:bg-gray-100 text-gray-900 rounded-lg px-3 py-2 text-sm font-medium flex items-center gap-1.5 shadow"
                       title="Imprimir recibo (PDF: otra pestaña, imprimir desde el visor)"

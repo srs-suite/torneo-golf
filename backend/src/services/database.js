@@ -2805,15 +2805,17 @@ async function saveExpensePhoto(clubId, base64Data, expenseId) {
         let binaryB64;
 
         const pdfMatch = /^data:application\/pdf;base64,(.+)$/i.exec(base64Data);
-        const imgMatch = /^data:image\/(\w+);base64,(.+)$/i.exec(base64Data);
+        const imgMatch = /^data:image\/([\w.+-]+)(?:;charset=[^;,]+)?;base64,([\s\S]+)$/i.exec(String(base64Data).trim());
 
         if (pdfMatch) {
             ext = 'pdf';
-            binaryB64 = pdfMatch[1];
+            binaryB64 = pdfMatch[1].replace(/\s/g, '');
         } else if (imgMatch) {
             const imageType = imgMatch[1].toLowerCase();
-            ext = imageType === 'jpeg' ? 'jpg' : imageType;
-            binaryB64 = imgMatch[2];
+            if (imageType === 'jpeg' || imageType === 'jpg' || imageType === 'pjpeg') ext = 'jpg';
+            else if (imageType === 'svg+xml') ext = 'svg';
+            else ext = imageType.split('+')[0].replace(/[^a-z0-9]/g, '') || 'jpg';
+            binaryB64 = imgMatch[2].replace(/\s/g, '');
         } else {
             throw new Error('Formato no soportado. Usá imagen (JPG, PNG, etc.) o PDF.');
         }
@@ -2835,34 +2837,79 @@ async function saveExpensePhoto(clubId, base64Data, expenseId) {
     }
 }
 
+function expenseSearchDirs() {
+    const dirs = [
+        path.join(__dirname, '..', 'uploads', 'expenses'),
+        path.join(__dirname, '..', '..', 'uploads', 'expenses'),
+        path.join(__dirname, 'uploads', 'expenses'),
+        path.join(process.cwd(), 'uploads', 'expenses'),
+        path.join(process.cwd(), 'src', 'uploads', 'expenses'),
+        path.join(process.cwd(), 'backend', 'src', 'uploads', 'expenses'),
+    ];
+    const fromEnv = String(process.env.UPLOADS_DIR || '').trim();
+    if (fromEnv) dirs.unshift(path.join(fromEnv, 'expenses'));
+    return [...new Set(dirs)];
+}
+
 /** Carpeta canónica: backend/src/uploads/expenses (la misma que sirve server.js). */
 function expenseUploadsRoot() {
-    return path.join(__dirname, '..', 'uploads', 'expenses');
+    const dir = path.join(__dirname, '..', 'uploads', 'expenses');
+    return dir;
+}
+
+function expenseReceiptBasename(relativePath) {
+    let rel = String(relativePath || '').trim().replace(/\\/g, '/');
+    if (!rel) return null;
+    try {
+        if (rel.startsWith('http://') || rel.startsWith('https://')) {
+            rel = new URL(rel).pathname;
+        }
+    } catch {
+        /* seguir con el texto */
+    }
+    rel = rel.split('?')[0].replace(/^\/+/, '');
+    const base = rel.split('/').filter(Boolean).pop();
+    if (!base || base === '.' || base === '..' || base.includes('..')) return null;
+    return base;
 }
 
 /**
- * Busca el archivo del comprobante.
- * relativePath es `expenses/archivo.jpg` o solo el nombre.
- * También revisa backend/uploads por si un deploy viejo lo guardó ahí.
+ * Busca el archivo del comprobante por nombre en las carpetas de uploads conocidas.
  */
 function findExpenseReceiptAbsolute(relativePath) {
-    const rel = String(relativePath || '').replace(/\\/g, '/').replace(/^\/+/, '');
-    if (!rel || rel.split('/').some((p) => p === '..' || p === '')) return null;
-    const fileName = rel.startsWith('expenses/') ? rel.slice('expenses/'.length) : rel;
-    if (!fileName || fileName.includes('/') || fileName.includes('..')) return null;
-    const candidates = [
-        path.join(__dirname, '..', 'uploads', 'expenses', fileName),
-        path.join(__dirname, '..', '..', 'uploads', 'expenses', fileName),
-    ];
-    for (const full of candidates) {
+    const base = expenseReceiptBasename(relativePath);
+    if (!base) return null;
+    for (const dir of expenseSearchDirs()) {
+        const full = path.join(dir, base);
         if (fs.existsSync(full) && fs.statSync(full).isFile()) return full;
+    }
+    return null;
+}
+
+function sniffExpenseContentType(filePath) {
+    try {
+        const fd = fs.openSync(filePath, 'r');
+        const buf = Buffer.alloc(16);
+        fs.readSync(fd, buf, 0, 16, 0);
+        fs.closeSync(fd);
+        if (buf[0] === 0xff && buf[1] === 0xd8) return 'image/jpeg';
+        if (buf[0] === 0x89 && buf.toString('ascii', 1, 4) === 'PNG') return 'image/png';
+        if (buf.toString('ascii', 0, 3) === 'GIF') return 'image/gif';
+        if (buf.toString('ascii', 0, 4) === '%PDF') return 'application/pdf';
+        if (buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') return 'image/webp';
+        if (buf.toString('ascii', 4, 8) === 'ftyp') {
+            const brand = buf.toString('ascii', 8, 12).toLowerCase();
+            if (brand.startsWith('hei') || brand.startsWith('hev')) return 'image/heic';
+        }
+    } catch {
+        /* sin lectura */
     }
     return null;
 }
 
 function expenseReceiptContentType(filePath) {
     const ext = path.extname(filePath).toLowerCase();
-    return {
+    const fromExt = {
         '.png': 'image/png',
         '.jpg': 'image/jpeg',
         '.jpeg': 'image/jpeg',
@@ -2872,7 +2919,10 @@ function expenseReceiptContentType(filePath) {
         '.bmp': 'image/bmp',
         '.svg': 'image/svg+xml',
         '.pdf': 'application/pdf',
-    }[ext] || 'application/octet-stream';
+        '.heic': 'image/heic',
+        '.heif': 'image/heif',
+    }[ext];
+    return sniffExpenseContentType(filePath) || fromExt || 'application/octet-stream';
 }
 
 async function getExpenseById(clubId, expenseId) {
