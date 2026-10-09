@@ -8384,32 +8384,7 @@ async function createEmptyGroup(tournamentId, config = {}) {
     console.log('➕ Pool available:', !!pool)
     
     try {
-        // Primero, encontrar el siguiente número de grupo disponible
-        const [groupNumbers] = await pool.execute(`
-            SELECT DISTINCT group_number 
-            FROM tournament_participants 
-            WHERE tournament_id = ? 
-            ORDER BY group_number
-        `, [tournamentId])
-        
-        console.log('📋 Existing group numbers:', groupNumbers)
-        
-        let nextGroupNumber = 1
-        if (groupNumbers && groupNumbers.length > 0) {
-            // Encontrar el primer hueco o el siguiente número después del último
-            const existingNumbers = groupNumbers.map(row => row.group_number).sort((a, b) => a - b)
-            
-            for (let i = 0; i < existingNumbers.length; i++) {
-                if (existingNumbers[i] !== nextGroupNumber) {
-                    break
-                }
-                nextGroupNumber++
-            }
-        }
-        
-        console.log('📋 Next available group number:', nextGroupNumber)
-        
-        // Crear una tabla temporal para grupos vacíos si no existe
+        // Crear la tabla de grupos vacíos antes de calcular el número, para tener en cuenta los que ya existen
         await pool.execute(`
             CREATE TABLE IF NOT EXISTS empty_tournament_groups (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -8422,7 +8397,36 @@ async function createEmptyGroup(tournamentId, config = {}) {
                 FOREIGN KEY (tournament_id) REFERENCES tournaments(tournament_id) ON DELETE CASCADE
             )
         `)
-        
+
+        const [groupNumbers] = await pool.execute(`
+            SELECT DISTINCT group_number
+            FROM tournament_participants
+            WHERE tournament_id = ? AND group_number IS NOT NULL
+            ORDER BY group_number
+        `, [tournamentId])
+
+        let emptyNumbers = []
+        try {
+            const [rows] = await pool.execute(
+                `SELECT group_number FROM empty_tournament_groups WHERE tournament_id = ?`,
+                [tournamentId]
+            )
+            emptyNumbers = rows || []
+        } catch {
+            emptyNumbers = []
+        }
+
+        const used = new Set(
+            [...(groupNumbers || []), ...emptyNumbers]
+                .map((row) => Number(row.group_number))
+                .filter((n) => Number.isInteger(n) && n > 0)
+        )
+
+        let nextGroupNumber = 1
+        while (used.has(nextGroupNumber)) nextGroupNumber++
+
+        console.log('📋 Next available group number:', nextGroupNumber)
+
         // Usar configuración proporcionada o determinar automáticamente
         let assignedHole = config.hole || 1;
         let assignedTime = config.time || null;
