@@ -69,23 +69,67 @@ function isPdfExpenseAttachmentPreview(src: string): boolean {
   return s.startsWith('data:application/pdf') || s.split('?')[0].endsWith('.pdf')
 }
 
-async function loadExpenseReceiptUrl(clubId: number, expenseId: number, relativePath: string): Promise<string> {
+type ExpenseReceiptModalMeta = { path: string; expenseId: number; expenseDate: string; forcePdf?: boolean }
+
+function metaIsPdf(meta: ExpenseReceiptModalMeta | null): boolean {
+  if (!meta) return false
+  return !!meta.forcePdf || isPdfReceiptPath(meta.path)
+}
+
+function sniffReceiptBytes(buf: Uint8Array): string | null {
+  if (buf.length < 4) return null
+  if (buf[0] === 0xff && buf[1] === 0xd8) return 'image/jpeg'
+  if (buf[0] === 0x89 && buf[1] === 0x50) return 'image/png'
+  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'image/gif'
+  if (buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46) return 'application/pdf'
+  if (
+    buf.length >= 12 &&
+    buf[0] === 0x52 &&
+    buf[1] === 0x49 &&
+    buf[2] === 0x46 &&
+    buf[3] === 0x46 &&
+    buf[8] === 0x57 &&
+    buf[9] === 0x45 &&
+    buf[10] === 0x42 &&
+    buf[11] === 0x50
+  ) {
+    return 'image/webp'
+  }
+  return null
+}
+
+async function loadExpenseReceiptUrl(
+  clubId: number,
+  expenseId: number,
+  relativePath: string
+): Promise<{ url: string; forcePdf: boolean }> {
   const cleanPath = String(relativePath || '').replace(/^\/+/, '')
+  const fromBlob = async (blob: Blob) => {
+    const buf = new Uint8Array(await blob.arrayBuffer())
+    const sniffed = sniffReceiptBytes(buf)
+    if (!sniffed) return null
+    return {
+      url: URL.createObjectURL(new Blob([buf], { type: sniffed })),
+      forcePdf: sniffed === 'application/pdf',
+    }
+  }
   try {
     const blob = await paymentsService.getExpenseReceiptBlob(clubId, expenseId)
-    const type = String(blob.type || '').toLowerCase()
-    const unusable = !blob || blob.size < 32 || type.includes('json') || type.includes('html') || type.includes('text/plain')
-    if (!unusable) {
-      const typed =
-        isPdfReceiptPath(cleanPath) && !type.includes('pdf')
-          ? new Blob([blob], { type: 'application/pdf' })
-          : blob
-      return URL.createObjectURL(typed)
+    const ready = await fromBlob(blob)
+    if (ready) return ready
+  } catch {
+    /* probar /uploads */
+  }
+  try {
+    const res = await fetch(`/uploads/${cleanPath}`)
+    if (res.ok) {
+      const ready = await fromBlob(await res.blob())
+      if (ready) return ready
     }
   } catch {
-    /* el archivo puede estar solo en /uploads */
+    /* sin archivo público */
   }
-  return `/uploads/${cleanPath}`
+  throw new Error('No se encontró el comprobante en el servidor. Editalo y volvé a adjuntar la foto.')
 }
 
 /** Imagen: ventana con el archivo para imprimir. PDF: abre en nueva pestaña (el visor del navegador permite imprimir). */
@@ -167,8 +211,6 @@ function receiptPathFromUploadUrl(url: string): string | null {
   if (idx === -1) return null
   return pathOnly.slice(idx + marker.length).replace(/^\/+/, '')
 }
-
-type ExpenseReceiptModalMeta = { path: string; expenseId: number; expenseDate: string }
 
 function effectiveExpenseReceiptMeta(
   url: string | null,
@@ -2448,12 +2490,13 @@ export default function Payments() {
                               setPhotoModalMeta(meta)
                               revokePhotoModalBlobUrl()
                               try {
-                                const blobUrl = await loadExpenseReceiptUrl(clubIdNum, e.expense_id, path)
-                                if (blobUrl.startsWith('blob:')) photoModalObjectUrlRef.current = blobUrl
-                                setPhotoModalUrl(blobUrl)
+                                const loaded = await loadExpenseReceiptUrl(clubIdNum, e.expense_id, path)
+                                photoModalObjectUrlRef.current = loaded.url
+                                setPhotoModalMeta({ ...meta, forcePdf: loaded.forcePdf })
+                                setPhotoModalUrl(loaded.url)
                                 setShowPhotoModal(true)
-                              } catch {
-                                toast.error('No se pudo abrir el comprobante.')
+                              } catch (err) {
+                                toast.error(err instanceof Error ? err.message : 'No se pudo abrir el comprobante.')
                                 setPhotoModalMeta(null)
                               }
                             }}
@@ -2488,7 +2531,7 @@ export default function Payments() {
                                   if ((e as any).receipt_photo_path) {
                                     const photoPath = String((e as any).receipt_photo_path)
                                     loadExpenseReceiptUrl(clubIdNum, e.expense_id, photoPath)
-                                      .then((url) => setExpensePhotoPreview(url))
+                                      .then((loaded) => setExpensePhotoPreview(loaded.url))
                                       .catch(() => setExpensePhotoPreview(null))
                                   }
                                   const rp = (e as any).receipt_photo_path as string | undefined
@@ -4714,20 +4757,20 @@ export default function Payments() {
                       className="bg-white hover:bg-gray-100 text-gray-900 rounded-lg px-3 py-2 text-sm font-medium flex items-center gap-1.5 shadow"
                       title={
                         expenseReceiptEffectiveMeta &&
-                        isPdfReceiptPath(expenseReceiptEffectiveMeta.path)
+                        metaIsPdf(expenseReceiptEffectiveMeta)
                           ? 'Abre el PDF en otra pestaña; desde el visor elegís imprimir o guardar.'
                           : 'Descargar imagen al equipo'
                       }
                     >
                       <Download className="h-4 w-4 shrink-0" />
                       {expenseReceiptEffectiveMeta &&
-                      isPdfReceiptPath(expenseReceiptEffectiveMeta.path)
+                      metaIsPdf(expenseReceiptEffectiveMeta)
                         ? 'Abrir PDF'
                         : 'Descargar'}
                     </button>
                   </>
                 ) : null}
-                {expenseReceiptEffectiveMeta && !isPdfReceiptPath(expenseReceiptEffectiveMeta.path) ? (
+                {expenseReceiptEffectiveMeta && !metaIsPdf(expenseReceiptEffectiveMeta) ? (
                   <>
                     <button
                       type="button"
@@ -4789,7 +4832,7 @@ export default function Payments() {
                   maxHeight: 'calc(92vh - 6rem)',
                   cursor:
                     expenseReceiptEffectiveMeta &&
-                    !isPdfReceiptPath(expenseReceiptEffectiveMeta.path) &&
+                    !metaIsPdf(expenseReceiptEffectiveMeta) &&
                     photoZoom > 1
                       ? isDragging
                         ? 'grabbing'
@@ -4797,7 +4840,7 @@ export default function Payments() {
                       : 'default',
                 }}
                 onWheel={
-                  expenseReceiptEffectiveMeta && isPdfReceiptPath(expenseReceiptEffectiveMeta.path)
+                  expenseReceiptEffectiveMeta && metaIsPdf(expenseReceiptEffectiveMeta)
                     ? undefined
                     : (e) => {
                         e.stopPropagation()
@@ -4808,7 +4851,7 @@ export default function Payments() {
                       }
                 }
                 onMouseDown={
-                  expenseReceiptEffectiveMeta && !isPdfReceiptPath(expenseReceiptEffectiveMeta.path)
+                  expenseReceiptEffectiveMeta && !metaIsPdf(expenseReceiptEffectiveMeta)
                     ? (e) => {
                         if (photoZoom > 1) {
                           e.preventDefault()
@@ -4819,7 +4862,7 @@ export default function Payments() {
                     : undefined
                 }
                 onMouseMove={
-                  expenseReceiptEffectiveMeta && !isPdfReceiptPath(expenseReceiptEffectiveMeta.path)
+                  expenseReceiptEffectiveMeta && !metaIsPdf(expenseReceiptEffectiveMeta)
                     ? (e) => {
                         if (isDragging && photoZoom > 1) {
                           e.preventDefault()
@@ -4832,17 +4875,17 @@ export default function Payments() {
                     : undefined
                 }
                 onMouseUp={
-                  expenseReceiptEffectiveMeta && !isPdfReceiptPath(expenseReceiptEffectiveMeta.path)
+                  expenseReceiptEffectiveMeta && !metaIsPdf(expenseReceiptEffectiveMeta)
                     ? () => setIsDragging(false)
                     : undefined
                 }
                 onMouseLeave={
-                  expenseReceiptEffectiveMeta && !isPdfReceiptPath(expenseReceiptEffectiveMeta.path)
+                  expenseReceiptEffectiveMeta && !metaIsPdf(expenseReceiptEffectiveMeta)
                     ? () => setIsDragging(false)
                     : undefined
                 }
               >
-                {expenseReceiptEffectiveMeta && isPdfReceiptPath(expenseReceiptEffectiveMeta.path) ? (
+                {expenseReceiptEffectiveMeta && metaIsPdf(expenseReceiptEffectiveMeta) ? (
                   <iframe
                     title="Recibo PDF"
                     src={photoModalUrl}
@@ -4888,7 +4931,7 @@ export default function Payments() {
               </div>
 
               <p className="mt-2 shrink-0 text-center text-xs text-white/90 px-1">
-                {expenseReceiptEffectiveMeta && isPdfReceiptPath(expenseReceiptEffectiveMeta.path)
+                {expenseReceiptEffectiveMeta && metaIsPdf(expenseReceiptEffectiveMeta)
                   ? 'Usá Imprimir o Descargar arriba.'
                   : 'Imprimir y Descargar arriba. Rueda del mouse: zoom · arrastrar: mover (con zoom).'}
               </p>

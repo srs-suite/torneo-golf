@@ -53,7 +53,7 @@ import {
     
     // Payments and accounting functions
     getPaymentsSummary, getExpenses, addExpense, updateExpense, deleteExpense,
-    getExpenseById, findExpenseReceiptAbsolute, expenseReceiptContentType,
+    getExpenseById, findExpenseReceiptAbsolute, findExpenseReceiptById, expenseReceiptContentType,
     getOtherIncomes, addOtherIncome, updateOtherIncome, deleteOtherIncome,
     getCurrencyExchanges, addCurrencyExchange, updateCurrencyExchange, deleteCurrencyExchange,
     getCurrencyBalance, getCustodians,
@@ -1483,7 +1483,8 @@ async function handleClubAPI(req, res, pathParts) {
                     }
                     const expense = await getExpenseById(parseInt(clubId, 10), expenseId);
                     const rel = expense?.receipt_photo_path;
-                    const filePath = rel ? findExpenseReceiptAbsolute(rel) : null;
+                    let filePath = rel ? findExpenseReceiptAbsolute(rel) : null;
+                    if (!filePath) filePath = findExpenseReceiptById(clubId, expenseId);
                     if (!filePath) {
                         sendError(res, 'No se encontró el comprobante', 404);
                         return;

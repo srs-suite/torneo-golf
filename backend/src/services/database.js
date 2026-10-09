@@ -2848,6 +2848,11 @@ function expenseSearchDirs() {
     ];
     const fromEnv = String(process.env.UPLOADS_DIR || '').trim();
     if (fromEnv) dirs.unshift(path.join(fromEnv, 'expenses'));
+    dirs.push(
+        '/home/retailso/torneogolf-source/backend/src/uploads/expenses',
+        '/home/retailso/torneogolf-source/backend/uploads/expenses',
+        '/home/retailso/torneogolf.retailsolutionstimetracker.com/uploads/expenses'
+    );
     return [...new Set(dirs)];
 }
 
@@ -2923,6 +2928,42 @@ function expenseReceiptContentType(filePath) {
         '.heif': 'image/heif',
     }[ext];
     return sniffExpenseContentType(filePath) || fromExt || 'application/octet-stream';
+}
+
+function findExpenseReceiptById(clubId, expenseId) {
+    const id = parseInt(expenseId, 10);
+    const club = parseInt(clubId, 10);
+    if (!id || !club) return null;
+    const prefix = `expense_${club}_${id}_`;
+    const roots = expenseSearchDirs().map((dir) => path.dirname(dir));
+    const seen = new Set();
+    for (const root of roots) {
+        if (!root || seen.has(root)) continue;
+        seen.add(root);
+        const found = walkUploadsForPrefix(root, prefix, 2);
+        if (found) return found;
+    }
+    return null;
+}
+
+function walkUploadsForPrefix(dir, prefix, depth) {
+    if (!dir || depth < 0 || !fs.existsSync(dir)) return null;
+    let entries;
+    try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+        return null;
+    }
+    for (const ent of entries) {
+        if (ent.isFile() && ent.name.startsWith(prefix)) return path.join(dir, ent.name);
+    }
+    if (depth === 0) return null;
+    for (const ent of entries) {
+        if (!ent.isDirectory()) continue;
+        const found = walkUploadsForPrefix(path.join(dir, ent.name), prefix, depth - 1);
+        if (found) return found;
+    }
+    return null;
 }
 
 async function getExpenseById(clubId, expenseId) {
@@ -10080,7 +10121,7 @@ export {
     
     // Payments and accounting functions
     getPaymentsSummary, getExpenses, addExpense, updateExpense, deleteExpense,
-    getExpenseById, findExpenseReceiptAbsolute, expenseReceiptContentType,
+    getExpenseById, findExpenseReceiptAbsolute, findExpenseReceiptById, expenseReceiptContentType,
     getOtherIncomes, addOtherIncome, updateOtherIncome, deleteOtherIncome,
     getCurrencyExchanges, addCurrencyExchange, updateCurrencyExchange, deleteCurrencyExchange,
     getCurrencyBalance, getCustodians,
