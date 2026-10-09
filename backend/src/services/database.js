@@ -2878,15 +2878,42 @@ function expenseReceiptBasename(relativePath) {
     return base;
 }
 
+function findNamedFile(dir, base, depth) {
+    if (!dir || depth < 0 || !fs.existsSync(dir)) return null;
+    let entries;
+    try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+        return null;
+    }
+    const wanted = String(base).toLowerCase();
+    for (const ent of entries) {
+        if (ent.isFile() && ent.name.toLowerCase() === wanted) return path.join(dir, ent.name);
+    }
+    if (depth === 0) return null;
+    for (const ent of entries) {
+        if (!ent.isDirectory()) continue;
+        const found = findNamedFile(path.join(dir, ent.name), base, depth - 1);
+        if (found) return found;
+    }
+    return null;
+}
+
 /**
  * Busca el archivo del comprobante por nombre en las carpetas de uploads conocidas.
  */
 function findExpenseReceiptAbsolute(relativePath) {
-    const base = expenseReceiptBasename(relativePath);
+    let base = expenseReceiptBasename(relativePath);
     if (!base) return null;
-    for (const dir of expenseSearchDirs()) {
-        const full = path.join(dir, base);
-        if (fs.existsSync(full) && fs.statSync(full).isFile()) return full;
+    try {
+        base = decodeURIComponent(base);
+    } catch {
+        /* nombre ya decodificado */
+    }
+    const roots = [...new Set(expenseSearchDirs().map((dir) => path.dirname(dir)))];
+    for (const root of roots) {
+        const found = findNamedFile(root, base, 3);
+        if (found) return found;
     }
     return null;
 }
@@ -2940,7 +2967,7 @@ function findExpenseReceiptById(clubId, expenseId) {
     for (const root of roots) {
         if (!root || seen.has(root)) continue;
         seen.add(root);
-        const found = walkUploadsForPrefix(root, prefix, 2);
+        const found = walkUploadsForPrefix(root, prefix, 4);
         if (found) return found;
     }
     return null;

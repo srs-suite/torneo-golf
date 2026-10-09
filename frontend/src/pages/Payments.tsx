@@ -78,10 +78,15 @@ function metaIsPdf(meta: ExpenseReceiptModalMeta | null): boolean {
 
 function sniffReceiptBytes(buf: Uint8Array): string | null {
   if (buf.length < 4) return null
-  if (buf[0] === 0xff && buf[1] === 0xd8) return 'image/jpeg'
+  const limit = Math.min(buf.length, 32)
+  if (buf[0] !== 0x3c) {
+    for (let i = 0; i < limit - 3; i++) {
+      if (buf[i] === 0xff && buf[i + 1] === 0xd8) return 'image/jpeg'
+      if (buf[i] === 0x25 && buf[i + 1] === 0x50 && buf[i + 2] === 0x44 && buf[i + 3] === 0x46) return 'application/pdf'
+    }
+  }
   if (buf[0] === 0x89 && buf[1] === 0x50) return 'image/png'
   if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'image/gif'
-  if (buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46) return 'application/pdf'
   if (
     buf.length >= 12 &&
     buf[0] === 0x52 &&
@@ -95,6 +100,21 @@ function sniffReceiptBytes(buf: Uint8Array): string | null {
   ) {
     return 'image/webp'
   }
+  if (buf.length >= 12 && buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70) {
+    const brand = String.fromCharCode(buf[8], buf[9], buf[10], buf[11]).toLowerCase()
+    if (brand.startsWith('hei') || brand.startsWith('hev') || brand.startsWith('mif')) return 'image/heic'
+  }
+  return null
+}
+
+function typeFromReceiptPath(relativePath: string): string | null {
+  const ext = relativePath.split('?')[0].split('.').pop()?.toLowerCase() || ''
+  if (ext === 'jpg' || ext === 'jpeg' || ext === 'jfif') return 'image/jpeg'
+  if (ext === 'png') return 'image/png'
+  if (ext === 'gif') return 'image/gif'
+  if (ext === 'webp') return 'image/webp'
+  if (ext === 'pdf') return 'application/pdf'
+  if (ext === 'heic' || ext === 'heif') return 'image/heic'
   return null
 }
 
@@ -103,10 +123,18 @@ async function loadExpenseReceiptUrl(
   expenseId: number,
   relativePath: string
 ): Promise<{ url: string; forcePdf: boolean }> {
-  const cleanPath = String(relativePath || '').replace(/^\/+/, '')
+  const cleanPath = String(relativePath || '').trim()
+  if (cleanPath.startsWith('data:application/pdf')) return { url: cleanPath, forcePdf: true }
+  if (cleanPath.startsWith('data:image')) return { url: cleanPath, forcePdf: false }
+
   const fromBlob = async (blob: Blob) => {
+    if (!blob || blob.size < 32) return null
+    const declared = String(blob.type || '').toLowerCase()
+    if (declared.includes('json') || declared.includes('html') || declared.includes('text/plain')) return null
     const buf = new Uint8Array(await blob.arrayBuffer())
-    const sniffed = sniffReceiptBytes(buf)
+    const head = String.fromCharCode(...buf.subarray(0, Math.min(buf.length, 20))).trim().toLowerCase()
+    if (head.startsWith('<!doctype') || head.startsWith('<html') || head.startsWith('{')) return null
+    const sniffed = sniffReceiptBytes(buf) || (declared.startsWith('image/') || declared === 'application/pdf' ? declared : null) || typeFromReceiptPath(cleanPath)
     if (!sniffed) return null
     return {
       url: URL.createObjectURL(new Blob([buf], { type: sniffed })),
@@ -117,11 +145,15 @@ async function loadExpenseReceiptUrl(
     const blob = await paymentsService.getExpenseReceiptBlob(clubId, expenseId)
     const ready = await fromBlob(blob)
     if (ready) return ready
-  } catch {
-    /* probar /uploads */
+  } catch (err) {
+    const code = (err as { code?: string })?.code
+    if (code === 'ECONNABORTED') {
+      throw new Error('La foto tardó demasiado en cargar. Probá de nuevo.')
+    }
   }
+  const uploadPath = cleanPath.replace(/^\/+/, '')
   try {
-    const res = await fetch(`/uploads/${cleanPath}`)
+    const res = await fetch(`/uploads/${uploadPath}`)
     if (res.ok) {
       const ready = await fromBlob(await res.blob())
       if (ready) return ready
@@ -4921,7 +4953,7 @@ export default function Payments() {
                         target.style.display = 'none'
                         const errorDiv = document.createElement('div')
                         errorDiv.className = 'bg-red-100 text-red-800 p-4 rounded-lg text-center'
-                        errorDiv.textContent = 'Error al cargar la imagen'
+                        errorDiv.textContent = 'El navegador no puede mostrar este archivo. Usá Descargar para abrirlo en el equipo.'
                         const parent = target.parentElement?.parentElement
                         if (parent) parent.appendChild(errorDiv)
                       }}
