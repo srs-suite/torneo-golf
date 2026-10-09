@@ -1633,7 +1633,7 @@ export function TournamentParticipantsModal({
               </div>
             )}
             {filteredParticipants.length > 0 ? (
-              <div className="overflow-y-auto max-h-80 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
+              <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
                     <tr>
