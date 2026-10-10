@@ -1745,12 +1745,19 @@ export default function TeeTimeManagerSimple() {
                     const yyyy = d.getFullYear().toString()
                     return `${dd}/${mm}/${yyyy}`
                   }
-                  const generateHeader = (sessionName: string, sessionIcon: string) => `
+                  const headerClock = (raw?: string | null) => {
+                    if (!raw) return ''
+                    const match = String(raw).trim().match(/^(\d{1,2}):(\d{2})/)
+                    return match ? `${match[1].padStart(2, '0')}:${match[2]}` : String(raw).trim()
+                  }
+                  const morningHeaderTime = headerClock(tournament?.start_time || config.startTime)
+                  const afternoonHeaderTime = headerClock(config.afternoonStartTime || (tournament as any)?.afternoon_start_time)
+                  const generateHeader = (sessionName: string, sessionIcon: string, headerTime: string) => `
                     <div class="page-header">
                       <h1 style="text-align:center;">${sessionIcon} ${sessionName}</h1>
                       <div class="tournament-info">
                         <p><strong>Torneo:</strong> ${tournament?.tournament_name || 'N/A'}</p>
-                        <p><strong>Fecha:</strong> ${formatDate(tournament?.tournament_date)}${tournament?.start_time ? ` - ${tournament.start_time}` : ''}</p>
+                        <p><strong>Fecha:</strong> ${formatDate(tournament?.tournament_date)}${headerTime ? ` - ${headerTime}` : ''}</p>
                       </div>
                     </div>
                   `;
@@ -1799,31 +1806,31 @@ export default function TeeTimeManagerSimple() {
                   if (sessionFilter === 'all') {
                     printBodyHtml = `
                           ${morningGroups.length > 0 ? `
-                          ${generateGroupTable(morningGroups, generateHeader('Grupos de Mañana', '☀️'))}
+                          ${generateGroupTable(morningGroups, generateHeader('Grupos de Mañana', '☀️', morningHeaderTime))}
                           ` : ''}
                           
                           ${afternoonGroups.length > 0 ? `
                             <div class="session-separator">
-                              ${generateGroupTable(afternoonGroups, generateHeader('Grupos de Tarde', '🌙'))}
+                              ${generateGroupTable(afternoonGroups, generateHeader('Grupos de Tarde', '🌙', afternoonHeaderTime))}
                             </div>
                           ` : ''}
                           
                           ${morningGroups.length === 0 && afternoonGroups.length === 0 ? `
-                            ${generateHeader('Reporte de Tee Times', '🏌️')}
+                            ${generateHeader('Reporte de Tee Times', '🏌️', morningHeaderTime)}
                             <p style="text-align: center; color: #666; font-style: italic;">No hay grupos configurados</p>
                           ` : ''}
                     `
                   } else if (sessionFilter === 'morning') {
                     printBodyHtml =
                       morningGroups.length > 0
-                        ? generateGroupTable(morningGroups, generateHeader('Grupos de Mañana', '☀️'))
-                        : `${generateHeader('Grupos de Mañana', '☀️')}
+                        ? generateGroupTable(morningGroups, generateHeader('Grupos de Mañana', '☀️', morningHeaderTime))
+                        : `${generateHeader('Grupos de Mañana', '☀️', morningHeaderTime)}
                             <p style="text-align: center; color: #666; font-style: italic;">No hay grupos en el turno mañana</p>`
                   } else {
                     printBodyHtml =
                       afternoonGroups.length > 0
-                        ? generateGroupTable(afternoonGroups, generateHeader('Grupos de Tarde', '🌙'))
-                        : `${generateHeader('Grupos de Tarde', '🌙')}
+                        ? generateGroupTable(afternoonGroups, generateHeader('Grupos de Tarde', '🌙', afternoonHeaderTime))
+                        : `${generateHeader('Grupos de Tarde', '🌙', afternoonHeaderTime)}
                             <p style="text-align: center; color: #666; font-style: italic;">No hay grupos en el turno tarde</p>`
                   }
 
