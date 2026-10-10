@@ -1748,10 +1748,17 @@ export default function TeeTimeManagerSimple() {
                   const headerClock = (raw?: string | null) => {
                     if (!raw) return ''
                     const match = String(raw).trim().match(/^(\d{1,2}):(\d{2})/)
-                    return match ? `${match[1].padStart(2, '0')}:${match[2]}` : String(raw).trim()
+                    return match ? `${match[1].padStart(2, '0')}:${match[2]}` : ''
                   }
-                  const morningHeaderTime = headerClock(tournament?.start_time || config.startTime)
-                  const afternoonHeaderTime = headerClock(config.afternoonStartTime || (tournament as any)?.afternoon_start_time)
+                  const earliestGroupTime = (sessionGroups: any[]) => {
+                    const times = sessionGroups
+                      .map((g) => headerClock(getDisplayTimeForGroup(g)))
+                      .filter((t) => /^\d{2}:\d{2}$/.test(t))
+                      .sort()
+                    return times[0] || ''
+                  }
+                  const morningHeaderTime = earliestGroupTime(morningGroups) || headerClock(tournament?.start_time || config.startTime)
+                  const afternoonHeaderTime = earliestGroupTime(afternoonGroups) || headerClock(config.afternoonStartTime || (tournament as any)?.afternoon_start_time)
                   const generateHeader = (sessionName: string, sessionIcon: string, headerTime: string) => `
                     <div class="page-header">
                       <h1 style="text-align:center;">${sessionIcon} ${sessionName}</h1>
