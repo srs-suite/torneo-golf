@@ -360,7 +360,7 @@ export default function TournamentResults() {
       const categoryScores = uniqueScorecards
         .filter(category.filter)
         .map((scorecard) => {
-          const rawNet = computeNetForResultsRow(scorecard, category.id)
+          const rawNet = computeNetForResultsRow(scorecard)
           const { front: ida, back: vuelta } = normalizeIdaVueltaForResults(scorecard)
           return {
             player_name: scorecard.player_name,
@@ -379,7 +379,7 @@ export default function TournamentResults() {
             position: 0,
           }
         })
-        .sort(compareCategoryResults)
+        .sort((a, b) => compareCategoryResults(a, b, category.id.startsWith('scratch') ? 'gross' : 'net'))
         .map((result, index) => ({
           ...result,
           position: index + 1

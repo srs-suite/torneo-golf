@@ -58,8 +58,7 @@ export function normalizeIdaVueltaForResults(scorecard: any): { front: number; b
  * Net para clasificación: misma lógica que el portal (`display_net`): primero `participant_handicap_used`
  * (HCP de juego del torneo), si no `handicap_local`, si no `handicap_index`; WH negativo → gross + |hcp|.
  */
-export function computeNetForResultsRow(scorecard: any, categoryId: string): number {
-  if (categoryId.startsWith('scratch')) return Number(scorecard.total_gross) || 0
+export function computeNetForResultsRow(scorecard: any): number {
   const gross = Number(scorecard.total_gross) || 0
   if (gross <= 0) return 0
 
@@ -123,7 +122,7 @@ function handicapIndexForTiebreak(v: unknown): number | null {
   return Number.isFinite(n) ? n : null
 }
 
-/** Menor net gana; empate fino en net; luego mejor vuelta; luego 13–18; 16–18; menor índice; ida; gross. */
+/** Menor net gana (en Scratch, menor gross); empate: mejor vuelta, luego 13–18, 16–18, menor índice, ida y gross. */
 export function compareCategoryResults(
   a: Pick<
     CategoryResult,
@@ -144,13 +143,20 @@ export function compareCategoryResults(
     | 'handicap_index'
     | 'vuelta_last6_gross'
     | 'vuelta_last3_gross'
-  >
+  >,
+  rankBy: 'net' | 'gross' = 'net'
 ): number {
-  const na = Math.round(Number(a.total_net))
-  const nb = Math.round(Number(b.total_net))
-  if (na !== nb) return na - nb
-  const dNetFine = Number(a.total_net) - Number(b.total_net)
-  if (dNetFine !== 0) return dNetFine < 0 ? -1 : 1
+  if (rankBy === 'gross') {
+    const ga = Number(a.total_gross)
+    const gb = Number(b.total_gross)
+    if (ga !== gb) return ga - gb
+  } else {
+    const na = Math.round(Number(a.total_net))
+    const nb = Math.round(Number(b.total_net))
+    if (na !== nb) return na - nb
+    const dNetFine = Number(a.total_net) - Number(b.total_net)
+    if (dNetFine !== 0) return dNetFine < 0 ? -1 : 1
+  }
   const dBack = Number(a.back_nine) - Number(b.back_nine)
   if (dBack !== 0) return dBack
 
@@ -512,7 +518,7 @@ export function computeResultsByCategory(
     const categoryScores = uniqueScorecards
       .filter(category.filter)
       .map((scorecard) => {
-        const rawNet = computeNetForResultsRow(scorecard, category.id)
+        const rawNet = computeNetForResultsRow(scorecard)
         const { front: ida, back: vuelta } = normalizeIdaVueltaForResults(scorecard)
         return {
         player_name: scorecard.player_name,
@@ -530,7 +536,7 @@ export function computeResultsByCategory(
         position: 0,
         }
       })
-      .sort(compareCategoryResults)
+      .sort((a, b) => compareCategoryResults(a, b, category.id.startsWith('scratch') ? 'gross' : 'net'))
       .map((result, index) => ({
         ...result,
         position: index + 1
