@@ -38,10 +38,9 @@ interface Category {
   filter: (scorecard: any) => boolean;
 }
 
-/** Fondo amarillo: 1.er y 2.do en cada categoría; en Scratch (Gross) solo 1.er */
+/** Fondo amarillo: 1.er y 2.do en cada categoría, incluido Scratch. */
 function resultsRowHighlightClass(categoryId: string, position: number): string {
-  const scratch = categoryId.startsWith('scratch')
-  if (scratch) return position === 1 ? 'bg-yellow-50' : 'hover:bg-gray-50'
+  if (!categoryId) return 'hover:bg-gray-50'
   return position <= 2 ? 'bg-yellow-50' : 'hover:bg-gray-50'
 }
 
@@ -388,7 +387,7 @@ export default function TournamentResults() {
       results[category.id] = categoryScores;
     });
 
-    // Regla: el ganador de Scratch (gross) no puede ganar también en 1ra banda neto
+    // 1.er y 2.do de Scratch no entran en la 1ra banda (-5 a 7.9)
     const getIdKey = (r: CategoryResult | undefined) => {
       if (!r) return '';
       const keyName = sanitizeAscii(r.player_name || '').toLowerCase();
@@ -396,13 +395,14 @@ export default function TournamentResults() {
       return keyMat ? `m:${keyMat}` : `n:${keyName}`;
     };
 
-    const scratchWinnerGeneral = results['scratch_general'] && results['scratch_general'][0];
-    const scratchGeneralKey = getIdKey(scratchWinnerGeneral);
+    const scratchPodiumKeys = new Set(
+      (results['scratch_general'] || []).slice(0, 2).map((r) => getIdKey(r)).filter(Boolean)
+    );
     const computeKey = (r: CategoryResult) => getIdKey(r);
 
-    if (results['band_1'] && scratchGeneralKey) {
+    if (results['band_1'] && scratchPodiumKeys.size > 0) {
       results['band_1'] = results['band_1']
-        .filter(r => computeKey(r) !== scratchGeneralKey)
+        .filter(r => !scratchPodiumKeys.has(computeKey(r)))
         .map((r, idx) => ({ ...r, position: idx + 1 }));
     }
 

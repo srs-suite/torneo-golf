@@ -552,13 +552,14 @@ export function computeResultsByCategory(
     return keyMat ? `m:${keyMat}` : `n:${keyName}`
   }
 
-  const scratchWinnerGeneral = results['scratch_general'] && results['scratch_general'][0]
-  const scratchGeneralKey = getIdKey(scratchWinnerGeneral)
+  const scratchPodiumKeys = new Set(
+    (results['scratch_general'] || []).slice(0, 2).map((r) => getIdKey(r)).filter(Boolean)
+  )
   const computeKey = (r: CategoryResult) => getIdKey(r)
 
-  if (results['band_1'] && scratchGeneralKey) {
+  if (results['band_1'] && scratchPodiumKeys.size > 0) {
     results['band_1'] = results['band_1']
-      .filter((r) => computeKey(r) !== scratchGeneralKey)
+      .filter((r) => !scratchPodiumKeys.has(computeKey(r)))
       .map((r, idx) => ({ ...r, position: idx + 1 }))
   }
 
