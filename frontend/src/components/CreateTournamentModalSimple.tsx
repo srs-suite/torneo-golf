@@ -54,12 +54,13 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
   const createTournament = useCreateTournament(clubId)
   const updateTournament = useUpdateTournament(clubId, tournament?.tournament_id || 0)
   const [isRankingEvent, setIsRankingEvent] = useState<boolean>(permFlag((tournament as any)?.is_ranking_event))
-  const readResultsMode = (t: any): 'standard' | 'scratch_bands' => {
+  const readResultsMode = (t: any): 'standard' | 'scratch_bands' | 'plus_15' => {
     const v = t?.results_mode
     if (v === 'scratch_bands' || (typeof v === 'string' && v.toLowerCase() === 'scratch_bands')) return 'scratch_bands'
+    if (v === 'plus_15' || (typeof v === 'string' && v.toLowerCase() === 'plus_15')) return 'plus_15'
     return 'standard'
   }
-  const [resultsMode, setResultsMode] = useState<'standard' | 'scratch_bands'>(readResultsMode(tournament as any))
+  const [resultsMode, setResultsMode] = useState<'standard' | 'scratch_bands' | 'plus_15'>(readResultsMode(tournament as any))
   const [separateLadies, setSeparateLadies] = useState<boolean>((tournament as any)?.separate_ladies === 1 || (tournament as any)?.separate_ladies === true)
   const [ladiesByHcp, setLadiesByHcp] = useState<boolean>((tournament as any)?.ladies_by_hcp === 1 || (tournament as any)?.ladies_by_hcp === true)
   const [publicInscription, setPublicInscription] = useState<boolean>((tournament as any)?.public_inscription === 1 || (tournament as any)?.public_inscription === true)
@@ -684,6 +685,7 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                   >
                     <option value="standard">Estándar (0–7.9, 8–13.9, 14–21.9, 22–53.9)</option>
                     <option value="scratch_bands">Scratch (Gross) + Bandas (-5 a 7.9, 8 a 13.9, 14 a 21.9, 22 a 54)</option>
+                    <option value="plus_15">+ a 15 y 16 a 54+ (sin matrícula y principiantes)</option>
                   </select>
                   
                   {/* Descripción de la modalidad seleccionada */}
@@ -697,6 +699,16 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                           <li><strong>3ra Categoría:</strong> HCP 14.0 - 21.9</li>
                           <li><strong>4ta Categoría:</strong> HCP 22.0 - 53.9</li>
                           <li><strong>Sin HCP:</strong> Jugadores sin handicap asignado (agrupados por separado)</li>
+                        </ul>
+                      </div>
+                    ) : resultsMode === 'plus_15' ? (
+                      <div className="space-y-1">
+                        <p className="font-semibold text-blue-900">Modalidad + a 15:</p>
+                        <ul className="list-disc list-inside space-y-0.5 ml-2">
+                          <li><strong>+ a 15:</strong> Hándicap plus hasta 15, con matrícula</li>
+                          <li><strong>16 a 54+:</strong> Hándicap 16 o más, con matrícula</li>
+                          <li><strong>Sin matrícula:</strong> Tienen hándicap y no tienen matrícula</li>
+                          <li><strong>Principiantes:</strong> Sin hándicap</li>
                         </ul>
                       </div>
                     ) : (

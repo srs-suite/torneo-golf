@@ -47,7 +47,7 @@ function tournamentRowToUpdatePayload(t: unknown, accountId: number): CreateTour
     public_inscription_allow_groups:
       row.public_inscription_allow_groups !== 0 && row.public_inscription_allow_groups !== false,
     flyer_url: (row.flyer_url as string) || undefined,
-    results_mode: row.results_mode === 'scratch_bands' ? 'scratch_bands' : 'standard',
+    results_mode: row.results_mode === 'scratch_bands' ? 'scratch_bands' : row.results_mode === 'plus_15' ? 'plus_15' : 'standard',
     separate_ladies: !!(row.separate_ladies === 1 || row.separate_ladies === true),
     ladies_by_hcp: !!(row.ladies_by_hcp === 1 || row.ladies_by_hcp === true),
     is_ranking_event: !!(row.is_ranking_event === 1 || row.is_ranking_event === true),

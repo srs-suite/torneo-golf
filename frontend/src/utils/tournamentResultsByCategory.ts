@@ -202,6 +202,33 @@ export function getEffectiveHcpForCategory(scorecard: any): number | null {
   return parseHcpField(scorecard.handicap_local)
 }
 
+function hasMatricula(scorecard: any): boolean {
+  const raw = scorecard?.member_number
+  return raw != null && String(raw).trim() !== ''
+}
+
+/** Con matrícula y hándicap plus (negativo) hasta 15.9. */
+function isPlusTo15(scorecard: any): boolean {
+  const hcp = getEffectiveHcpForCategory(scorecard)
+  return hasMatricula(scorecard) && hcp !== null && hcp < 16
+}
+
+/** Con matrícula y hándicap 16 o más. */
+function isSixteenPlus(scorecard: any): boolean {
+  const hcp = getEffectiveHcpForCategory(scorecard)
+  return hasMatricula(scorecard) && hcp !== null && hcp >= 16
+}
+
+/** Tienen hándicap y no tienen matrícula. */
+function isSinMatricula(scorecard: any): boolean {
+  return !hasMatricula(scorecard) && getEffectiveHcpForCategory(scorecard) !== null
+}
+
+/** Sin hándicap (principiantes). */
+function isPrincipianteSinHcp(scorecard: any): boolean {
+  return getEffectiveHcpForCategory(scorecard) === null
+}
+
 function playerResultKey(scorecard: any): string {
   if (scorecard.member_id != null && scorecard.member_id !== '')
     return `m:${Number(scorecard.member_id)}`
@@ -251,7 +278,77 @@ export function buildCategoryDefinitions(
   ladiesByHcp: boolean,
   resultsMode: 'standard' | 'scratch_bands' | string
 ): CategoryDefinition[] {
-  const mode = resultsMode === 'scratch_bands' ? 'scratch_bands' : 'standard'
+  const mode =
+    resultsMode === 'scratch_bands' ? 'scratch_bands' : resultsMode === 'plus_15' ? 'plus_15' : 'standard'
+
+  if (mode === 'plus_15') {
+    const notLady = (s: any) => !separateLadies || s.gender !== 'F'
+    return [
+      {
+        id: 'plus_to_15',
+        name: '+ a 15',
+        description: 'Hándicap plus hasta 15, con matrícula',
+        color: 'bg-blue-50 border-blue-200',
+        filter: (s: any) => notLady(s) && isPlusTo15(s)
+      },
+      {
+        id: 'sixteen_plus',
+        name: '16 a 54+',
+        description: 'Hándicap 16 o más, con matrícula',
+        color: 'bg-green-50 border-green-200',
+        filter: (s: any) => notLady(s) && isSixteenPlus(s)
+      },
+      ...(separateLadies && ladiesByHcp
+        ? [
+            {
+              id: 'damas_plus_to_15',
+              name: 'Damas + a 15',
+              description: 'Femenino, hándicap plus hasta 15, con matrícula',
+              color: 'bg-pink-50 border-pink-200',
+              filter: (s: any) => s.gender === 'F' && isPlusTo15(s)
+            },
+            {
+              id: 'damas_sixteen_plus',
+              name: 'Damas 16 a 54+',
+              description: 'Femenino, hándicap 16 o más, con matrícula',
+              color: 'bg-pink-50 border-pink-200',
+              filter: (s: any) => s.gender === 'F' && isSixteenPlus(s)
+            }
+          ]
+        : []),
+      ...(separateLadies && !ladiesByHcp
+        ? [
+            {
+              id: 'damas',
+              name: 'Damas',
+              description: 'Categoría femenina (todas juntas)',
+              color: 'bg-pink-50 border-pink-200',
+              filter: (s: any) => s.gender === 'F'
+            }
+          ]
+        : []),
+      {
+        id: 'sin_matricula',
+        name: 'Sin matrícula',
+        description: 'Tienen hándicap y no tienen matrícula',
+        color: 'bg-amber-50 border-amber-200',
+        filter: (s: any) => {
+          if (separateLadies && !ladiesByHcp && s.gender === 'F') return false
+          return isSinMatricula(s)
+        }
+      },
+      {
+        id: 'principiantes',
+        name: 'Principiantes',
+        description: 'Sin hándicap',
+        color: 'bg-orange-50 border-orange-200',
+        filter: (s: any) => {
+          if (separateLadies && !ladiesByHcp && s.gender === 'F') return false
+          return isPrincipianteSinHcp(s)
+        }
+      }
+    ]
+  }
 
   if (mode === 'standard') {
     return [

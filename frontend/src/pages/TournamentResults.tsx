@@ -5,6 +5,7 @@ import { useTournamentScorecards } from '../hooks/useScorecards';
 import { useTournaments } from '../hooks/useTournaments';
 import { formatHandicapIndexForDisplay, formatHcpForDisplay } from '@/utils/scoreUtils';
 import {
+  buildCategoryDefinitions,
   compareCategoryResults,
   computeNetForResultsRow,
   dedupeScorecardsForResults,
@@ -79,7 +80,19 @@ export default function TournamentResults() {
   }, [tournament]);
 
   // Definir las categorías (dependen de separateLadies y resultsMode)
-  const categories: Category[] = resultsMode === 'standard' ? [
+  const categories: Category[] = resultsMode === 'plus_15'
+    ? buildCategoryDefinitions(separateLadies, ladiesByHcp, 'plus_15').map((c) => ({
+        ...c,
+        icon:
+          c.id === 'plus_to_15' || c.id === 'damas_plus_to_15'
+            ? Trophy
+            : c.id === 'sixteen_plus' || c.id === 'damas_sixteen_plus'
+              ? Medal
+              : c.id === 'damas'
+                ? Crown
+                : Award,
+      }))
+    : resultsMode === 'standard' ? [
     {
       id: 'primera',
       name: '1ra Categoría',

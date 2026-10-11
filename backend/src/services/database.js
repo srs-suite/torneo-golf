@@ -4990,7 +4990,9 @@ async function createTournament(courseId, tournamentData) {
     const two = (tournamentData.enable_two_sessions === true || tournamentData.enable_two_sessions === 1) ? 1 : 0;
     const allowGroups = (tournamentData.public_inscription_allow_groups !== false && tournamentData.public_inscription_allow_groups !== 0) ? 1 : 0;
     const flyerUrl = normalizeFlyerUrlStored(tournamentData.flyer_url);
-    const resultsMode = (tournamentData.results_mode === 'scratch_bands') ? 'scratch_bands' : 'standard';
+    const resultsMode = (tournamentData.results_mode === 'scratch_bands' || tournamentData.results_mode === 'plus_15')
+        ? tournamentData.results_mode
+        : 'standard';
     const separateLadies = (tournamentData.separate_ladies === true || tournamentData.separate_ladies === 1) ? 1 : 0;
     const ladiesByHcp = (tournamentData.ladies_by_hcp === true || tournamentData.ladies_by_hcp === 1) ? 1 : 0;
     const isRankingEvent = (tournamentData.is_ranking_event === true || tournamentData.is_ranking_event === 1) ? 1 : 0;
@@ -5391,7 +5393,9 @@ async function updateTournament(courseId, tournamentId, tournamentData) {
     };
 
     // Intentar UPDATE completo (+ results_mode, tee config: enable_simultaneous_starts, afternoon_start_time, preferred_session, tee_interval_minutes, enable_two_sessions)
-    const resultsMode = (src.results_mode === 'scratch_bands') ? 'scratch_bands' : 'standard';
+    const resultsMode = (src.results_mode === 'scratch_bands' || src.results_mode === 'plus_15')
+        ? src.results_mode
+        : 'standard';
     const teeSimultaneous = (src.enable_simultaneous_starts === true || src.enable_simultaneous_starts === 1) ? 1 : 0;
     const teeTwoSessions = (src.enable_two_sessions === true || src.enable_two_sessions === 1) ? 1 : 0;
     const allowGroups = (src.public_inscription_allow_groups !== false && src.public_inscription_allow_groups !== 0) ? 1 : 0;
@@ -8767,7 +8771,7 @@ async function getScorecardsByTournament(clubId, tournamentId, includeDidNotPres
             COALESCE(${latestHandicapUsedSql}, m.handicap_local, ep.handicap_local) as handicap_local,
             COALESCE(${latestIndexUsedSql}, m.handicap_index, ep.handicap_index) as handicap_index_used_for_net,
             COALESCE(m.gender, ep.gender) as gender,
-            m.member_number,
+            COALESCE(m.member_number, ep.member_number) as member_number,
             t.tournament_name,
             gc.club_name as club_name,
             (SELECT tp2.player_type FROM tournament_participants tp2

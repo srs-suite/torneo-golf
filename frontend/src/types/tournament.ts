@@ -13,7 +13,7 @@ export interface Tournament {
   description?: string
   rules?: string
   is_ranking_event?: boolean
-  results_mode?: 'standard' | 'scratch_bands'
+  results_mode?: 'standard' | 'scratch_bands' | 'plus_15'
   separate_ladies?: boolean
   ladies_by_hcp?: boolean
   status: 'draft' | 'open' | 'closed' | 'in_progress' | 'completed' | 'cancelled'
@@ -112,7 +112,7 @@ export interface CreateTournamentData {
   description?: string
   rules?: string
   is_ranking_event?: boolean
-  results_mode?: 'standard' | 'scratch_bands'
+  results_mode?: 'standard' | 'scratch_bands' | 'plus_15'
   separate_ladies?: boolean
   ladies_by_hcp?: boolean
   public_inscription?: boolean
