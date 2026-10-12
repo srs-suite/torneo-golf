@@ -761,8 +761,8 @@ export function ClubAdmin() {
                   </div>
                 </div>
                 
-                {/* Cuerpo scrolleable */}
-                <div className="max-h-96 overflow-y-auto">
+                {/* Cuerpo: ocupa el alto libre de la pantalla y se desplaza si hay más socios */}
+                <div className="overflow-y-auto max-h-[calc(100vh-22rem)]">
                   <div className="divide-y divide-gray-200">
                       {filteredMembers.map((member) => (
                         <div key={member.member_id} className="grid grid-cols-6 gap-4 px-6 py-4 hover:bg-gray-50">
