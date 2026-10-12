@@ -683,7 +683,7 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                     onChange={(e) => setResultsMode(e.target.value as any)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md"
                   >
-                    <option value="standard">Estándar (0–7.9, 8–13.9, 14–21.9, 22–53.9)</option>
+                    <option value="standard">Estándar (+ a 7.9, 8–13.9, 14–21.9, 22–53.9)</option>
                     <option value="scratch_bands">Scratch (Gross) + Bandas (-5 a 7.9, 8 a 13.9, 14 a 21.9, 22 a 54)</option>
                     <option value="plus_15">+ a 15 y 16 a 54+ (sin matrícula y principiantes)</option>
                   </select>
@@ -694,7 +694,7 @@ export function CreateTournamentModalSimple({ isOpen, onClose, onSuccess, tourna
                       <div className="space-y-1">
                         <p className="font-semibold text-blue-900">Modalidad Estándar:</p>
                         <ul className="list-disc list-inside space-y-0.5 ml-2">
-                          <li><strong>1ra Categoría:</strong> HCP 0 - 7.9</li>
+                          <li><strong>1ra Categoría:</strong> HCP + a 7.9</li>
                           <li><strong>2da Categoría:</strong> HCP 8.0 - 13.9</li>
                           <li><strong>3ra Categoría:</strong> HCP 14.0 - 21.9</li>
                           <li><strong>4ta Categoría:</strong> HCP 22.0 - 53.9</li>

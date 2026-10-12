@@ -355,12 +355,12 @@ export function buildCategoryDefinitions(
       {
         id: 'primera',
         name: '1ra Categoría',
-        description: 'HCP 0 - 7.9',
+        description: 'HCP + a 7.9',
         color: 'bg-yellow-50 border-yellow-200',
         filter: (scorecard) => {
           if (separateLadies && scorecard.gender === 'F') return false
           const hcp = getEffectiveHcpForCategory(scorecard)
-          return hcp !== null && hcp >= 0 && hcp <= 7.9
+          return hcp !== null && hcp <= 7.9
         }
       },
       {
@@ -402,12 +402,12 @@ export function buildCategoryDefinitions(
               {
                 id: 'damas_primera',
                 name: 'Damas 1ra',
-                description: 'HCP 0 - 7.9 (Femenino)',
+                description: 'HCP + a 7.9 (Femenino)',
                 color: 'bg-pink-50 border-pink-200',
                 filter: (s: any) => {
                   if (s.gender !== 'F') return false
                   const hcp = getEffectiveHcpForCategory(s)
-                  return hcp !== null && hcp >= 0 && hcp <= 7.9
+                  return hcp !== null && hcp <= 7.9
                 }
               },
               {
