@@ -402,6 +402,16 @@ export default function PublicFinancialReport() {
     return { ars: balanceARS, usd: balanceUSD }
   }
 
+  const cashForAccount = (account: any) => {
+    const storedARS = Number(account.current_balance_ars || 0)
+    const storedUSD = Number(account.current_balance_usd || 0)
+    const calculated = calculateAccountBalance(account.account_id)
+    return {
+      ars: calculated ? calculated.ars : storedARS,
+      usd: storedUSD !== 0 ? storedUSD : (calculated ? calculated.usd : 0)
+    }
+  }
+
   const loadFinancialData = async (authToken: string) => {
     try {
       const response = await axios.get(`/api/public/report/${clubId}/data?token=${authToken}`);
@@ -722,6 +732,10 @@ export default function PublicFinancialReport() {
 
         {reportView === 'moneda' && (() => {
           const bridge = currencyBridge()
+          const accounts = financialData.accounts || []
+          const cashARS = accounts.reduce((sum: number, acc: any) => sum + Number(acc.current_balance_ars || 0), 0)
+          const cashUSD = accounts.reduce((sum: number, acc: any) => sum + Number(acc.current_balance_usd || 0), 0)
+          const accountsWithUsd = accounts.filter((acc: any) => Number(acc.current_balance_usd || 0) !== 0)
           const parts: string[] = []
           if (bridge.arsToUsd > 0) {
             parts.push(`De los ingresos en pesos se usaron ${formatCurrency(bridge.arsToUsd, 'ARS')} para comprar ${formatCurrency(bridge.usdBought, 'USD')}.`)
@@ -758,10 +772,14 @@ export default function PublicFinancialReport() {
                   {row('Pesos usados para comprar dólares', bridge.arsToUsd, 'ARS')}
                   {row('Pesos recibidos al vender dólares', bridge.arsFromUsd, 'ARS')}
                   <div className="flex justify-between gap-4 pt-3 text-base">
-                    <span className="font-bold text-gray-800">Resultado en pesos</span>
+                    <span className="font-bold text-gray-800">Resultado del movimiento</span>
                     <span className={`font-bold ${bridge.resultARS >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                       {formatCurrency(bridge.resultARS, 'ARS')}
                     </span>
+                  </div>
+                  <div className="flex justify-between gap-4 pt-3 text-base border-t mt-2">
+                    <span className="font-bold text-gray-800">En caja</span>
+                    <span className="font-bold text-gray-900">{formatCurrency(cashARS, 'ARS')}</span>
                   </div>
                 </div>
                 <div className="bg-white rounded-lg shadow-md p-6">
@@ -771,11 +789,21 @@ export default function PublicFinancialReport() {
                   {row('Dólares comprados', bridge.usdBought, 'USD')}
                   {row('Dólares vendidos', bridge.usdToArs, 'USD')}
                   <div className="flex justify-between gap-4 pt-3 text-base">
-                    <span className="font-bold text-gray-800">Resultado en dólares</span>
+                    <span className="font-bold text-gray-800">Resultado del movimiento</span>
                     <span className={`font-bold ${bridge.resultUSD >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                       {formatCurrency(bridge.resultUSD, 'USD')}
                     </span>
                   </div>
+                  <div className="flex justify-between gap-4 pt-3 text-base border-t mt-2">
+                    <span className="font-bold text-gray-800">En caja</span>
+                    <span className="font-bold text-gray-900">{formatCurrency(cashUSD, 'USD')}</span>
+                  </div>
+                  {accountsWithUsd.map((acc: any) => (
+                    <div key={acc.account_id} className="flex justify-between gap-4 py-1 text-sm text-gray-600">
+                      <span>{acc.account_name}</span>
+                      <span>{formatCurrency(Number(acc.current_balance_usd || 0), 'USD')}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
               <div className="bg-white rounded-lg shadow-md p-6">
@@ -831,14 +859,8 @@ export default function PublicFinancialReport() {
                     let totalBalanceARS: number
                     let totalBalanceUSD: number
                     if (accs && accs.length > 0) {
-                      totalBalanceARS = accs.reduce((sum: number, acc: any) => {
-                        const balance = calculateAccountBalance(acc.account_id)
-                        return sum + (balance ? balance.ars : Number(acc.current_balance_ars || 0))
-                      }, 0)
-                      totalBalanceUSD = accs.reduce((sum: number, acc: any) => {
-                        const balance = calculateAccountBalance(acc.account_id)
-                        return sum + (balance ? balance.usd : Number(acc.current_balance_usd || 0))
-                      }, 0)
+                      totalBalanceARS = accs.reduce((sum: number, acc: any) => sum + cashForAccount(acc).ars, 0)
+                      totalBalanceUSD = accs.reduce((sum: number, acc: any) => sum + cashForAccount(acc).usd, 0)
                     } else {
                       totalBalanceARS =
                         financialData.summary.balanceARS ?? financialData.summary.balance ?? 0
@@ -890,11 +912,9 @@ export default function PublicFinancialReport() {
                         <div className="flex items-center space-x-4">
                           <div className="text-right">
                             {(() => {
-                              // Calcular saldo desde transacciones (más preciso)
-                              const calculatedBalance = calculateAccountBalance(account.account_id)
-                              // Si hay saldo calculado, usarlo; sino usar el de la BD
-                              const balanceARS = calculatedBalance ? calculatedBalance.ars : Number(account.current_balance_ars || 0)
-                              const balanceUSD = calculatedBalance ? calculatedBalance.usd : Number(account.current_balance_usd || 0)
+                              const cash = cashForAccount(account)
+                              const balanceARS = cash.ars
+                              const balanceUSD = cash.usd
                               
                               return (
                                 <>
