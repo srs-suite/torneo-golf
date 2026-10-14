@@ -2052,6 +2052,15 @@ async function handlePublicReportAPI(req, res, pathParts) {
                     incomes: allIncomes,
                     expenses: mappedExpenses,
                     accounts: accounts || [],
+                    exchanges: (exchanges || []).map((ex) => ({
+                        date: ex.exchange_date,
+                        from_currency: ex.from_currency,
+                        from_amount: parseFloat(ex.from_amount || 0),
+                        to_currency: ex.to_currency,
+                        to_amount: parseFloat(ex.to_amount || 0),
+                        exchange_rate: ex.exchange_rate != null ? parseFloat(ex.exchange_rate) : null,
+                        notes: ex.notes || ''
+                    })),
                     memberName: verification.memberName
                 }
             });

@@ -29,11 +29,22 @@ interface Transaction {
   type?: 'tournament' | 'other';
 }
 
+interface CurrencyExchangeRow {
+  date: string;
+  from_currency: string;
+  from_amount: number;
+  to_currency: string;
+  to_amount: number;
+  exchange_rate?: number | null;
+  notes?: string;
+}
+
 interface FinancialData {
   summary: FinancialSummary;
   incomes: Transaction[];
   expenses: Transaction[];
   accounts: any[];
+  exchanges?: CurrencyExchangeRow[];
   memberName: string;
 }
 
@@ -59,6 +70,7 @@ export default function PublicFinancialReport() {
   const [photoModalUrl, setPhotoModalUrl] = useState<string | null>(null);
   const [photoZoom, setPhotoZoom] = useState(1);
   const [photoPosition, setPhotoPosition] = useState({ x: 0, y: 0 });
+  const [reportView, setReportView] = useState<'actual' | 'moneda'>('actual');
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
 
@@ -522,6 +534,45 @@ export default function PublicFinancialReport() {
     }
   };
 
+  const currencyBridge = () => {
+    const summary = financialData?.summary
+    const exchanges = financialData?.exchanges || []
+    let arsToUsd = 0
+    let usdBought = 0
+    let usdToArs = 0
+    let arsFromUsd = 0
+    exchanges.forEach((ex) => {
+      const from = String(ex.from_currency || '').toUpperCase()
+      const to = String(ex.to_currency || '').toUpperCase()
+      const fromAmount = Number(ex.from_amount || 0)
+      const toAmount = Number(ex.to_amount || 0)
+      if (from === 'ARS' && to === 'USD') {
+        arsToUsd += fromAmount
+        usdBought += toAmount
+      } else if (from === 'USD' && to === 'ARS') {
+        usdToArs += fromAmount
+        arsFromUsd += toAmount
+      }
+    })
+    const incomeARS = Number(summary?.incomeARS || 0)
+    const incomeUSD = Number(summary?.incomeUSD || 0)
+    const expenseARS = Number(summary?.expenseARS || 0)
+    const expenseUSD = Number(summary?.expenseUSD || 0)
+    return {
+      incomeARS,
+      incomeUSD,
+      expenseARS,
+      expenseUSD,
+      arsToUsd,
+      usdBought,
+      usdToArs,
+      arsFromUsd,
+      resultARS: incomeARS - expenseARS - arsToUsd + arsFromUsd,
+      resultUSD: incomeUSD - expenseUSD + usdBought - usdToArs,
+      exchanges
+    }
+  }
+
   const exportToPDF = () => {
     window.print();
   };
@@ -652,6 +703,107 @@ export default function PublicFinancialReport() {
           </div>
         </div>
 
+        <div className="flex flex-wrap gap-2 mb-6 print:hidden">
+          <button
+            type="button"
+            onClick={() => setReportView('actual')}
+            className={`px-4 py-2 rounded-lg border text-sm font-medium ${reportView === 'actual' ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-700 border-gray-300'}`}
+          >
+            Informe actual
+          </button>
+          <button
+            type="button"
+            onClick={() => setReportView('moneda')}
+            className={`px-4 py-2 rounded-lg border text-sm font-medium ${reportView === 'moneda' ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-700 border-gray-300'}`}
+          >
+            Balance por moneda
+          </button>
+        </div>
+
+        {reportView === 'moneda' && (() => {
+          const bridge = currencyBridge()
+          const parts: string[] = []
+          if (bridge.arsToUsd > 0) {
+            parts.push(`De los ingresos en pesos se usaron ${formatCurrency(bridge.arsToUsd, 'ARS')} para comprar ${formatCurrency(bridge.usdBought, 'USD')}.`)
+          }
+          if (bridge.usdToArs > 0) {
+            parts.push(`Se vendieron ${formatCurrency(bridge.usdToArs, 'USD')} y entraron ${formatCurrency(bridge.arsFromUsd, 'ARS')} para usar en pesos.`)
+          }
+          if (parts.length === 0) {
+            parts.push('En este período no hubo cambios entre pesos y dólares.')
+          }
+          const row = (label: string, amount: number, currency: 'ARS' | 'USD') => (
+            <div className="flex justify-between gap-4 py-2 border-b border-gray-100 text-sm">
+              <span className="text-gray-700">{label}</span>
+              <span className="font-medium text-gray-900">{formatCurrency(amount, currency)}</span>
+            </div>
+          )
+          return (
+            <div className="mb-6 space-y-4">
+              <div className="bg-white rounded-lg shadow-md p-6">
+                <h2 className="text-lg font-bold text-gray-800">Balance por moneda</h2>
+                <p className="text-sm text-gray-600 mt-1">
+                  Comprar o vender dólares no es un gasto ni un ingreso nuevo: es plata que pasó de una moneda a la otra.
+                </p>
+                <p className="text-sm text-gray-800 mt-3">{parts.join(' ')}</p>
+                <p className="text-xs text-gray-500 mt-2">
+                  El resultado es ingresos menos gastos, ajustado por los cambios de moneda. El informe actual sigue mostrando el dinero que hay en las cuentas.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-white rounded-lg shadow-md p-6">
+                  <h3 className="text-base font-bold text-gray-800 mb-2">Pesos</h3>
+                  {row('Ingresos', bridge.incomeARS, 'ARS')}
+                  {row('Gastos', bridge.expenseARS, 'ARS')}
+                  {row('Pesos usados para comprar dólares', bridge.arsToUsd, 'ARS')}
+                  {row('Pesos recibidos al vender dólares', bridge.arsFromUsd, 'ARS')}
+                  <div className="flex justify-between gap-4 pt-3 text-base">
+                    <span className="font-bold text-gray-800">Resultado en pesos</span>
+                    <span className={`font-bold ${bridge.resultARS >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {formatCurrency(bridge.resultARS, 'ARS')}
+                    </span>
+                  </div>
+                </div>
+                <div className="bg-white rounded-lg shadow-md p-6">
+                  <h3 className="text-base font-bold text-gray-800 mb-2">Dólares</h3>
+                  {row('Ingresos', bridge.incomeUSD, 'USD')}
+                  {row('Gastos', bridge.expenseUSD, 'USD')}
+                  {row('Dólares comprados', bridge.usdBought, 'USD')}
+                  {row('Dólares vendidos', bridge.usdToArs, 'USD')}
+                  <div className="flex justify-between gap-4 pt-3 text-base">
+                    <span className="font-bold text-gray-800">Resultado en dólares</span>
+                    <span className={`font-bold ${bridge.resultUSD >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {formatCurrency(bridge.resultUSD, 'USD')}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div className="bg-white rounded-lg shadow-md p-6">
+                <h3 className="text-base font-bold text-gray-800 mb-2">Cambios de moneda</h3>
+                {bridge.exchanges.length === 0 ? (
+                  <p className="text-sm text-gray-500">No hay cambios cargados.</p>
+                ) : (
+                  <div className="divide-y divide-gray-100">
+                    {bridge.exchanges.map((ex, index) => (
+                      <div key={index} className="py-3 flex flex-col sm:flex-row sm:justify-between gap-1 text-sm">
+                        <div>
+                          <p className="text-gray-500">{formatDate(ex.date)}</p>
+                          <p className="text-gray-900">
+                            {formatCurrency(Number(ex.from_amount || 0), ex.from_currency)} → {formatCurrency(Number(ex.to_amount || 0), ex.to_currency)}
+                          </p>
+                          {ex.notes ? <p className="text-gray-500">{ex.notes}</p> : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )
+        })()}
+
+        {reportView === 'actual' && (
+        <>
         {/* Balance Neto con desplegable de cuentas */}
         <div className="mb-6">
           <div className="bg-white rounded-lg shadow-md overflow-hidden">
@@ -939,6 +1091,8 @@ export default function PublicFinancialReport() {
             </div>
           )}
         </div>
+        </>
+        )}
 
         {/* Footer */}
         <div className="text-center text-gray-500 text-sm mt-8 print:mt-4">
