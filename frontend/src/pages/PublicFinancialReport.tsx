@@ -753,16 +753,6 @@ export default function PublicFinancialReport() {
           const cashARS = accounts.reduce((sum: number, acc: any) => sum + Number(acc.current_balance_ars || 0), 0)
           const cashUSD = accounts.reduce((sum: number, acc: any) => sum + Number(acc.current_balance_usd || 0), 0)
           const accountsWithUsd = accounts.filter((acc: any) => Number(acc.current_balance_usd || 0) !== 0)
-          const parts: string[] = []
-          if (bridge.arsToUsd > 0) {
-            parts.push(`De los ingresos en pesos se usaron ${formatCurrency(bridge.arsToUsd, 'ARS')} para comprar ${formatCurrency(bridge.usdBought, 'USD')}.`)
-          }
-          if (bridge.usdToArs > 0) {
-            parts.push(`Se vendieron ${formatCurrency(bridge.usdToArs, 'USD')} y entraron ${formatCurrency(bridge.arsFromUsd, 'ARS')} para usar en pesos.`)
-          }
-          if (parts.length === 0) {
-            parts.push('En este período no hubo cambios entre pesos y dólares.')
-          }
           const row = (label: string, amount: number, currency: 'ARS' | 'USD') => (
             <div className="flex justify-between gap-4 py-2 border-b border-gray-100 text-sm">
               <span className="text-gray-700">{label}</span>
@@ -771,16 +761,6 @@ export default function PublicFinancialReport() {
           )
           return (
             <div className="mb-6 space-y-4">
-              <div className="bg-white rounded-lg shadow-md p-6">
-                <h2 className="text-lg font-bold text-gray-800">Balance por moneda</h2>
-                <p className="text-sm text-gray-600 mt-1">
-                  Comprar o vender dólares no es un gasto ni un ingreso nuevo: es plata que pasó de una moneda a la otra.
-                </p>
-                <p className="text-sm text-gray-800 mt-3">{parts.join(' ')}</p>
-                <p className="text-xs text-gray-500 mt-2">
-                  El dinero que hay es el saldo en caja. Los ingresos, los gastos y los cambios de moneda explican de dónde salió y a dónde fue.
-                </p>
-              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="bg-white rounded-lg shadow-md p-6">
                   <h3 className="text-base font-bold text-gray-800 mb-2">Pesos</h3>
