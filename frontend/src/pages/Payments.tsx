@@ -1213,15 +1213,25 @@ export default function Payments() {
 
   // Totales separados por moneda - Otros Ingresos
   const totalOtherIncomesARS = useMemo(() => {
-    return otherIncomes
-      .filter(i => !i.currency || i.currency === 'ARS')
-      .reduce((s, i) => s + (Number(i.amount) || 0), 0)
+    return otherIncomes.reduce((s, i) => {
+      const cur = String(i.currency || 'ARS').toUpperCase()
+      const receivedCur = String((i as any).received_currency || '').toUpperCase()
+      const receivedAmt = Number((i as any).received_amount || 0)
+      if (cur === 'USD') return s
+      if (receivedCur === 'USD' && receivedAmt > 0) return s
+      return s + (Number(i.amount) || 0)
+    }, 0)
   }, [otherIncomes])
 
   const totalOtherIncomesUSD = useMemo(() => {
-    return otherIncomes
-      .filter(i => i.currency === 'USD')
-      .reduce((s, i) => s + (Number(i.amount) || 0), 0)
+    return otherIncomes.reduce((s, i) => {
+      const cur = String(i.currency || 'ARS').toUpperCase()
+      const receivedCur = String((i as any).received_currency || '').toUpperCase()
+      const receivedAmt = Number((i as any).received_amount || 0)
+      if (receivedCur === 'USD' && receivedAmt > 0) return s + receivedAmt
+      if (cur === 'USD') return s + (Number(i.amount) || 0)
+      return s
+    }, 0)
   }, [otherIncomes])
 
   // Totales separados por moneda - Gastos
@@ -1255,11 +1265,19 @@ export default function Payments() {
         arsFromUsd += toAmount
       }
     })
+    const usdTournamentPayments = transactions.filter((tx) =>
+      String(tx.currency || '').toUpperCase() === 'USD' && tx.transaction_type === 'income_tournament'
+    )
+    const ledgerTournamentUsd = usdTournamentPayments.reduce((s, tx) => s + (Number(tx.amount) || 0), 0)
+    const tournamentUsd = Math.max(totalPaidUSD, ledgerTournamentUsd)
     const incomeARS = totalPaidARS + totalOtherIncomesARS
-    const incomeUSD = totalPaidUSD + totalOtherIncomesUSD
+    const incomeUSD = tournamentUsd + totalOtherIncomesUSD
     return {
       incomeARS,
       incomeUSD,
+      tournamentUsd,
+      otherIncomeUSD: totalOtherIncomesUSD,
+      usdTournamentPayments,
       expenseARS: totalExpensesARS,
       expenseUSD: totalExpensesUSD,
       arsToUsd,
@@ -1269,7 +1287,7 @@ export default function Payments() {
       resultARS: incomeARS - totalExpensesARS - arsToUsd + arsFromUsd,
       resultUSD: incomeUSD - totalExpensesUSD + usdBought - usdToArs
     }
-  }, [currencyExchanges, totalPaidARS, totalPaidUSD, totalOtherIncomesARS, totalOtherIncomesUSD, totalExpensesARS, totalExpensesUSD])
+  }, [currencyExchanges, transactions, totalPaidARS, totalPaidUSD, totalOtherIncomesARS, totalOtherIncomesUSD, totalExpensesARS, totalExpensesUSD])
   
   const totalAllIncomes = useMemo(() => totalPaid + totalOtherIncomes, [totalPaid, totalOtherIncomes])
   
@@ -1421,7 +1439,7 @@ export default function Payments() {
   useEffect(() => {
     const loadTransactions = async () => {
       // Cargar transacciones tanto para 'balance' como para 'cuentas' ya que ambas necesitan calcular saldos
-      if (!clubIdNum || (tab !== 'cuentas' && tab !== 'balance')) return
+      if (!clubIdNum || (tab !== 'cuentas' && tab !== 'balance' && tab !== 'balance_moneda')) return
       try {
         // Para las pestañas Balance y Cuentas, NO aplicar filtros de fecha
         // El historial de movimientos debe mostrar TODAS las transacciones para calcular balances correctamente
@@ -2174,6 +2192,24 @@ export default function Payments() {
               <div className="bg-white rounded-lg border p-5">
                 <h4 className="font-semibold text-gray-900 mb-3">Dólares</h4>
                 <div className="flex justify-between py-2 border-b text-sm"><span>Ingresos</span><span>US${formatCurrency(currencyBridge.incomeUSD)}</span></div>
+                {currencyBridge.tournamentUsd > 0 && (
+                  <div className="flex justify-between py-1 pl-3 text-xs text-gray-600">
+                    <span>Cobros de torneos</span>
+                    <span>US${formatCurrency(currencyBridge.tournamentUsd)}</span>
+                  </div>
+                )}
+                {(currencyBridge.usdTournamentPayments || []).map((tx: any) => (
+                  <div key={tx.transaction_id} className="flex justify-between gap-3 py-1 pl-6 text-xs text-gray-500">
+                    <span>{tx.transaction_date ? String(tx.transaction_date).slice(0, 10) : ''} {tx.description || 'Pago de torneo'}</span>
+                    <span>US${formatCurrency(Number(tx.amount || 0))}</span>
+                  </div>
+                ))}
+                {currencyBridge.otherIncomeUSD > 0 && (
+                  <div className="flex justify-between py-1 pl-3 text-xs text-gray-600">
+                    <span>Otros ingresos</span>
+                    <span>US${formatCurrency(currencyBridge.otherIncomeUSD)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between py-2 border-b text-sm"><span>Gastos</span><span>US${formatCurrency(currencyBridge.expenseUSD)}</span></div>
                 <div className="flex justify-between py-2 border-b text-sm"><span>Dólares comprados</span><span>US${formatCurrency(currencyBridge.usdBought)}</span></div>
                 <div className="flex justify-between py-2 border-b text-sm"><span>Dólares vendidos</span><span>US${formatCurrency(currencyBridge.usdToArs)}</span></div>
@@ -2184,6 +2220,17 @@ export default function Payments() {
                     <span>US${formatCurrency(Number(acc.current_balance_usd || 0))}</span>
                   </div>
                 ))}
+                {(() => {
+                  const cashUSD = accounts.reduce((sum, acc) => sum + Number(acc.current_balance_usd || 0), 0)
+                  const flowUSD = currencyBridge.incomeUSD - currencyBridge.expenseUSD + currencyBridge.usdBought - currencyBridge.usdToArs
+                  const gapUSD = cashUSD - flowUSD
+                  if (Math.abs(gapUSD) < 0.01) return null
+                  return (
+                    <p className="text-xs text-gray-500 mt-3">
+                      Los movimientos en dólares cierran en US${formatCurrency(flowUSD)}. La caja tiene US${formatCurrency(cashUSD)}.
+                    </p>
+                  )
+                })()}
               </div>
             </div>
             <div className="bg-white rounded-lg border p-5">

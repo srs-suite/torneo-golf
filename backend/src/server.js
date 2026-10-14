@@ -1938,9 +1938,16 @@ async function handlePublicReportAPI(req, res, pathParts) {
             
             // Other incomes by currency
             otherIncomes.forEach(income => {
+                const receivedCur = String(income.received_currency || '').toUpperCase();
+                const receivedAmt = parseFloat(income.received_amount || 0);
+                if (receivedCur === 'USD' && receivedAmt > 0) {
+                    totalIncome += receivedAmt;
+                    incomeUSD += receivedAmt;
+                    return;
+                }
                 const amount = parseFloat(income.amount || 0);
                 totalIncome += amount;
-                if (income.currency === 'USD') {
+                if (String(income.currency || 'ARS').toUpperCase() === 'USD') {
                     incomeUSD += amount;
                 } else {
                     incomeARS += amount;
@@ -2006,11 +2013,14 @@ async function handlePublicReportAPI(req, res, pathParts) {
             
             // Add other incomes
             otherIncomes.forEach(income => {
+                const receivedCur = String(income.received_currency || '').toUpperCase();
+                const receivedAmt = parseFloat(income.received_amount || 0);
+                const paidInUsd = receivedCur === 'USD' && receivedAmt > 0;
                 allIncomes.push({
                     date: income.income_date,
                     concept: income.description || 'Ingreso',
-                    amount: parseFloat(income.amount),
-                    currency: income.currency || 'ARS',
+                    amount: paidInUsd ? receivedAmt : parseFloat(income.amount),
+                    currency: paidInUsd ? 'USD' : (income.currency || 'ARS'),
                     payment_method: income.payment_type,
                     member_name: income.member_name,
                     custodian: income.account_name || income.custodian || 'Sin asignar',

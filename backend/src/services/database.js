@@ -2767,19 +2767,30 @@ async function getPaymentsSummary(clubId, fromDate, toDate) {
                        AND atx.transaction_type = 'income_tournament'
                        AND (atx.reference_type = 'tournament_payment' OR atx.reference_type IS NULL))
                 ) AS total_paid,
-                (SELECT COALESCE(SUM(
-                    CASE
-                        WHEN UPPER(TRIM(COALESCE(tp_u.payment_status, ''))) IN ('WAIVED', 'REFUNDED') THEN 0
-                        WHEN UPPER(TRIM(COALESCE(tp_u.currency, 'ARS'))) <> 'USD' THEN 0
-                        WHEN UPPER(TRIM(COALESCE(tp_u.payment_status, ''))) = 'PAID'
-                        THEN COALESCE(tp_u.paid_amount, 0)
-                        WHEN COALESCE(tp_u.paid_amount, 0) > 0
-                        THEN COALESCE(tp_u.paid_amount, 0)
-                        ELSE 0
-                    END
-                ), 0)
-                 FROM tournament_participants tp_u
-                 WHERE tp_u.tournament_id = t.tournament_id) AS total_paid_usd
+                GREATEST(
+                    (SELECT COALESCE(SUM(
+                        CASE
+                            WHEN UPPER(TRIM(COALESCE(tp_u.payment_status, ''))) IN ('WAIVED', 'REFUNDED') THEN 0
+                            WHEN UPPER(TRIM(COALESCE(tp_u.currency, 'ARS'))) <> 'USD' THEN 0
+                            WHEN UPPER(TRIM(COALESCE(tp_u.payment_status, ''))) = 'PAID'
+                            THEN COALESCE(tp_u.paid_amount, 0)
+                            WHEN COALESCE(tp_u.paid_amount, 0) > 0
+                            THEN COALESCE(tp_u.paid_amount, 0)
+                            ELSE 0
+                        END
+                    ), 0)
+                     FROM tournament_participants tp_u
+                     WHERE tp_u.tournament_id = t.tournament_id),
+                    (SELECT COALESCE(SUM(atx_u.amount), 0)
+                     FROM account_transactions atx_u
+                     INNER JOIN tournament_participants tpl_u
+                        ON tpl_u.participation_id = atx_u.reference_id
+                        AND tpl_u.tournament_id = t.tournament_id
+                     WHERE atx_u.club_id = t.course_id
+                       AND atx_u.transaction_type = 'income_tournament'
+                       AND (atx_u.reference_type = 'tournament_payment' OR atx_u.reference_type IS NULL)
+                       AND UPPER(TRIM(COALESCE(atx_u.currency, 'ARS'))) = 'USD')
+                ) AS total_paid_usd
             FROM tournaments t
             LEFT JOIN custodian_accounts ca ON t.account_id = ca.account_id
             WHERE t.course_id = ?
