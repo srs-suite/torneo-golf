@@ -2077,8 +2077,7 @@ export default function Payments() {
                       { Concepto: 'Pesos usados para comprar dólares', Pesos: b.arsToUsd, Dólares: '' },
                       { Concepto: 'Dólares comprados', Pesos: '', Dólares: b.usdBought },
                       { Concepto: 'Dólares vendidos', Pesos: '', Dólares: b.usdToArs },
-                      { Concepto: 'Pesos recibidos al vender dólares', Pesos: b.arsFromUsd, Dólares: '' },
-                      { Concepto: 'Resultado', Pesos: b.resultARS, Dólares: b.resultUSD }
+                      { Concepto: 'Pesos recibidos al vender dólares', Pesos: b.arsFromUsd, Dólares: '' }
                     ]
                     const wb = XLSX.utils.book_new()
                     const ws = XLSX.utils.json_to_sheet(rowsOut)
@@ -2133,7 +2132,6 @@ export default function Payments() {
                           <tr><td>Dólares comprados</td><td class="num"></td><td class="num">${money(b.usdBought)}</td></tr>
                           <tr><td>Dólares vendidos</td><td class="num"></td><td class="num">${money(b.usdToArs)}</td></tr>
                           <tr><td>Pesos recibidos al vender dólares</td><td class="num">${money(b.arsFromUsd)}</td><td class="num"></td></tr>
-                          <tr><td><strong>Resultado</strong></td><td class="num"><strong>${money(b.resultARS)}</strong></td><td class="num"><strong>${money(b.resultUSD)}</strong></td></tr>
                         </tbody>
                       </table>
                       <h2>Cambios de moneda</h2>
@@ -2161,7 +2159,6 @@ export default function Payments() {
                 <div className="flex justify-between py-2 border-b text-sm"><span>Gastos</span><span>${formatCurrency(currencyBridge.expenseARS)}</span></div>
                 <div className="flex justify-between py-2 border-b text-sm"><span>Usados para comprar dólares</span><span>${formatCurrency(currencyBridge.arsToUsd)}</span></div>
                 <div className="flex justify-between py-2 border-b text-sm"><span>Recibidos al vender dólares</span><span>${formatCurrency(currencyBridge.arsFromUsd)}</span></div>
-                <div className="flex justify-between pt-3 font-bold"><span>Resultado del movimiento</span><span>${formatCurrency(currencyBridge.resultARS)}</span></div>
                 <div className="flex justify-between pt-3 mt-2 border-t font-bold"><span>En caja</span><span>${formatCurrency(accounts.reduce((sum, acc) => sum + Number(acc.current_balance_ars || 0), 0))}</span></div>
               </div>
               <div className="bg-white rounded-lg border p-5">
@@ -2170,7 +2167,6 @@ export default function Payments() {
                 <div className="flex justify-between py-2 border-b text-sm"><span>Gastos</span><span>US${formatCurrency(currencyBridge.expenseUSD)}</span></div>
                 <div className="flex justify-between py-2 border-b text-sm"><span>Dólares comprados</span><span>US${formatCurrency(currencyBridge.usdBought)}</span></div>
                 <div className="flex justify-between py-2 border-b text-sm"><span>Dólares vendidos</span><span>US${formatCurrency(currencyBridge.usdToArs)}</span></div>
-                <div className="flex justify-between pt-3 font-bold"><span>Resultado del movimiento</span><span>US${formatCurrency(currencyBridge.resultUSD)}</span></div>
                 <div className="flex justify-between pt-3 mt-2 border-t font-bold"><span>En caja</span><span>US${formatCurrency(accounts.reduce((sum, acc) => sum + Number(acc.current_balance_usd || 0), 0))}</span></div>
                 {accounts.filter((acc) => Number(acc.current_balance_usd || 0) !== 0).map((acc) => (
                   <div key={acc.account_id} className="flex justify-between py-1 text-sm text-gray-600">

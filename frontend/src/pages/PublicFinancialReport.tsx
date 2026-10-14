@@ -778,7 +778,7 @@ export default function PublicFinancialReport() {
                 </p>
                 <p className="text-sm text-gray-800 mt-3">{parts.join(' ')}</p>
                 <p className="text-xs text-gray-500 mt-2">
-                  El resultado es ingresos menos gastos, ajustado por los cambios de moneda. El informe actual sigue mostrando el dinero que hay en las cuentas.
+                  El dinero que hay es el saldo en caja. Los ingresos, los gastos y los cambios de moneda explican de dónde salió y a dónde fue.
                 </p>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -788,12 +788,6 @@ export default function PublicFinancialReport() {
                   {row('Gastos', bridge.expenseARS, 'ARS')}
                   {row('Pesos usados para comprar dólares', bridge.arsToUsd, 'ARS')}
                   {row('Pesos recibidos al vender dólares', bridge.arsFromUsd, 'ARS')}
-                  <div className="flex justify-between gap-4 pt-3 text-base">
-                    <span className="font-bold text-gray-800">Resultado del movimiento</span>
-                    <span className={`font-bold ${bridge.resultARS >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {formatCurrency(bridge.resultARS, 'ARS')}
-                    </span>
-                  </div>
                   <div className="flex justify-between gap-4 pt-3 text-base border-t mt-2">
                     <span className="font-bold text-gray-800">En caja</span>
                     <span className="font-bold text-gray-900">{formatCurrency(cashARS, 'ARS')}</span>
@@ -805,12 +799,6 @@ export default function PublicFinancialReport() {
                   {row('Gastos', bridge.expenseUSD, 'USD')}
                   {row('Dólares comprados', bridge.usdBought, 'USD')}
                   {row('Dólares vendidos', bridge.usdToArs, 'USD')}
-                  <div className="flex justify-between gap-4 pt-3 text-base">
-                    <span className="font-bold text-gray-800">Resultado del movimiento</span>
-                    <span className={`font-bold ${bridge.resultUSD >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {formatCurrency(bridge.resultUSD, 'USD')}
-                    </span>
-                  </div>
                   <div className="flex justify-between gap-4 pt-3 text-base border-t mt-2">
                     <span className="font-bold text-gray-800">En caja</span>
                     <span className="font-bold text-gray-900">{formatCurrency(cashUSD, 'USD')}</span>

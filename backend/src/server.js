@@ -1910,13 +1910,13 @@ async function handlePublicReportAPI(req, res, pathParts) {
             const [
                 expenses,
                 otherIncomes,
-                tournaments,
+                paymentRows,
                 accounts,
                 exchanges
             ] = await Promise.all([
                 getExpenses(parseInt(clubId), from, to),
                 getOtherIncomes(parseInt(clubId), from, to),
-                getAllTournaments(parseInt(clubId)),
+                getPaymentsSummary(parseInt(clubId), from, to),
                 getAccounts(parseInt(clubId)),
                 getCurrencyExchanges(parseInt(clubId), from, to)
             ]);
@@ -1926,11 +1926,9 @@ async function handlePublicReportAPI(req, res, pathParts) {
             let expenseARS = 0, expenseUSD = 0;
             let totalIncome = 0;
             
-            // Tournament incomes by currency (assumed ARS unless specified)
-            tournaments.forEach(tournament => {
-                const paid = tournament.paid_participants_count || 0;
-                const fee = parseFloat(tournament.entry_fee || 0);
-                const income = paid * fee;
+            // Mismo cobrado que Contabilidad: monto real ingresado, no cuota × cantidad
+            paymentRows.forEach(tournament => {
+                const income = parseFloat(tournament.total_paid || 0);
                 totalIncome += income;
                 incomeARS += income;
             });
@@ -1981,20 +1979,18 @@ async function handlePublicReportAPI(req, res, pathParts) {
             // Combine all incomes (tournaments + other incomes) into a single list
             const allIncomes = [];
             
-            // Add tournament incomes
-            tournaments.forEach(tournament => {
-                const paid = tournament.paid_participants_count || 0;
-                const fee = parseFloat(tournament.entry_fee || 0);
-                const income = paid * fee;
+            // Add tournament incomes (mismo total_paid que la pantalla de Contabilidad)
+            paymentRows.forEach(tournament => {
+                const income = parseFloat(tournament.total_paid || 0);
                 if (income > 0) {
                     allIncomes.push({
                         date: tournament.tournament_date,
                         concept: tournament.tournament_name || 'Torneo',
                         amount: income,
-                        currency: 'ARS', // Tournaments are assumed ARS
+                        currency: 'ARS',
                         payment_method: 'torneo',
                         member_name: null,
-                        custodian: null,
+                        custodian: tournament.account_name || null,
                         created_at: tournament.created_at,
                         type: 'tournament'
                     });
