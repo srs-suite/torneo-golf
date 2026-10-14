@@ -304,7 +304,7 @@ export default function Payments() {
   const [to, setTo] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [rows, setRows] = useState<any[]>([])
-  const [tab, setTab] = useState<'balance' | 'ingresos' | 'otros_ingresos' | 'gastos' | 'conversiones' | 'cuentas'>('balance')
+  const [tab, setTab] = useState<'balance' | 'balance_moneda' | 'ingresos' | 'otros_ingresos' | 'gastos' | 'conversiones' | 'cuentas'>('balance')
   const [expenses, setExpenses] = useState<any[]>([])
   const [otherIncomes, setOtherIncomes] = useState<any[]>([])
   const [currencyExchanges, setCurrencyExchanges] = useState<any[]>([])
@@ -1210,6 +1210,40 @@ export default function Payments() {
       .filter(e => e.currency === 'USD')
       .reduce((s, e) => s + (Number(e.amount) || 0), 0)
   }, [expenses])
+
+  const currencyBridge = useMemo(() => {
+    let arsToUsd = 0
+    let usdBought = 0
+    let usdToArs = 0
+    let arsFromUsd = 0
+    currencyExchanges.forEach((ex) => {
+      const from = String(ex.from_currency || '').toUpperCase()
+      const to = String(ex.to_currency || '').toUpperCase()
+      const fromAmount = Number(ex.from_amount || 0)
+      const toAmount = Number(ex.to_amount || 0)
+      if (from === 'ARS' && to === 'USD') {
+        arsToUsd += fromAmount
+        usdBought += toAmount
+      } else if (from === 'USD' && to === 'ARS') {
+        usdToArs += fromAmount
+        arsFromUsd += toAmount
+      }
+    })
+    const incomeARS = totalPaid + totalOtherIncomesARS
+    const incomeUSD = totalOtherIncomesUSD
+    return {
+      incomeARS,
+      incomeUSD,
+      expenseARS: totalExpensesARS,
+      expenseUSD: totalExpensesUSD,
+      arsToUsd,
+      usdBought,
+      usdToArs,
+      arsFromUsd,
+      resultARS: incomeARS - totalExpensesARS - arsToUsd + arsFromUsd,
+      resultUSD: incomeUSD - totalExpensesUSD + usdBought - usdToArs
+    }
+  }, [currencyExchanges, totalPaid, totalOtherIncomesARS, totalOtherIncomesUSD, totalExpensesARS, totalExpensesUSD])
   
   const totalAllIncomes = useMemo(() => totalPaid + totalOtherIncomes, [totalPaid, totalOtherIncomes])
   
@@ -1320,15 +1354,18 @@ export default function Payments() {
 
   /** Pestañas que el usuario puede usar (evita dejar `tab='balance'` sin botón ni contenido → pantalla gris) */
   const allowedAccountingTabs = useMemo((): Array<
-    'balance' | 'ingresos' | 'otros_ingresos' | 'gastos' | 'conversiones' | 'cuentas'
+    'balance' | 'balance_moneda' | 'ingresos' | 'otros_ingresos' | 'gastos' | 'conversiones' | 'cuentas'
   > => {
-    const list: Array<'balance' | 'ingresos' | 'otros_ingresos' | 'gastos' | 'conversiones' | 'cuentas'> = []
+    const list: Array<'balance' | 'balance_moneda' | 'ingresos' | 'otros_ingresos' | 'gastos' | 'conversiones' | 'cuentas'> = []
     if (permissions.canViewTournamentIncomes) list.push('ingresos')
     if (permissions.canViewOtherIncomes) list.push('otros_ingresos')
     if (permissions.canViewExpenses) list.push('gastos')
     if (permissions.canViewCurrencyExchanges) list.push('conversiones')
     if (permissions.canViewAccounting) list.push('cuentas')
-    if (permissions.canViewBalance && permissions.canViewFinancialTotals) list.push('balance')
+    if (permissions.canViewBalance && permissions.canViewFinancialTotals) {
+      list.push('balance')
+      list.push('balance_moneda')
+    }
     // Entró a Contabilidad (hasAny) pero la BD no marcó pestañas concretas (ej. solo balance sin totales)
     if (list.length === 0 && hasAnyAccountingPermission) {
       return ['ingresos', 'otros_ingresos', 'gastos', 'conversiones', 'cuentas']
@@ -1648,6 +1685,14 @@ export default function Payments() {
                   className={`px-3 py-2 rounded ${tab==='balance' ? 'bg-gray-900 text-white' : 'border'}`}
                 >
                   Balance
+                </button>
+              )}
+              {allowedAccountingTabs.includes('balance_moneda') && (
+                <button
+                  onClick={() => setTab('balance_moneda')}
+                  className={`px-3 py-2 rounded ${tab==='balance_moneda' ? 'bg-gray-900 text-white' : 'border'}`}
+                >
+                  Balance por moneda
                 </button>
               )}
               {allowedAccountingTabs.includes('ingresos') && (
@@ -1993,6 +2038,141 @@ export default function Payments() {
                 })()}
               </div>
             )}
+          </div>
+        )}
+
+        {tab==='balance_moneda' && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Balance por moneda</h3>
+                <p className="text-sm text-gray-600 mt-1">
+                  Comprar o vender dólares no es un gasto: es plata que pasó de una moneda a la otra. Usa el período filtrado arriba.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const b = currencyBridge
+                    const rowsOut = [
+                      { Concepto: 'Ingresos', Pesos: b.incomeARS, Dólares: b.incomeUSD },
+                      { Concepto: 'Gastos', Pesos: b.expenseARS, Dólares: b.expenseUSD },
+                      { Concepto: 'Pesos usados para comprar dólares', Pesos: b.arsToUsd, Dólares: '' },
+                      { Concepto: 'Dólares comprados', Pesos: '', Dólares: b.usdBought },
+                      { Concepto: 'Dólares vendidos', Pesos: '', Dólares: b.usdToArs },
+                      { Concepto: 'Pesos recibidos al vender dólares', Pesos: b.arsFromUsd, Dólares: '' },
+                      { Concepto: 'Resultado', Pesos: b.resultARS, Dólares: b.resultUSD }
+                    ]
+                    const wb = XLSX.utils.book_new()
+                    const ws = XLSX.utils.json_to_sheet(rowsOut)
+                    ws['!cols'] = [{ wch: 42 }, { wch: 18 }, { wch: 18 }]
+                    XLSX.utils.book_append_sheet(wb, ws, 'Balance por moneda')
+                    const cambios = currencyExchanges.map((ex) => ({
+                      Fecha: ex.exchange_date ? String(ex.exchange_date).slice(0, 10) : '',
+                      'Desde': ex.from_currency,
+                      'Monto origen': Number(ex.from_amount || 0),
+                      'Hacia': ex.to_currency,
+                      'Monto destino': Number(ex.to_amount || 0),
+                      Notas: ex.notes || ''
+                    }))
+                    const ws2 = XLSX.utils.json_to_sheet(cambios.length ? cambios : [{ Fecha: '', Desde: '', 'Monto origen': '', Hacia: '', 'Monto destino': '', Notas: 'Sin cambios' }])
+                    XLSX.utils.book_append_sheet(wb, ws2, 'Cambios')
+                    const fileName = `balance_por_moneda_${new Date().toLocaleDateString('es-AR').replace(/\//g, '-')}.xlsx`
+                    XLSX.writeFile(wb, fileName)
+                    toast.success('Excel descargado')
+                  }}
+                  className="px-3 py-2 border rounded text-sm"
+                >
+                  Descargar Excel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const b = currencyBridge
+                    const money = (n: number) => formatCurrency(n)
+                    const cambios = currencyExchanges.map((ex) =>
+                      `<tr><td>${ex.exchange_date ? String(ex.exchange_date).slice(0, 10) : ''}</td><td>${ex.from_currency} ${money(Number(ex.from_amount || 0))}</td><td>${ex.to_currency} ${money(Number(ex.to_amount || 0))}</td><td>${ex.notes || ''}</td></tr>`
+                    ).join('')
+                    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Balance por moneda</title>
+                      <style>
+                        body { font-family: Arial, sans-serif; padding: 24px; color: #111; }
+                        h1 { font-size: 22px; margin: 0 0 8px; }
+                        p { font-size: 13px; color: #444; }
+                        table { border-collapse: collapse; width: 100%; margin-top: 16px; }
+                        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; font-size: 13px; }
+                        th { background: #f3f4f6; }
+                        .num { text-align: right; }
+                        h2 { font-size: 16px; margin-top: 28px; }
+                      </style></head><body>
+                      <h1>Balance por moneda</h1>
+                      <p>Comprar o vender dólares no es un gasto: es plata que pasó de una moneda a la otra.</p>
+                      <table>
+                        <thead><tr><th>Concepto</th><th class="num">Pesos</th><th class="num">Dólares</th></tr></thead>
+                        <tbody>
+                          <tr><td>Ingresos</td><td class="num">${money(b.incomeARS)}</td><td class="num">${money(b.incomeUSD)}</td></tr>
+                          <tr><td>Gastos</td><td class="num">${money(b.expenseARS)}</td><td class="num">${money(b.expenseUSD)}</td></tr>
+                          <tr><td>Pesos usados para comprar dólares</td><td class="num">${money(b.arsToUsd)}</td><td class="num"></td></tr>
+                          <tr><td>Dólares comprados</td><td class="num"></td><td class="num">${money(b.usdBought)}</td></tr>
+                          <tr><td>Dólares vendidos</td><td class="num"></td><td class="num">${money(b.usdToArs)}</td></tr>
+                          <tr><td>Pesos recibidos al vender dólares</td><td class="num">${money(b.arsFromUsd)}</td><td class="num"></td></tr>
+                          <tr><td><strong>Resultado</strong></td><td class="num"><strong>${money(b.resultARS)}</strong></td><td class="num"><strong>${money(b.resultUSD)}</strong></td></tr>
+                        </tbody>
+                      </table>
+                      <h2>Cambios de moneda</h2>
+                      <table>
+                        <thead><tr><th>Fecha</th><th>Sale</th><th>Entra</th><th>Notas</th></tr></thead>
+                        <tbody>${cambios || '<tr><td colspan="4">Sin cambios</td></tr>'}</tbody>
+                      </table>
+                      <script>window.onload=function(){setTimeout(function(){window.print()},300)}</script>
+                      </body></html>`
+                    const w = window.open('', '_blank')
+                    if (!w) return
+                    w.document.write(html)
+                    w.document.close()
+                  }}
+                  className="px-3 py-2 bg-gray-900 text-white rounded text-sm"
+                >
+                  Descargar PDF
+                </button>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-white rounded-lg border p-5">
+                <h4 className="font-semibold text-gray-900 mb-3">Pesos</h4>
+                <div className="flex justify-between py-2 border-b text-sm"><span>Ingresos</span><span>${formatCurrency(currencyBridge.incomeARS)}</span></div>
+                <div className="flex justify-between py-2 border-b text-sm"><span>Gastos</span><span>${formatCurrency(currencyBridge.expenseARS)}</span></div>
+                <div className="flex justify-between py-2 border-b text-sm"><span>Usados para comprar dólares</span><span>${formatCurrency(currencyBridge.arsToUsd)}</span></div>
+                <div className="flex justify-between py-2 border-b text-sm"><span>Recibidos al vender dólares</span><span>${formatCurrency(currencyBridge.arsFromUsd)}</span></div>
+                <div className="flex justify-between pt-3 font-bold"><span>Resultado</span><span>${formatCurrency(currencyBridge.resultARS)}</span></div>
+              </div>
+              <div className="bg-white rounded-lg border p-5">
+                <h4 className="font-semibold text-gray-900 mb-3">Dólares</h4>
+                <div className="flex justify-between py-2 border-b text-sm"><span>Ingresos</span><span>US${formatCurrency(currencyBridge.incomeUSD)}</span></div>
+                <div className="flex justify-between py-2 border-b text-sm"><span>Gastos</span><span>US${formatCurrency(currencyBridge.expenseUSD)}</span></div>
+                <div className="flex justify-between py-2 border-b text-sm"><span>Dólares comprados</span><span>US${formatCurrency(currencyBridge.usdBought)}</span></div>
+                <div className="flex justify-between py-2 border-b text-sm"><span>Dólares vendidos</span><span>US${formatCurrency(currencyBridge.usdToArs)}</span></div>
+                <div className="flex justify-between pt-3 font-bold"><span>Resultado</span><span>US${formatCurrency(currencyBridge.resultUSD)}</span></div>
+              </div>
+            </div>
+            <div className="bg-white rounded-lg border p-5">
+              <h4 className="font-semibold text-gray-900 mb-3">Cambios de moneda</h4>
+              {currencyExchanges.length === 0 ? (
+                <p className="text-sm text-gray-500">No hay cambios en el período.</p>
+              ) : (
+                <div className="divide-y">
+                  {currencyExchanges.map((ex) => (
+                    <div key={ex.exchange_id} className="py-2 text-sm flex flex-col sm:flex-row sm:justify-between gap-1">
+                      <span className="text-gray-500">{ex.exchange_date ? String(ex.exchange_date).slice(0, 10) : ''}</span>
+                      <span>
+                        {ex.from_currency} {formatCurrency(Number(ex.from_amount || 0))} → {ex.to_currency} {formatCurrency(Number(ex.to_amount || 0))}
+                      </span>
+                      <span className="text-gray-500">{ex.notes || ''}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
