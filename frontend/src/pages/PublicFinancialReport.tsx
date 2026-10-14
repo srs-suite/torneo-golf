@@ -796,12 +796,6 @@ export default function PublicFinancialReport() {
                 <div className="bg-white rounded-lg shadow-md p-6">
                   <h3 className="text-base font-bold text-gray-800 mb-2">Dólares</h3>
                   {row('Ingresos', bridge.incomeUSD, 'USD')}
-                  {(financialData.incomes || []).filter((income) => income.type === 'account' && String(income.currency || '').toUpperCase() === 'USD').map((income, index) => (
-                    <div key={`usd-account-${index}`} className="flex justify-between gap-3 py-1 pl-3 text-xs text-gray-600">
-                      <span>{formatDate(income.date)} {income.concept}</span>
-                      <span>{formatCurrency(Number(income.amount || 0), 'USD')}</span>
-                    </div>
-                  ))}
                   {row('Gastos', bridge.expenseUSD, 'USD')}
                   {row('Dólares comprados', bridge.usdBought, 'USD')}
                   {row('Dólares vendidos', bridge.usdToArs, 'USD')}

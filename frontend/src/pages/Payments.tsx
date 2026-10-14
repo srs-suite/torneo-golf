@@ -1301,7 +1301,6 @@ export default function Payments() {
       tournamentUsd,
       otherIncomeUSD: totalOtherIncomesUSD,
       usdTournamentPayments,
-      missingUsdIncomes,
       expenseARS: totalExpensesARS,
       expenseUSD: totalExpensesUSD,
       arsToUsd,
@@ -2216,12 +2215,6 @@ export default function Payments() {
               <div className="bg-white rounded-lg border p-5">
                 <h4 className="font-semibold text-gray-900 mb-3">Dólares</h4>
                 <div className="flex justify-between py-2 border-b text-sm"><span>Ingresos</span><span>US${formatCurrency(currencyBridge.incomeUSD)}</span></div>
-                {(currencyBridge.missingUsdIncomes || []).map((tx: any) => (
-                  <div key={tx.transaction_id} className="flex justify-between gap-3 py-1 pl-3 text-xs text-gray-600">
-                    <span>{tx.transaction_date ? String(tx.transaction_date).slice(0, 10) : ''} {tx.description || 'Ingreso'}{tx.to_account_name ? ` · ${tx.to_account_name}` : ''}</span>
-                    <span>US${formatCurrency(Number(tx.amount || 0))}</span>
-                  </div>
-                ))}
                 <div className="flex justify-between py-2 border-b text-sm"><span>Gastos</span><span>US${formatCurrency(currencyBridge.expenseUSD)}</span></div>
                 <div className="flex justify-between py-2 border-b text-sm"><span>Dólares comprados</span><span>US${formatCurrency(currencyBridge.usdBought)}</span></div>
                 <div className="flex justify-between py-2 border-b text-sm"><span>Dólares vendidos</span><span>US${formatCurrency(currencyBridge.usdToArs)}</span></div>
