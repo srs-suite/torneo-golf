@@ -796,6 +796,35 @@ export default function PublicFinancialReport() {
                 <div className="bg-white rounded-lg shadow-md p-6">
                   <h3 className="text-base font-bold text-gray-800 mb-2">Dólares</h3>
                   {row('Ingresos', bridge.incomeUSD, 'USD')}
+                  {(() => {
+                    const usdIncomes = (financialData.incomes || []).filter((i) => String(i.currency || 'ARS').toUpperCase() === 'USD')
+                    const tournamentUsd = usdIncomes.filter((i) => i.type === 'tournament')
+                    const otherUsd = usdIncomes.filter((i) => i.type !== 'tournament')
+                    const tournamentTotal = tournamentUsd.reduce((sum, i) => sum + Number(i.amount || 0), 0)
+                    const otherTotal = otherUsd.reduce((sum, i) => sum + Number(i.amount || 0), 0)
+                    return (
+                      <>
+                        {tournamentTotal > 0 && (
+                          <div className="flex justify-between gap-4 py-1 pl-3 text-xs text-gray-600">
+                            <span>Cobros de torneos</span>
+                            <span>{formatCurrency(tournamentTotal, 'USD')}</span>
+                          </div>
+                        )}
+                        {tournamentUsd.map((income, index) => (
+                          <div key={`usd-t-${index}`} className="flex justify-between gap-3 py-1 pl-6 text-xs text-gray-500">
+                            <span>{formatDate(income.date)} {income.concept}</span>
+                            <span>{formatCurrency(Number(income.amount || 0), 'USD')}</span>
+                          </div>
+                        ))}
+                        {otherTotal > 0 && (
+                          <div className="flex justify-between gap-4 py-1 pl-3 text-xs text-gray-600">
+                            <span>Otros ingresos</span>
+                            <span>{formatCurrency(otherTotal, 'USD')}</span>
+                          </div>
+                        )}
+                      </>
+                    )
+                  })()}
                   {row('Gastos', bridge.expenseUSD, 'USD')}
                   {row('Dólares comprados', bridge.usdBought, 'USD')}
                   {row('Dólares vendidos', bridge.usdToArs, 'USD')}
@@ -809,6 +838,16 @@ export default function PublicFinancialReport() {
                       <span>{formatCurrency(Number(acc.current_balance_usd || 0), 'USD')}</span>
                     </div>
                   ))}
+                  {(() => {
+                    const flowUSD = bridge.incomeUSD - bridge.expenseUSD + bridge.usdBought - bridge.usdToArs
+                    const gapUSD = cashUSD - flowUSD
+                    if (Math.abs(gapUSD) < 0.01) return null
+                    return (
+                      <p className="text-xs text-gray-500 mt-3">
+                        Los movimientos en dólares cierran en {formatCurrency(flowUSD, 'USD')}. La caja tiene {formatCurrency(cashUSD, 'USD')}.
+                      </p>
+                    )
+                  })()}
                 </div>
               </div>
               <div className="bg-white rounded-lg shadow-md p-6">
