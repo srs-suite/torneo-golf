@@ -1133,6 +1133,16 @@ export default function Payments() {
   const totalPaid = useMemo(() => {
     return rows.reduce((s, r) => s + (Number(r.total_paid) || 0), 0)
   }, [rows])
+
+  const totalPaidUSD = useMemo(() => {
+    return rows.reduce((s, r) => {
+      const paid = Number(r.total_paid) || 0
+      const usd = Number((r as any).total_paid_usd) || 0
+      return s + Math.min(paid, usd)
+    }, 0)
+  }, [rows])
+
+  const totalPaidARS = useMemo(() => Math.max(0, totalPaid - totalPaidUSD), [totalPaid, totalPaidUSD])
   
   const totalOtherIncomes = useMemo(() => {
     return otherIncomes.reduce((s, i) => s + (Number(i.amount) || 0), 0)
@@ -1245,8 +1255,8 @@ export default function Payments() {
         arsFromUsd += toAmount
       }
     })
-    const incomeARS = totalPaid + totalOtherIncomesARS
-    const incomeUSD = totalOtherIncomesUSD
+    const incomeARS = totalPaidARS + totalOtherIncomesARS
+    const incomeUSD = totalPaidUSD + totalOtherIncomesUSD
     return {
       incomeARS,
       incomeUSD,
@@ -1259,7 +1269,7 @@ export default function Payments() {
       resultARS: incomeARS - totalExpensesARS - arsToUsd + arsFromUsd,
       resultUSD: incomeUSD - totalExpensesUSD + usdBought - usdToArs
     }
-  }, [currencyExchanges, totalPaid, totalOtherIncomesARS, totalOtherIncomesUSD, totalExpensesARS, totalExpensesUSD])
+  }, [currencyExchanges, totalPaidARS, totalPaidUSD, totalOtherIncomesARS, totalOtherIncomesUSD, totalExpensesARS, totalExpensesUSD])
   
   const totalAllIncomes = useMemo(() => totalPaid + totalOtherIncomes, [totalPaid, totalOtherIncomes])
   
@@ -1983,11 +1993,11 @@ export default function Payments() {
                   </div>
                   <div className="space-y-1">
                     <div className="text-2xl font-bold text-green-600">
-                      ${formatCurrency(totalPaid + totalOtherIncomesARS)}
+                      ${formatCurrency(currencyBridge.incomeARS)}
                     </div>
-                    {totalOtherIncomesUSD > 0 && (
+                    {currencyBridge.incomeUSD > 0 && (
                       <div className="text-xl font-bold text-green-600">
-                        US${formatCurrency(totalOtherIncomesUSD)}
+                        US${formatCurrency(currencyBridge.incomeUSD)}
                       </div>
                     )}
                   </div>

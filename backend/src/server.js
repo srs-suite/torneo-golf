@@ -1926,11 +1926,14 @@ async function handlePublicReportAPI(req, res, pathParts) {
             let expenseARS = 0, expenseUSD = 0;
             let totalIncome = 0;
             
-            // Mismo cobrado que Contabilidad: monto real ingresado, no cuota × cantidad
+            // Mismo cobrado que Contabilidad. Los pagos marcados en dólares van a ingresos USD.
             paymentRows.forEach(tournament => {
-                const income = parseFloat(tournament.total_paid || 0);
-                totalIncome += income;
-                incomeARS += income;
+                const paid = parseFloat(tournament.total_paid || 0);
+                const paidUsd = Math.min(paid, parseFloat(tournament.total_paid_usd || 0));
+                const paidArs = paid - paidUsd;
+                totalIncome += paid;
+                incomeARS += paidArs;
+                incomeUSD += paidUsd;
             });
             
             // Other incomes by currency
@@ -1981,19 +1984,23 @@ async function handlePublicReportAPI(req, res, pathParts) {
             
             // Add tournament incomes (mismo total_paid que la pantalla de Contabilidad)
             paymentRows.forEach(tournament => {
-                const income = parseFloat(tournament.total_paid || 0);
-                if (income > 0) {
-                    allIncomes.push({
-                        date: tournament.tournament_date,
-                        concept: tournament.tournament_name || 'Torneo',
-                        amount: income,
-                        currency: 'ARS',
-                        payment_method: 'torneo',
-                        member_name: null,
-                        custodian: tournament.account_name || null,
-                        created_at: tournament.created_at,
-                        type: 'tournament'
-                    });
+                const paid = parseFloat(tournament.total_paid || 0);
+                const paidUsd = Math.min(paid, parseFloat(tournament.total_paid_usd || 0));
+                const paidArs = paid - paidUsd;
+                const base = {
+                    date: tournament.tournament_date,
+                    concept: tournament.tournament_name || 'Torneo',
+                    payment_method: 'torneo',
+                    member_name: null,
+                    custodian: tournament.account_name || null,
+                    created_at: tournament.created_at,
+                    type: 'tournament'
+                };
+                if (paidArs > 0) {
+                    allIncomes.push({ ...base, amount: paidArs, currency: 'ARS' });
+                }
+                if (paidUsd > 0) {
+                    allIncomes.push({ ...base, amount: paidUsd, currency: 'USD' });
                 }
             });
             
