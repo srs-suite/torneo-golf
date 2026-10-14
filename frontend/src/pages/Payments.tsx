@@ -1272,6 +1272,103 @@ export default function Payments() {
     const tournamentUsd = Math.max(totalPaidUSD, ledgerTournamentUsd)
     const incomeARS = totalPaidARS + totalOtherIncomesARS
     const incomeUSD = tournamentUsd + totalOtherIncomesUSD
+    const activeIds = new Set(accounts.map((a) => Number(a.account_id)))
+    let txIncome = 0
+    let txExpense = 0
+    let txBought = 0
+    let txSold = 0
+    let transferIn = 0
+    let transferOut = 0
+    const transferItems: string[] = []
+    const extraCreditItems: string[] = []
+    let extraCredit = 0
+    const usdMoney = (value: unknown) => String(value || '').trim().toUpperCase().replace('US$', 'USD').replace('U$S', 'USD')
+    const lineOf = (date: unknown, text: string, amount: number) =>
+      `${date ? String(date).slice(0, 10) : ''} ${text} · US$${formatCurrency(amount)}`.trim()
+    transactions.forEach((tx) => {
+      const type = String(tx.transaction_type || '')
+      const cur = usdMoney(tx.currency)
+      const toCur = usdMoney(tx.to_currency)
+      const amount = Number(tx.amount || 0)
+      const toAmount = Number(tx.to_amount || 0)
+      if (type === 'exchange') {
+        if (cur === 'USD') txSold += amount
+        if (toCur === 'USD') txBought += toAmount
+        return
+      }
+      if (cur !== 'USD' || !(amount > 0)) return
+      if (type === 'transfer') {
+        const fromOk = activeIds.has(Number(tx.from_account_id))
+        const toOk = activeIds.has(Number(tx.to_account_id))
+        if (toOk && !fromOk) {
+          transferIn += amount
+          transferItems.push(lineOf(tx.transaction_date, `Desde ${tx.from_account_name || 'una cuenta que no está activa'} hacia ${tx.to_account_name || 'la caja'}`, amount))
+        }
+        if (fromOk && !toOk) transferOut += amount
+        return
+      }
+      if (type === 'expense') {
+        txExpense += amount
+        return
+      }
+      if (tx.to_account_id) {
+        txIncome += amount
+        if (type !== 'income_other' && type !== 'income_tournament') {
+          extraCredit += amount
+          extraCreditItems.push(lineOf(tx.transaction_date, tx.description || type, amount))
+        }
+      }
+    })
+    const looseExpenses = expenses.filter((e) => usdMoney(e.currency) === 'USD' && !Number((e as any).account_id))
+    const expenseNotApplied = looseExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0)
+    const expenseMissingFromCash = Math.max(0, totalExpensesUSD - txExpense)
+    const incomeMissingFromReport = Math.max(0, txIncome - incomeUSD)
+    const cashUSD = accounts.reduce((sum, acc) => sum + Number(acc.current_balance_usd || 0), 0)
+    const ledgerUSD = txIncome - txExpense + txBought - txSold + transferIn - transferOut
+    const balanceWithoutMovement = transactions.length > 0 ? cashUSD - ledgerUSD : 0
+    const usdGapReasons: { title: string, amount: number, items: string[] }[] = []
+    if (expenseNotApplied > 0.009) {
+      usdGapReasons.push({
+        title: 'Gastos en dólares que no salieron de ninguna cuenta',
+        amount: expenseNotApplied,
+        items: looseExpenses.map((e) => lineOf((e as any).expense_date, (e as any).detail || 'Gasto', Number(e.amount || 0)))
+      })
+    } else if (expenseMissingFromCash > 0.009 && transactions.length > 0) {
+      usdGapReasons.push({
+        title: 'Gastos del cuadro que no descontaron la caja',
+        amount: expenseMissingFromCash,
+        items: []
+      })
+    }
+    if (transferIn > 0.009) {
+      usdGapReasons.push({
+        title: 'Dólares que entraron por transferencia desde una cuenta que no suma en el total',
+        amount: transferIn,
+        items: transferItems
+      })
+    }
+    if (extraCredit > 0.009) {
+      usdGapReasons.push({
+        title: 'Dólares que entraron a una cuenta y no están en Ingresos',
+        amount: extraCredit,
+        items: extraCreditItems
+      })
+    } else if (incomeMissingFromReport > 0.009) {
+      usdGapReasons.push({
+        title: 'Hay dólares cargados en las cuentas que el cuadro no suma como ingreso',
+        amount: incomeMissingFromReport,
+        items: []
+      })
+    }
+    if (Math.abs(balanceWithoutMovement) > 0.009) {
+      usdGapReasons.push({
+        title: balanceWithoutMovement > 0
+          ? 'Dólares en el saldo que no salen de un ingreso, un pago ni una compra'
+          : 'El saldo tiene menos dólares que los movimientos cargados',
+        amount: Math.abs(balanceWithoutMovement),
+        items: []
+      })
+    }
     return {
       incomeARS,
       incomeUSD,
@@ -1285,9 +1382,10 @@ export default function Payments() {
       usdToArs,
       arsFromUsd,
       resultARS: incomeARS - totalExpensesARS - arsToUsd + arsFromUsd,
-      resultUSD: incomeUSD - totalExpensesUSD + usdBought - usdToArs
+      resultUSD: incomeUSD - totalExpensesUSD + usdBought - usdToArs,
+      usdGapReasons
     }
-  }, [currencyExchanges, transactions, totalPaidARS, totalPaidUSD, totalOtherIncomesARS, totalOtherIncomesUSD, totalExpensesARS, totalExpensesUSD])
+  }, [accounts, currencyExchanges, expenses, transactions, totalPaidARS, totalPaidUSD, totalOtherIncomesARS, totalOtherIncomesUSD, totalExpensesARS, totalExpensesUSD])
   
   const totalAllIncomes = useMemo(() => totalPaid + totalOtherIncomes, [totalPaid, totalOtherIncomes])
   
@@ -2224,11 +2322,22 @@ export default function Payments() {
                   const cashUSD = accounts.reduce((sum, acc) => sum + Number(acc.current_balance_usd || 0), 0)
                   const flowUSD = currencyBridge.incomeUSD - currencyBridge.expenseUSD + currencyBridge.usdBought - currencyBridge.usdToArs
                   const gapUSD = cashUSD - flowUSD
+                  const reasons = currencyBridge.usdGapReasons || []
                   if (Math.abs(gapUSD) < 0.01) return null
                   return (
-                    <p className="text-xs text-gray-500 mt-3">
-                      Los movimientos en dólares cierran en US${formatCurrency(flowUSD)}. La caja tiene US${formatCurrency(cashUSD)}.
-                    </p>
+                    <div className="mt-3 pt-3 border-t text-xs text-gray-600 space-y-2">
+                      <p>La caja tiene US${formatCurrency(cashUSD)} y los ingresos, gastos y compras cierran en US${formatCurrency(flowUSD)}.</p>
+                      {reasons.length === 0 ? (
+                        <p>Esos US${formatCurrency(Math.abs(gapUSD))} no están en un ingreso, una compra ni un pago en dólares.</p>
+                      ) : reasons.map((reason) => (
+                        <div key={reason.title}>
+                          <p className="font-medium text-gray-800">{reason.title}: US${formatCurrency(reason.amount)}</p>
+                          {reason.items.slice(0, 8).map((item) => (
+                            <p key={item} className="pl-3 text-gray-500">{item}</p>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
                   )
                 })()}
               </div>

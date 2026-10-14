@@ -45,6 +45,7 @@ interface FinancialData {
   expenses: Transaction[];
   accounts: any[];
   exchanges?: CurrencyExchangeRow[];
+  usdGapReasons?: { title: string; amount: number; items: string[] }[];
   memberName: string;
 }
 
@@ -841,11 +842,22 @@ export default function PublicFinancialReport() {
                   {(() => {
                     const flowUSD = bridge.incomeUSD - bridge.expenseUSD + bridge.usdBought - bridge.usdToArs
                     const gapUSD = cashUSD - flowUSD
+                    const reasons = financialData.usdGapReasons || []
                     if (Math.abs(gapUSD) < 0.01) return null
                     return (
-                      <p className="text-xs text-gray-500 mt-3">
-                        Los movimientos en dólares cierran en {formatCurrency(flowUSD, 'USD')}. La caja tiene {formatCurrency(cashUSD, 'USD')}.
-                      </p>
+                      <div className="mt-3 pt-3 border-t text-xs text-gray-600 space-y-2">
+                        <p>La caja tiene {formatCurrency(cashUSD, 'USD')} y los ingresos, gastos y compras cierran en {formatCurrency(flowUSD, 'USD')}.</p>
+                        {reasons.length === 0 ? (
+                          <p>Esos {formatCurrency(Math.abs(gapUSD), 'USD')} no están en un ingreso, una compra ni un pago en dólares.</p>
+                        ) : reasons.map((reason) => (
+                          <div key={reason.title}>
+                            <p className="font-medium text-gray-800">{reason.title}: {formatCurrency(reason.amount, 'USD')}</p>
+                            {(reason.items || []).slice(0, 8).map((item) => (
+                              <p key={item} className="pl-3 text-gray-500">{item}</p>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
                     )
                   })()}
                 </div>

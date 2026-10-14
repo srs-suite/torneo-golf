@@ -59,7 +59,7 @@ import {
     getCurrencyBalance, getCustodians,
     
     // Custodian accounts functions
-    getAccounts, createAccount, updateAccount, deleteAccount, getTransactions, createTransaction, syncMissingTournamentPaymentTransactions, getAccountBalanceBreakdown,
+    getAccounts, createAccount, updateAccount, deleteAccount, getTransactions, createTransaction, syncMissingTournamentPaymentTransactions, getAccountBalanceBreakdown, explainUsdCashGap,
     
     // System functions
     getSystemStats, getRecentActivity
@@ -2048,6 +2048,16 @@ async function handlePublicReportAPI(req, res, pathParts) {
                 created_at: expense.created_at
             }));
 
+            let usdGapReasons = [];
+            try {
+                usdGapReasons = await explainUsdCashGap(parseInt(clubId), {
+                    incomeUSD,
+                    expenseUSD
+                });
+            } catch (gapError) {
+                console.error('No se pudo explicar la diferencia en dólares:', gapError);
+            }
+
             sendJSON(res, {
                 success: true,
                 data: {
@@ -2074,6 +2084,7 @@ async function handlePublicReportAPI(req, res, pathParts) {
                         exchange_rate: ex.exchange_rate != null ? parseFloat(ex.exchange_rate) : null,
                         notes: ex.notes || ''
                     })),
+                    usdGapReasons,
                     memberName: verification.memberName
                 }
             });

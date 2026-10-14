@@ -10136,6 +10136,109 @@ async function getAccountBalanceBreakdown(clubId, accountName) {
     }
 }
 
+async function explainUsdCashGap(clubId, report = {}) {
+    const accounts = await getAccounts(clubId);
+    const transactions = await getTransactions(clubId);
+    const expenses = await getExpenses(clubId);
+    const activeIds = new Set((accounts || []).map((a) => Number(a.account_id)));
+    const usdMoney = (value) => String(value || '').trim().toUpperCase().replace('US$', 'USD').replace('U$S', 'USD');
+    const lineOf = (date, text, amount) => `${date ? String(date).slice(0, 10) : ''} ${text} · US$${Number(amount || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`.trim();
+    let txIncome = 0;
+    let txExpense = 0;
+    let txBought = 0;
+    let txSold = 0;
+    let transferIn = 0;
+    let transferOut = 0;
+    const transferItems = [];
+    const extraCreditItems = [];
+    let extraCredit = 0;
+    (transactions || []).forEach((tx) => {
+        const type = String(tx.transaction_type || '');
+        const cur = usdMoney(tx.currency);
+        const toCur = usdMoney(tx.to_currency);
+        const amount = Number(tx.amount || 0);
+        const toAmount = Number(tx.to_amount || 0);
+        if (type === 'exchange') {
+            if (cur === 'USD') txSold += amount;
+            if (toCur === 'USD') txBought += toAmount;
+            return;
+        }
+        if (cur !== 'USD' || !(amount > 0)) return;
+        if (type === 'transfer') {
+            const fromOk = activeIds.has(Number(tx.from_account_id));
+            const toOk = activeIds.has(Number(tx.to_account_id));
+            if (toOk && !fromOk) {
+                transferIn += amount;
+                transferItems.push(lineOf(tx.transaction_date, `Desde ${tx.from_account_name || 'una cuenta que no está activa'} hacia ${tx.to_account_name || 'la caja'}`, amount));
+            }
+            if (fromOk && !toOk) transferOut += amount;
+            return;
+        }
+        if (type === 'expense') {
+            txExpense += amount;
+            return;
+        }
+        if (tx.to_account_id) {
+            txIncome += amount;
+            if (type !== 'income_other' && type !== 'income_tournament') {
+                extraCredit += amount;
+                extraCreditItems.push(lineOf(tx.transaction_date, tx.description || type, amount));
+            }
+        }
+    });
+    const looseExpenses = (expenses || []).filter((e) => usdMoney(e.currency) === 'USD' && !Number(e.account_id));
+    const expenseNotApplied = looseExpenses.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+    const expenseMissingFromCash = Math.max(0, Number(report.expenseUSD || 0) - txExpense);
+    const incomeMissingFromReport = Math.max(0, txIncome - Number(report.incomeUSD || 0));
+    const cashUSD = (accounts || []).reduce((sum, acc) => sum + Number(acc.current_balance_usd || 0), 0);
+    const ledgerUSD = txIncome - txExpense + txBought - txSold + transferIn - transferOut;
+    const balanceWithoutMovement = (transactions || []).length > 0 ? cashUSD - ledgerUSD : 0;
+    const reasons = [];
+    if (expenseNotApplied > 0.009) {
+        reasons.push({
+            title: 'Gastos en dólares que no salieron de ninguna cuenta',
+            amount: expenseNotApplied,
+            items: looseExpenses.map((e) => lineOf(e.expense_date, e.detail || 'Gasto', e.amount))
+        });
+    } else if (expenseMissingFromCash > 0.009 && (transactions || []).length > 0) {
+        reasons.push({
+            title: 'Gastos del cuadro que no descontaron la caja',
+            amount: expenseMissingFromCash,
+            items: []
+        });
+    }
+    if (transferIn > 0.009) {
+        reasons.push({
+            title: 'Dólares que entraron por transferencia desde una cuenta que no suma en el total',
+            amount: transferIn,
+            items: transferItems
+        });
+    }
+    if (extraCredit > 0.009) {
+        reasons.push({
+            title: 'Dólares que entraron a una cuenta y no están en Ingresos',
+            amount: extraCredit,
+            items: extraCreditItems
+        });
+    } else if (incomeMissingFromReport > 0.009) {
+        reasons.push({
+            title: 'Hay dólares cargados en las cuentas que el cuadro no suma como ingreso',
+            amount: incomeMissingFromReport,
+            items: []
+        });
+    }
+    if (Math.abs(balanceWithoutMovement) > 0.009) {
+        reasons.push({
+            title: balanceWithoutMovement > 0
+                ? 'Dólares en el saldo que no salen de un ingreso, un pago ni una compra'
+                : 'El saldo tiene menos dólares que los movimientos cargados',
+            amount: Math.abs(balanceWithoutMovement),
+            items: []
+        });
+    }
+    return reasons;
+}
+
 // ================================
 // SYSTEM FUNCTIONS  
 // ================================
@@ -10186,7 +10289,7 @@ export {
     getCurrencyBalance, getCustodians,
     
     // Custodian accounts functions
-    getAccounts, createAccount, updateAccount, deleteAccount, getTransactions, createTransaction, syncMissingTournamentPaymentTransactions, getAccountBalanceBreakdown,
+    getAccounts, createAccount, updateAccount, deleteAccount, getTransactions, createTransaction, syncMissingTournamentPaymentTransactions, getAccountBalanceBreakdown, explainUsdCashGap,
     
     // Course holes functions
     createCourseHolesTable, ensureCourseHolesForClub, getCourseHoles, updateCourseHole, updateMultipleCourseHoles, getCourseStatistics,
