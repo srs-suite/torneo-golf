@@ -588,6 +588,22 @@ export default function Payments() {
     })
   }
 
+  const dollarRateLabel = (ex: { from_currency?: string; from_amount?: number | string; to_currency?: string; to_amount?: number | string; exchange_rate?: number | string | null }) => {
+    const from = String(ex.from_currency || '').toUpperCase()
+    const to = String(ex.to_currency || '').toUpperCase()
+    const fromAmount = Number(ex.from_amount || 0)
+    const toAmount = Number(ex.to_amount || 0)
+    let pesos = 0
+    let dolares = 0
+    if (from === 'ARS') pesos = fromAmount
+    if (from === 'USD') dolares = fromAmount
+    if (to === 'ARS') pesos = toAmount
+    if (to === 'USD') dolares = toAmount
+    const rate = dolares > 0 && pesos > 0 ? pesos / dolares : Number(ex.exchange_rate || 0)
+    if (!rate) return ''
+    return `Dólar a $${formatCurrency(rate)}`
+  }
+
   const exportToExcel = () => {
     // Preparar datos para exportación
     const dataToExport = filteredOtherIncomes.map(income => {
@@ -2074,9 +2090,10 @@ export default function Payments() {
                       'Monto origen': Number(ex.from_amount || 0),
                       'Hacia': ex.to_currency,
                       'Monto destino': Number(ex.to_amount || 0),
+                      'Valor del dólar': dollarRateLabel(ex),
                       Notas: ex.notes || ''
                     }))
-                    const ws2 = XLSX.utils.json_to_sheet(cambios.length ? cambios : [{ Fecha: '', Desde: '', 'Monto origen': '', Hacia: '', 'Monto destino': '', Notas: 'Sin cambios' }])
+                    const ws2 = XLSX.utils.json_to_sheet(cambios.length ? cambios : [{ Fecha: '', Desde: '', 'Monto origen': '', Hacia: '', 'Monto destino': '', 'Valor del dólar': '', Notas: 'Sin cambios' }])
                     XLSX.utils.book_append_sheet(wb, ws2, 'Cambios')
                     const fileName = `balance_por_moneda_${new Date().toLocaleDateString('es-AR').replace(/\//g, '-')}.xlsx`
                     XLSX.writeFile(wb, fileName)
@@ -2092,7 +2109,7 @@ export default function Payments() {
                     const b = currencyBridge
                     const money = (n: number) => formatCurrency(n)
                     const cambios = currencyExchanges.map((ex) =>
-                      `<tr><td>${ex.exchange_date ? String(ex.exchange_date).slice(0, 10) : ''}</td><td>${ex.from_currency} ${money(Number(ex.from_amount || 0))}</td><td>${ex.to_currency} ${money(Number(ex.to_amount || 0))}</td><td>${ex.notes || ''}</td></tr>`
+                      `<tr><td>${ex.exchange_date ? String(ex.exchange_date).slice(0, 10) : ''}</td><td>${ex.from_currency} ${money(Number(ex.from_amount || 0))}</td><td>${ex.to_currency} ${money(Number(ex.to_amount || 0))}</td><td>${dollarRateLabel(ex)}</td><td>${ex.notes || ''}</td></tr>`
                     ).join('')
                     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Balance por moneda</title>
                       <style>
@@ -2121,8 +2138,8 @@ export default function Payments() {
                       </table>
                       <h2>Cambios de moneda</h2>
                       <table>
-                        <thead><tr><th>Fecha</th><th>Sale</th><th>Entra</th><th>Notas</th></tr></thead>
-                        <tbody>${cambios || '<tr><td colspan="4">Sin cambios</td></tr>'}</tbody>
+                        <thead><tr><th>Fecha</th><th>Sale</th><th>Entra</th><th>Valor del dólar</th><th>Notas</th></tr></thead>
+                        <tbody>${cambios || '<tr><td colspan="5">Sin cambios</td></tr>'}</tbody>
                       </table>
                       <script>window.onload=function(){setTimeout(function(){window.print()},300)}</script>
                       </body></html>`
@@ -2175,6 +2192,7 @@ export default function Payments() {
                       <span>
                         {ex.from_currency} {formatCurrency(Number(ex.from_amount || 0))} → {ex.to_currency} {formatCurrency(Number(ex.to_amount || 0))}
                       </span>
+                      <span className="text-gray-800">{dollarRateLabel(ex)}</span>
                       <span className="text-gray-500">{ex.notes || ''}</span>
                     </div>
                   ))}
@@ -2843,7 +2861,7 @@ export default function Payments() {
                             📥 {ex.to_account_name || 'Sin asignar'}
                           </span>
                         </td>
-                        <td className="px-4 py-2">{formatCurrency(Number(ex.exchange_rate || 0))}</td>
+                        <td className="px-4 py-2">{dollarRateLabel(ex) || formatCurrency(Number(ex.exchange_rate || 0))}</td>
                         <td className="px-4 py-2">{ex.notes || '-'}</td>
                         <td className="px-4 py-2 text-center">
                           <div className="flex items-center justify-center gap-2">

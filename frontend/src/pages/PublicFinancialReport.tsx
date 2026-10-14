@@ -518,6 +518,22 @@ export default function PublicFinancialReport() {
     setExpandedAccounts(newExpanded);
   };
 
+  const dollarRateLabel = (ex: { from_currency?: string; from_amount?: number; to_currency?: string; to_amount?: number; exchange_rate?: number | null }) => {
+    const from = String(ex.from_currency || '').toUpperCase()
+    const to = String(ex.to_currency || '').toUpperCase()
+    const fromAmount = Number(ex.from_amount || 0)
+    const toAmount = Number(ex.to_amount || 0)
+    let pesos = 0
+    let dolares = 0
+    if (from === 'ARS') pesos = fromAmount
+    if (from === 'USD') dolares = fromAmount
+    if (to === 'ARS') pesos = toAmount
+    if (to === 'USD') dolares = toAmount
+    const rate = dolares > 0 && pesos > 0 ? pesos / dolares : Number(ex.exchange_rate || 0)
+    if (!rate) return ''
+    return `Dólar a ${formatCurrency(rate, 'ARS')}`
+  }
+
   const formatCurrency = (amount: number, currency?: string) => {
     const formatted = new Intl.NumberFormat('es-AR', {
       minimumFractionDigits: 2,
@@ -820,6 +836,7 @@ export default function PublicFinancialReport() {
                           <p className="text-gray-900">
                             {formatCurrency(Number(ex.from_amount || 0), ex.from_currency)} → {formatCurrency(Number(ex.to_amount || 0), ex.to_currency)}
                           </p>
+                          {dollarRateLabel(ex) ? <p className="text-gray-700">{dollarRateLabel(ex)}</p> : null}
                           {ex.notes ? <p className="text-gray-500">{ex.notes}</p> : null}
                         </div>
                       </div>
