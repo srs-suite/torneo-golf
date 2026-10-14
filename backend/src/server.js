@@ -59,7 +59,7 @@ import {
     getCurrencyBalance, getCustodians,
     
     // Custodian accounts functions
-    getAccounts, createAccount, updateAccount, deleteAccount, getTransactions, createTransaction, syncMissingTournamentPaymentTransactions, getAccountBalanceBreakdown, explainUsdCashGap,
+    getAccounts, createAccount, updateAccount, deleteAccount, getTransactions, createTransaction, syncMissingTournamentPaymentTransactions, getAccountBalanceBreakdown, listUnmatchedUsdIncomes,
     
     // System functions
     getSystemStats, getRecentActivity
@@ -2048,15 +2048,26 @@ async function handlePublicReportAPI(req, res, pathParts) {
                 created_at: expense.created_at
             }));
 
-            let usdGapReasons = [];
+            let missingUsdIncomes = [];
             try {
-                usdGapReasons = await explainUsdCashGap(parseInt(clubId), {
-                    incomeUSD,
-                    expenseUSD
-                });
+                missingUsdIncomes = await listUnmatchedUsdIncomes(parseInt(clubId));
             } catch (gapError) {
-                console.error('No se pudo explicar la diferencia en dólares:', gapError);
+                console.error('No se pudieron leer ingresos en dólares de las cuentas:', gapError);
             }
+            missingUsdIncomes.forEach((income) => {
+                incomeUSD += Number(income.amount || 0);
+                allIncomes.push({
+                    date: income.date,
+                    concept: income.account ? `${income.concept} · ${income.account}` : income.concept,
+                    amount: Number(income.amount || 0),
+                    currency: 'USD',
+                    payment_method: null,
+                    member_name: null,
+                    custodian: income.account || null,
+                    created_at: null,
+                    type: 'account'
+                });
+            });
 
             sendJSON(res, {
                 success: true,
@@ -2084,7 +2095,6 @@ async function handlePublicReportAPI(req, res, pathParts) {
                         exchange_rate: ex.exchange_rate != null ? parseFloat(ex.exchange_rate) : null,
                         notes: ex.notes || ''
                     })),
-                    usdGapReasons,
                     memberName: verification.memberName
                 }
             });

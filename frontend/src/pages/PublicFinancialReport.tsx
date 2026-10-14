@@ -26,7 +26,7 @@ interface Transaction {
   custodian?: string;
   created_at?: string;
   receipt_photo_path?: string;
-  type?: 'tournament' | 'other';
+  type?: 'tournament' | 'other' | 'account';
 }
 
 interface CurrencyExchangeRow {
@@ -45,7 +45,6 @@ interface FinancialData {
   expenses: Transaction[];
   accounts: any[];
   exchanges?: CurrencyExchangeRow[];
-  usdGapReasons?: { title: string; amount: number; items: string[] }[];
   memberName: string;
 }
 
@@ -797,35 +796,12 @@ export default function PublicFinancialReport() {
                 <div className="bg-white rounded-lg shadow-md p-6">
                   <h3 className="text-base font-bold text-gray-800 mb-2">Dólares</h3>
                   {row('Ingresos', bridge.incomeUSD, 'USD')}
-                  {(() => {
-                    const usdIncomes = (financialData.incomes || []).filter((i) => String(i.currency || 'ARS').toUpperCase() === 'USD')
-                    const tournamentUsd = usdIncomes.filter((i) => i.type === 'tournament')
-                    const otherUsd = usdIncomes.filter((i) => i.type !== 'tournament')
-                    const tournamentTotal = tournamentUsd.reduce((sum, i) => sum + Number(i.amount || 0), 0)
-                    const otherTotal = otherUsd.reduce((sum, i) => sum + Number(i.amount || 0), 0)
-                    return (
-                      <>
-                        {tournamentTotal > 0 && (
-                          <div className="flex justify-between gap-4 py-1 pl-3 text-xs text-gray-600">
-                            <span>Cobros de torneos</span>
-                            <span>{formatCurrency(tournamentTotal, 'USD')}</span>
-                          </div>
-                        )}
-                        {tournamentUsd.map((income, index) => (
-                          <div key={`usd-t-${index}`} className="flex justify-between gap-3 py-1 pl-6 text-xs text-gray-500">
-                            <span>{formatDate(income.date)} {income.concept}</span>
-                            <span>{formatCurrency(Number(income.amount || 0), 'USD')}</span>
-                          </div>
-                        ))}
-                        {otherTotal > 0 && (
-                          <div className="flex justify-between gap-4 py-1 pl-3 text-xs text-gray-600">
-                            <span>Otros ingresos</span>
-                            <span>{formatCurrency(otherTotal, 'USD')}</span>
-                          </div>
-                        )}
-                      </>
-                    )
-                  })()}
+                  {(financialData.incomes || []).filter((income) => income.type === 'account' && String(income.currency || '').toUpperCase() === 'USD').map((income, index) => (
+                    <div key={`usd-account-${index}`} className="flex justify-between gap-3 py-1 pl-3 text-xs text-gray-600">
+                      <span>{formatDate(income.date)} {income.concept}</span>
+                      <span>{formatCurrency(Number(income.amount || 0), 'USD')}</span>
+                    </div>
+                  ))}
                   {row('Gastos', bridge.expenseUSD, 'USD')}
                   {row('Dólares comprados', bridge.usdBought, 'USD')}
                   {row('Dólares vendidos', bridge.usdToArs, 'USD')}
@@ -839,27 +815,6 @@ export default function PublicFinancialReport() {
                       <span>{formatCurrency(Number(acc.current_balance_usd || 0), 'USD')}</span>
                     </div>
                   ))}
-                  {(() => {
-                    const flowUSD = bridge.incomeUSD - bridge.expenseUSD + bridge.usdBought - bridge.usdToArs
-                    const gapUSD = cashUSD - flowUSD
-                    const reasons = financialData.usdGapReasons || []
-                    if (Math.abs(gapUSD) < 0.01) return null
-                    return (
-                      <div className="mt-3 pt-3 border-t text-xs text-gray-600 space-y-2">
-                        <p>La caja tiene {formatCurrency(cashUSD, 'USD')} y los ingresos, gastos y compras cierran en {formatCurrency(flowUSD, 'USD')}.</p>
-                        {reasons.length === 0 ? (
-                          <p>Esos {formatCurrency(Math.abs(gapUSD), 'USD')} no están en un ingreso, una compra ni un pago en dólares.</p>
-                        ) : reasons.map((reason) => (
-                          <div key={reason.title}>
-                            <p className="font-medium text-gray-800">{reason.title}: {formatCurrency(reason.amount, 'USD')}</p>
-                            {(reason.items || []).slice(0, 8).map((item) => (
-                              <p key={item} className="pl-3 text-gray-500">{item}</p>
-                            ))}
-                          </div>
-                        ))}
-                      </div>
-                    )
-                  })()}
                 </div>
               </div>
               <div className="bg-white rounded-lg shadow-md p-6">
