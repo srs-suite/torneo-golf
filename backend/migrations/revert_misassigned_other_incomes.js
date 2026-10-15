@@ -1,10 +1,6 @@
 /**
- * El ajuste de Colombo cambió la cuenta de destino de algunos otros ingresos.
- * Juan quedó con saldo y Caja del Club con menos. Los movimientos siguen.
- *
- * No mueve los 68 ingresos. Deja en Juan los que ya tienen una salida del mismo
- * monto (se cobró y después se pagó o se transfirió). Devuelve a Caja del Club
- * solo los que explican el saldo que le apareció.
+ * Pasa a Caja del Club todo lo que el sistema tiene asentado en Juan Castro Videla.
+ * No borra movimientos: les cambia la cuenta. Juan queda en 0 pesos y 0 dólares.
  *
  *   NODE_ENV=production node migrations/revert_misassigned_other_incomes.js 1
  *   NODE_ENV=production node migrations/revert_misassigned_other_incomes.js 1 --apply
@@ -16,18 +12,9 @@ function cents(value) {
     return Math.round(Number(value || 0) * 100);
 }
 
-function pesos(c) {
-    return (c / 100).toFixed(2);
-}
-
-function fecha(value) {
-    if (value instanceof Date && !Number.isNaN(value.getTime())) {
-        const y = value.getFullYear();
-        const m = String(value.getMonth() + 1).padStart(2, '0');
-        const d = String(value.getDate()).padStart(2, '0');
-        return `${y}-${m}-${d}`;
-    }
-    return String(value || '').slice(0, 10);
+function money(centsValue) {
+    const sign = centsValue < 0 ? '-' : '';
+    return sign + (Math.abs(centsValue) / 100).toFixed(2);
 }
 
 function visible(tx) {
@@ -40,10 +27,57 @@ function visible(tx) {
     return false;
 }
 
-function takeSameAmount(pool, amount) {
-    const index = pool.findIndex((item) => item.cents === amount);
-    if (index < 0) return null;
-    return pool.splice(index, 1)[0];
+function emptyMap() {
+    return new Map();
+}
+
+function add(map, accountId, currency, delta) {
+    if (accountId == null || accountId === '') return;
+    const id = Number(accountId);
+    if (!Number.isFinite(id) || delta === 0) return;
+    if (!map.has(id)) map.set(id, { ars: 0, usd: 0 });
+    const bag = map.get(id);
+    if ((currency || 'ARS') === 'USD') bag.usd += delta;
+    else bag.ars += delta;
+}
+
+function screenBalances(txs, exchanges, rewrite) {
+    const map = emptyMap();
+    const accountOf = (id) => {
+        if (id == null || id === '') return null;
+        const n = Number(id);
+        return rewrite && rewrite.has(n) ? rewrite.get(n) : n;
+    };
+
+    for (const tx of txs) {
+        if (!visible(tx)) continue;
+        const amount = cents(tx.amount);
+        const currency = tx.currency || 'ARS';
+        const fromId = accountOf(tx.from_account_id);
+        const toId = accountOf(tx.to_account_id);
+        if (tx.transaction_type === 'income_tournament' || tx.transaction_type === 'income_other') {
+            add(map, toId, currency, amount);
+        } else if (tx.transaction_type === 'expense') {
+            add(map, fromId, currency, -amount);
+        } else if (tx.transaction_type === 'transfer') {
+            add(map, fromId, currency, -amount);
+            add(map, toId, currency, amount);
+        }
+    }
+
+    for (const ex of exchanges) {
+        const fromId = accountOf(ex.from_account_id);
+        const toId = accountOf(ex.to_account_id);
+        add(map, fromId, ex.from_currency || 'ARS', -cents(ex.from_amount));
+        add(map, toId, ex.to_currency || 'ARS', cents(ex.to_amount));
+    }
+    return map;
+}
+
+function line(label, bag) {
+    const ars = bag ? bag.ars : 0;
+    const usd = bag ? bag.usd : 0;
+    console.log(`${label}  $${money(ars)}    US$${money(usd)}`);
 }
 
 async function main() {
@@ -57,14 +91,16 @@ async function main() {
     await initializeDatabase();
 
     const { rows: accounts } = await executeQuery(
-        `SELECT account_id, account_name FROM custodian_accounts WHERE club_id = ?`,
+        `SELECT account_id, account_name, current_balance_ars, current_balance_usd
+         FROM custodian_accounts WHERE club_id = ?`,
         [clubId]
     );
     const byName = (name) => accounts.find((acc) => String(acc.account_name || '').trim().toLowerCase() === name);
     const juan = byName('juan castro videla');
     const caja = byName('caja del club');
     if (!juan || !caja) {
-        console.error('No encontré la cuenta Juan Castro Videla o Caja del Club.');
+        console.error('No encontré Juan Castro Videla o Caja del Club.');
+        for (const acc of accounts) console.error(`  - ${acc.account_name}`);
         await closeDatabase();
         process.exit(1);
     }
@@ -72,8 +108,8 @@ async function main() {
     const cajaId = Number(caja.account_id);
 
     const { rows: txs } = await executeQuery(
-        `SELECT t.transaction_id, t.transaction_type, t.transaction_date, t.amount, t.currency,
-                t.from_account_id, t.to_account_id, t.description, t.reference_type,
+        `SELECT t.transaction_id, t.transaction_type, t.amount, t.currency,
+                t.from_account_id, t.to_account_id, t.reference_type,
                 IF(oi.income_id IS NULL, 0, 1) AS income_exists,
                 IF(e.expense_id IS NULL, 0, 1) AS expense_exists
          FROM account_transactions t
@@ -85,139 +121,78 @@ async function main() {
         [clubId]
     );
     const { rows: exchanges } = await executeQuery(
-        `SELECT exchange_id, exchange_date, from_account_id, to_account_id,
-                from_currency, from_amount, to_currency, to_amount, notes
+        `SELECT from_account_id, to_account_id, from_currency, from_amount, to_currency, to_amount
          FROM currency_exchanges WHERE club_id = ?`,
         [clubId]
     );
 
-    const incomes = [];
-    const otherIn = [];
-    const outflows = [];
+    const before = screenBalances(txs, exchanges, null);
+    const after = screenBalances(txs, exchanges, new Map([[juanId, cajaId]]));
 
-    const pushFlow = (list, item) => {
-        if ((item.currency || 'ARS') !== 'ARS') return;
-        if (item.cents <= 0) return;
-        list.push(item);
-    };
+    console.log('Como se ve ahora:');
+    line('  Juan Castro Videla', before.get(juanId));
+    line('  Caja del Club     ', before.get(cajaId));
+    console.log('Como va a quedar:');
+    line('  Juan Castro Videla', after.get(juanId));
+    line('  Caja del Club     ', after.get(cajaId));
 
-    for (const tx of txs) {
-        if (!visible(tx)) continue;
-        const amount = cents(tx.amount);
-        const fromId = tx.from_account_id != null ? Number(tx.from_account_id) : null;
-        const toId = tx.to_account_id != null ? Number(tx.to_account_id) : null;
-        const base = {
-            id: tx.transaction_id,
-            cents: amount,
-            currency: tx.currency || 'ARS',
-            date: fecha(tx.transaction_date),
-            description: tx.description || ''
-        };
-        if (tx.transaction_type === 'income_other' && toId === juanId) {
-            pushFlow(incomes, base);
-        } else if ((tx.transaction_type === 'income_tournament' || tx.transaction_type === 'transfer') && toId === juanId) {
-            pushFlow(otherIn, base);
-        } else if (tx.transaction_type === 'transfer' && fromId === juanId) {
-            pushFlow(outflows, base);
-        } else if (tx.transaction_type === 'expense' && fromId === juanId) {
-            pushFlow(outflows, base);
-        } else if ((tx.transaction_type === 'income_tournament' || tx.transaction_type === 'income_other') && fromId === juanId) {
-            pushFlow(outflows, base);
-        }
-    }
-
-    for (const ex of exchanges) {
-        const fromId = ex.from_account_id != null ? Number(ex.from_account_id) : null;
-        const toId = ex.to_account_id != null ? Number(ex.to_account_id) : null;
-        if (fromId === juanId) {
-            pushFlow(outflows, {
-                id: `EX${ex.exchange_id}`,
-                cents: cents(ex.from_amount),
-                currency: ex.from_currency || 'ARS',
-                date: fecha(ex.exchange_date),
-                description: ex.notes || 'Conversión'
-            });
-        }
-        if (toId === juanId) {
-            pushFlow(otherIn, {
-                id: `EX${ex.exchange_id}`,
-                cents: cents(ex.to_amount),
-                currency: ex.to_currency || 'ARS',
-                date: fecha(ex.exchange_date),
-                description: ex.notes || 'Conversión'
-            });
-        }
-    }
-
-    const balance = incomes.reduce((s, i) => s + i.cents, 0)
-        + otherIn.reduce((s, i) => s + i.cents, 0)
-        - outflows.reduce((s, i) => s + i.cents, 0);
-
-    console.log(`Saldo en pesos de Juan que muestra la pantalla: $${pesos(balance)}`);
-    console.log(`Otros ingresos en Juan: ${incomes.length} por $${pesos(incomes.reduce((s, i) => s + i.cents, 0))}`);
-    console.log(`Otras entradas: ${otherIn.length} por $${pesos(otherIn.reduce((s, i) => s + i.cents, 0))}`);
-    console.log(`Salidas: ${outflows.length} por $${pesos(outflows.reduce((s, i) => s + i.cents, 0))}`);
-
-    const pendingOut = [...outflows];
-    for (const entry of otherIn) takeSameAmount(pendingOut, entry.cents);
-    const stay = [];
-    const pool = [...incomes];
-    for (const out of [...pendingOut]) {
-        const matched = takeSameAmount(pool, out.cents);
-        if (matched) {
-            stay.push(matched);
-            takeSameAmount(pendingOut, out.cents);
-        }
-    }
-
-    const leftoverSum = pool.reduce((s, i) => s + i.cents, 0);
-    console.log(`Ingresos que ya salieron de la cuenta y se quedan en Juan: ${stay.length}`);
-    console.log(`Ingresos que explican el saldo y vuelven a Caja del Club: ${pool.length} por $${pesos(leftoverSum)}`);
-    for (const tx of pool) {
-        console.log(`  #${tx.id}  ${tx.date}  $${pesos(tx.cents)}  ${tx.description}`);
-    }
-    if (pendingOut.length) {
-        console.log(`Salidas sin un ingreso del mismo monto: ${pendingOut.length} por $${pesos(pendingOut.reduce((s, i) => s + i.cents, 0))}`);
-        for (const tx of pendingOut) {
-            console.log(`  salida #${tx.id}  ${tx.date}  $${pesos(tx.cents)}  ${tx.description}`);
-        }
-    }
-
-    if (leftoverSum !== balance || balance <= 0) {
-        console.log('Esa lista no cierra con el saldo de Juan. No modifiqué nada.');
-        await closeDatabase();
-        process.exit(2);
-    }
+    const touches = txs.filter((tx) => Number(tx.from_account_id) === juanId || Number(tx.to_account_id) === juanId).length
+        + exchanges.filter((ex) => Number(ex.from_account_id) === juanId || Number(ex.to_account_id) === juanId).length;
+    console.log(`Movimientos que pasan de Juan a Caja del Club: ${touches}`);
 
     if (!apply) {
-        console.log('Sin cambios. Si esa lista es la que tiene que volver a la caja:');
+        console.log('Sin cambios. Para dejarlo así:');
         console.log('NODE_ENV=production node migrations/revert_misassigned_other_incomes.js 1 --apply');
         await closeDatabase();
         return;
     }
 
-    for (const tx of pool) {
-        const amount = tx.cents / 100;
-        const updated = await executeQuery(
-            `UPDATE account_transactions
-             SET to_account_id = ?
-             WHERE transaction_id = ? AND club_id = ? AND to_account_id = ?`,
-            [cajaId, tx.id, clubId, juanId]
-        );
-        if (!updated.rows || updated.rows.affectedRows !== 1) {
-            throw new Error(`No se pudo reasignar el movimiento #${tx.id}`);
-        }
+    await executeQuery(
+        `UPDATE account_transactions SET to_account_id = ? WHERE club_id = ? AND to_account_id = ?`,
+        [cajaId, clubId, juanId]
+    );
+    await executeQuery(
+        `UPDATE account_transactions SET from_account_id = ? WHERE club_id = ? AND from_account_id = ?`,
+        [cajaId, clubId, juanId]
+    );
+    await executeQuery(
+        `UPDATE currency_exchanges SET to_account_id = ? WHERE club_id = ? AND to_account_id = ?`,
+        [cajaId, clubId, juanId]
+    );
+    await executeQuery(
+        `UPDATE currency_exchanges SET from_account_id = ? WHERE club_id = ? AND from_account_id = ?`,
+        [cajaId, clubId, juanId]
+    );
+    await executeQuery(
+        `UPDATE other_incomes SET account_id = ? WHERE club_id = ? AND account_id = ?`,
+        [cajaId, clubId, juanId]
+    );
+    await executeQuery(
+        `UPDATE club_expenses SET account_id = ? WHERE club_id = ? AND account_id = ?`,
+        [cajaId, clubId, juanId]
+    );
+    try {
         await executeQuery(
-            `UPDATE custodian_accounts SET current_balance_ars = current_balance_ars - ? WHERE account_id = ? AND club_id = ?`,
-            [amount, juanId, clubId]
+            `UPDATE tournaments SET account_id = ? WHERE course_id = ? AND account_id = ?`,
+            [cajaId, clubId, juanId]
         );
-        await executeQuery(
-            `UPDATE custodian_accounts SET current_balance_ars = current_balance_ars + ? WHERE account_id = ? AND club_id = ?`,
-            [amount, cajaId, clubId]
-        );
-    }
+    } catch (_e) { /* la columna puede no usarse */ }
 
-    console.log(`Listo. ${pool.length} ingresos volvieron a Caja del Club, por $${pesos(leftoverSum)}.`);
+    const cajaAfter = after.get(cajaId) || { ars: 0, usd: 0 };
+    await executeQuery(
+        `UPDATE custodian_accounts
+         SET current_balance_ars = ?, current_balance_usd = ?
+         WHERE club_id = ? AND account_id = ?`,
+        [cajaAfter.ars / 100, cajaAfter.usd / 100, clubId, cajaId]
+    );
+    await executeQuery(
+        `UPDATE custodian_accounts
+         SET current_balance_ars = 0, current_balance_usd = 0
+         WHERE club_id = ? AND account_id = ?`,
+        [clubId, juanId]
+    );
+
+    console.log('Listo. Juan quedó en cero. Ese saldo pasó a Caja del Club.');
     await closeDatabase();
 }
 
