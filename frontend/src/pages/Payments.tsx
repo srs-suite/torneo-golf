@@ -3173,10 +3173,10 @@ export default function Payments() {
             })()}
 
             {/* Historial de Transacciones */}
-            <div className="bg-white rounded-lg border">
-              <div className="p-4 border-b bg-gray-50 flex items-center justify-between">
+            <div className="bg-white rounded-lg border max-w-full min-w-0 overflow-hidden">
+              <div className="p-4 border-b bg-gray-50 flex flex-wrap items-center gap-2">
                 <h3 className="font-semibold text-gray-900">Historial de Movimientos</h3>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <label className="text-sm text-gray-700">Filtrar por cuenta:</label>
                   <select
                     value={selectedAccountDetail || ''}
@@ -3210,7 +3210,7 @@ export default function Payments() {
                   </select>
                 </div>
               </div>
-              <div className="overflow-x-auto">
+              <div className="w-full max-w-full min-w-0 overflow-hidden">
                 {loading ? (
                   <div className="p-6 text-center text-gray-600">Cargando...</div>
                 ) : (() => {
@@ -3605,20 +3605,20 @@ export default function Payments() {
                     : transactionsWithCalculatedBalance
 
                   return (
-                    <table className="min-w-full divide-y divide-gray-200">
+                    <table className="w-full table-fixed divide-y divide-gray-200 text-xs">
                       <thead className="bg-gray-50">
                         <tr>
-                          <th className="px-4 py-3 text-left font-semibold text-gray-700">Fecha</th>
-                          <th className="px-4 py-3 text-left font-semibold text-gray-700">Tipo</th>
-                          <th className="px-4 py-3 text-left font-semibold text-gray-700">Descripción</th>
-                          <th className="px-4 py-3 text-left font-semibold text-gray-700">Desde</th>
-                          <th className="px-4 py-3 text-left font-semibold text-gray-700">Hacia</th>
-                          <th className="px-4 py-3 text-right font-semibold text-gray-700">Entrada ARS</th>
-                          <th className="px-4 py-3 text-right font-semibold text-gray-700">Salida ARS</th>
-                          <th className="px-4 py-3 text-right font-semibold text-gray-700">Entrada USD</th>
-                          <th className="px-4 py-3 text-right font-semibold text-gray-700">Salida USD</th>
-                          <th className="px-4 py-3 text-right font-semibold text-gray-700">Saldo ARS</th>
-                          <th className="px-4 py-3 text-right font-semibold text-gray-700">Saldo USD</th>
+                          <th className="w-[8%] px-1 py-2 text-left font-semibold text-gray-700">Fecha</th>
+                          <th className="w-[11%] px-1 py-2 text-left font-semibold text-gray-700">Tipo</th>
+                          <th className="w-[18%] px-1 py-2 text-left font-semibold text-gray-700">Descripción</th>
+                          <th className="w-[10%] px-1 py-2 text-left font-semibold text-gray-700">Desde</th>
+                          <th className="w-[10%] px-1 py-2 text-left font-semibold text-gray-700">Hacia</th>
+                          <th className="w-[7%] px-1 py-2 text-right font-semibold text-gray-700">Entra $</th>
+                          <th className="w-[7%] px-1 py-2 text-right font-semibold text-gray-700">Sale $</th>
+                          <th className="w-[7%] px-1 py-2 text-right font-semibold text-gray-700">Entra US$</th>
+                          <th className="w-[7%] px-1 py-2 text-right font-semibold text-gray-700">Sale US$</th>
+                          <th className="w-[7.5%] px-1 py-2 text-right font-semibold text-gray-700">Saldo $</th>
+                          <th className="w-[7.5%] px-1 py-2 text-right font-semibold text-gray-700">Saldo US$</th>
                         </tr>
                       </thead>
                       <tbody className="bg-white divide-y divide-gray-200">
@@ -3639,12 +3639,12 @@ export default function Payments() {
                           
                           return (
                             <tr key={tx.transaction_id} className="hover:bg-gray-50">
-                              <td className="px-4 py-3 text-sm text-gray-900">
+                              <td className="px-1 py-2 text-gray-900 whitespace-nowrap">
                                 {new Date(tx.transaction_date).toLocaleDateString('es-AR')}
                               </td>
-                              <td className="px-4 py-3 text-sm">
+                              <td className="px-1 py-2">
                                 <div className="space-y-1">
-                                  <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
+                                  <span className={`inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium leading-tight ${
                                     tx.transaction_type === 'income_tournament' ? 'bg-green-100 text-green-800' :
                                     tx.transaction_type === 'income_other' ? 'bg-blue-100 text-blue-800' :
                                     tx.transaction_type === 'expense' ? 'bg-red-100 text-red-800' :
@@ -3660,22 +3660,22 @@ export default function Payments() {
                                      tx.transaction_type}
                                   </span>
                                   {(tx as any).member_name && (
-                                    <div className="text-xs text-gray-600">
-                                      👤 {(tx as any).member_name}
+                                    <div className="text-[10px] text-gray-600 truncate" title={(tx as any).member_name}>
+                                      {(tx as any).member_name}
                                     </div>
                                   )}
                                 </div>
                               </td>
-                              <td className="px-4 py-3 text-sm text-gray-600">
+                              <td className="px-1 py-2 text-gray-600 truncate" title={descripcion}>
                                 {descripcion}
                               </td>
-                              <td className="px-4 py-3 text-sm text-gray-900">
+                              <td className="px-1 py-2 text-gray-900 truncate" title={tx.from_account_name || ''}>
                                 {tx.from_account_name || '-'}
                               </td>
-                              <td className="px-4 py-3 text-sm text-gray-900">
+                              <td className="px-1 py-2 text-gray-900 truncate" title={tx.to_account_name || ''}>
                                 {tx.to_account_name || '-'}
                               </td>
-                              <td className="px-4 py-3 text-right text-sm">
+                              <td className="px-1 py-2 text-right break-all">
                                 {ingresoARS > 0 ? (
                                   <span className="text-green-600 font-semibold">
                                     ${formatCurrency(ingresoARS)}
@@ -3684,7 +3684,7 @@ export default function Payments() {
                                   <span className="text-gray-400">-</span>
                                 )}
                               </td>
-                              <td className="px-4 py-3 text-right text-sm">
+                              <td className="px-1 py-2 text-right break-all">
                                 {egresoARS > 0 ? (
                                   <span className="text-red-600 font-semibold">
                                     ${formatCurrency(egresoARS)}
@@ -3693,7 +3693,7 @@ export default function Payments() {
                                   <span className="text-gray-400">-</span>
                                 )}
                               </td>
-                              <td className="px-4 py-3 text-right text-sm">
+                              <td className="px-1 py-2 text-right break-all">
                                 {ingresoUSD > 0 ? (
                                   <span className="text-green-600 font-semibold">
                                     US${formatCurrency(ingresoUSD)}
@@ -3702,7 +3702,7 @@ export default function Payments() {
                                   <span className="text-gray-400">-</span>
                                 )}
                               </td>
-                              <td className="px-4 py-3 text-right text-sm">
+                              <td className="px-1 py-2 text-right break-all">
                                 {egresoUSD > 0 ? (
                                   <span className="text-red-600 font-semibold">
                                     US${formatCurrency(egresoUSD)}
@@ -3711,10 +3711,10 @@ export default function Payments() {
                                   <span className="text-gray-400">-</span>
                                 )}
                               </td>
-                              <td className={`px-4 py-3 text-right font-semibold ${balanceARS >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              <td className={`px-1 py-2 text-right break-all font-semibold ${balanceARS >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                                 ${formatCurrency(balanceARS)}
                               </td>
-                              <td className={`px-4 py-3 text-right font-semibold ${balanceUSD >= 0 ? 'text-blue-600' : 'text-red-600'}`}>
+                              <td className={`px-1 py-2 text-right break-all font-semibold ${balanceUSD >= 0 ? 'text-blue-600' : 'text-red-600'}`}>
                                 US${formatCurrency(balanceUSD)}
                               </td>
                             </tr>

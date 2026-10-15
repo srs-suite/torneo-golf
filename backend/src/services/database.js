@@ -3563,16 +3563,163 @@ async function deleteOtherIncome(clubId, incomeId) {
 }
 
 /**
+ * El movimiento y el saldo de la cuenta siguen al ingreso corregido.
+ * Si el ingreso ya se editó y el movimiento quedó con el monto viejo, los iguala.
+ */
+function otherIncomeCredit(row) {
+    if (!row) return { amount: 0, currency: 'ARS', accountId: null };
+    const received = Number(row.received_amount || 0);
+    const amount = received > 0 ? received : Number(row.amount || 0);
+    const currency = received > 0 && row.received_currency ? row.received_currency : (row.currency || 'ARS');
+    const accountRaw = row.account_id != null && row.account_id !== '' ? Number(row.account_id) : null;
+    return {
+        amount: Number.isFinite(amount) ? amount : 0,
+        currency,
+        accountId: Number.isFinite(accountRaw) ? accountRaw : null
+    };
+}
+
+async function alignOtherIncomeTransaction(clubId, incomeId, nextRow) {
+    const next = otherIncomeCredit(nextRow);
+    const { rows } = await executeQuery(
+        `SELECT transaction_id, amount, currency, to_account_id
+         FROM account_transactions
+         WHERE club_id = ? AND reference_type = 'other_income' AND reference_id = ? AND transaction_type = 'income_other'
+         ORDER BY transaction_id DESC LIMIT 1`,
+        [clubId, incomeId]
+    );
+    const tx = rows && rows[0];
+    const description = nextRow.description || 'Ingreso registrado';
+    const txDate = nextRow.income_date instanceof Date && !Number.isNaN(nextRow.income_date.getTime())
+        ? `${nextRow.income_date.getFullYear()}-${String(nextRow.income_date.getMonth() + 1).padStart(2, '0')}-${String(nextRow.income_date.getDate()).padStart(2, '0')}`
+        : toSqlDate(nextRow.income_date);
+
+    if (!tx) {
+        if (next.accountId && next.amount > 0) {
+            await createTransaction(clubId, {
+                transaction_type: 'income_other',
+                transaction_date: txDate,
+                from_account_id: null,
+                to_account_id: next.accountId,
+                amount: next.amount,
+                currency: next.currency,
+                description,
+                reference_type: 'other_income',
+                reference_id: incomeId
+            });
+        }
+        return;
+    }
+
+    const txAmount = Number(tx.amount || 0);
+    const txCurrency = tx.currency || 'ARS';
+    const txAccount = tx.to_account_id != null ? Number(tx.to_account_id) : null;
+    const moneyChanged = Math.abs(txAmount - next.amount) > 0.009
+        || txCurrency !== next.currency
+        || txAccount !== next.accountId;
+
+    if (moneyChanged) {
+        if (txAccount && txAmount > 0) {
+            await updateAccountBalance(txAccount, txAmount, txCurrency, 'subtract');
+        }
+        if (next.accountId && next.amount > 0) {
+            await updateAccountBalance(next.accountId, next.amount, next.currency, 'add');
+        }
+    }
+
+    await executeQuery(
+        `UPDATE account_transactions
+         SET transaction_date = ?, to_account_id = ?, amount = ?, currency = ?, description = ?
+         WHERE transaction_id = ? AND club_id = ?`,
+        [txDate, next.accountId, next.amount, next.currency, description, tx.transaction_id, clubId]
+    );
+}
+
+function ledgerDateKey(value) {
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+        return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+    }
+    return toSqlDate(value);
+}
+
+async function reconcileOtherIncomeLedgers(clubId) {
+    const { rows } = await executeQuery(
+        `SELECT oi.income_id, oi.income_date, oi.amount, oi.currency, oi.account_id, oi.description,
+                oi.received_amount, oi.received_currency,
+                atx.amount AS tx_amount, atx.currency AS tx_currency, atx.to_account_id AS tx_account_id
+         FROM other_incomes oi
+         INNER JOIN account_transactions atx
+           ON atx.transaction_id = (
+             SELECT MAX(t.transaction_id) FROM account_transactions t
+             WHERE t.club_id = oi.club_id
+               AND t.reference_type = 'other_income'
+               AND t.reference_id = oi.income_id
+               AND t.transaction_type = 'income_other'
+           )
+         WHERE oi.club_id = ?`,
+        [clubId]
+    );
+    const linkedIds = new Set();
+    for (const row of rows || []) {
+        linkedIds.add(Number(row.income_id));
+        const next = otherIncomeCredit(row);
+        const txAmount = Number(row.tx_amount || 0);
+        const txCurrency = row.tx_currency || 'ARS';
+        const txAccount = row.tx_account_id != null ? Number(row.tx_account_id) : null;
+        if (Math.abs(txAmount - next.amount) <= 0.009 && txCurrency === next.currency && txAccount === next.accountId) {
+            continue;
+        }
+        await alignOtherIncomeTransaction(clubId, row.income_id, row);
+    }
+
+    // Ingresos viejos cuyo movimiento no tiene reference_id, o quedó con el monto anterior.
+    const { rows: incomes } = await executeQuery(
+        `SELECT income_id, income_date, amount, currency, account_id, description, received_amount, received_currency
+         FROM other_incomes WHERE club_id = ?`,
+        [clubId]
+    );
+    const { rows: txs } = await executeQuery(
+        `SELECT transaction_id, amount, currency, to_account_id, transaction_date, description, reference_type, reference_id
+         FROM account_transactions
+         WHERE club_id = ? AND transaction_type = 'income_other'`,
+        [clubId]
+    );
+    const usedTx = new Set(
+        (txs || [])
+            .filter(tx => tx.reference_type === 'other_income' && tx.reference_id != null)
+            .map(tx => Number(tx.transaction_id))
+    );
+    for (const income of incomes || []) {
+        if (linkedIds.has(Number(income.income_id))) continue;
+        const next = otherIncomeCredit(income);
+        if (!next.accountId) continue;
+        const candidates = (txs || []).filter(tx => {
+            if (usedTx.has(Number(tx.transaction_id))) return false;
+            if (tx.reference_type === 'other_income' && Number(tx.reference_id) !== Number(income.income_id)) return false;
+            const sameAccount = Number(tx.to_account_id) === next.accountId;
+            const sameDate = ledgerDateKey(tx.transaction_date) === ledgerDateKey(income.income_date);
+            const sameCurrency = (tx.currency || 'ARS') === next.currency;
+            return sameAccount && sameDate && sameCurrency;
+        });
+        if (candidates.length !== 1) continue;
+        const tx = candidates[0];
+        if (Math.abs(Number(tx.amount || 0) - next.amount) <= 0.009) continue;
+        await executeQuery(
+            `UPDATE account_transactions
+             SET reference_type = 'other_income', reference_id = ?
+             WHERE transaction_id = ? AND club_id = ?`,
+            [income.income_id, tx.transaction_id, clubId]
+        );
+        usedTx.add(Number(tx.transaction_id));
+        await alignOtherIncomeTransaction(clubId, income.income_id, income);
+    }
+}
+
+/**
  * Update an other income
  */
 async function updateOtherIncome(clubId, incomeId, incomeData) {
     try {
-        // Obtener el ingreso actual para verificar si hay cambios en el cambio
-        const getCurrentQuery = `SELECT change_amount, change_currency, account_id FROM other_incomes WHERE club_id = ? AND income_id = ?`;
-        const { rows: currentRows } = await executeQuery(getCurrentQuery, [clubId, incomeId]);
-        const currentIncome = currentRows[0];
-        
-        // Actualizar el ingreso
         const query = `
             UPDATE other_incomes 
             SET 
@@ -3611,10 +3758,17 @@ async function updateOtherIncome(clubId, incomeId, incomeData) {
         ];
         
         const { rows } = await executeQuery(query, params);
-        
-        // TODO: Si cambió el cambio, deberíamos actualizar/eliminar el expense relacionado
-        // Por ahora, solo actualizamos el ingreso
-        
+
+        await alignOtherIncomeTransaction(clubId, incomeId, {
+            income_date: incomeData.income_date,
+            amount: incomeData.amount,
+            currency: incomeData.currency || 'ARS',
+            account_id: incomeData.account_id || null,
+            description: incomeData.description || null,
+            received_amount: incomeData.received_amount || null,
+            received_currency: incomeData.received_currency || null
+        });
+
         return { success: true, affectedRows: rows.affectedRows };
     } catch (error) {
         console.error('❌ Error updating other income:', error);
@@ -9579,6 +9733,7 @@ async function updateAccountBalance(accountId, amount, currency, operation = 'ad
  */
 async function getTransactions(clubId, fromDate, toDate) {
     try {
+        await reconcileOtherIncomeLedgers(clubId);
         let query = `
             SELECT 
                 t.transaction_id,
